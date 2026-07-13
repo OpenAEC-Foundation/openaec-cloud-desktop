@@ -24,4 +24,6 @@ export const api = {
   createLink: (path: string) => invoke<string>("create_link", { path }),
   syncFolder: (local: string, remote: string) =>
     invoke<SyncReport>("sync_folder", { local, remote }),
+  enableCloudFolder: (local: string, remote: string) =>
+    invoke<number>("enable_cloud_folder", { local, remote }),
 }

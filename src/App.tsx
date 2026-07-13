@@ -15,6 +15,7 @@ export default function App() {
   const [report, setReport] = createSignal<SyncReport | null>(null)
   const [shareOf, setShareOf] = createSignal("")
   const [shareUrl, setShareUrl] = createSignal("")
+  const [cloudMsg, setCloudMsg] = createSignal("")
 
   const connect = async () => {
     setBusy(true)
@@ -58,6 +59,21 @@ export default function App() {
       setStatus("Deellink aangemaakt")
     } catch (e) {
       setStatus("Delen mislukt: " + e)
+    }
+    setBusy(false)
+  }
+
+  const makeCloud = async () => {
+    if (!localDir()) return setStatus("Kies eerst een lokale map (bij Synchroniseren)")
+    setBusy(true)
+    setStatus("Cloud-map instellen…")
+    setCloudMsg("")
+    try {
+      const n = await api.enableCloudFolder(localDir(), remoteDir())
+      setCloudMsg(`${n} bestand(en) als cloud-placeholder geplaatst — open de map in Verkenner voor de wolk-vinkjes`)
+      setStatus("Cloud-map klaar")
+    } catch (e) {
+      setStatus("Cloud-map mislukt: " + e)
     }
     setBusy(false)
   }
@@ -116,6 +132,20 @@ export default function App() {
             </div>
             <Show when={shareUrl()}>
               <div class="sharelink"><a href={shareUrl()} target="_blank" rel="noreferrer">{shareUrl()}</a></div>
+            </Show>
+          </section>
+
+          <section class="card">
+            <h2>Cloud-map met Verkenner-vinkjes</h2>
+            <p class="hint">
+              Maakt van de gekozen lokale map (hierboven) een OneDrive-achtige cloud-map: bestanden
+              verschijnen als placeholder met een wolk-vinkje en downloaden zodra je ze opent. Alleen Windows.
+            </p>
+            <button class="primary" disabled={busy() || !localDir()} onClick={makeCloud}>
+              Maak cloud-map van {localDir() ? `"${localDir()}"` : "de gekozen map"}
+            </button>
+            <Show when={cloudMsg()}>
+              <div class="report">{cloudMsg()}</div>
             </Show>
           </section>
         </Show>
