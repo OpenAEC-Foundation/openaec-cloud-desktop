@@ -1,5 +1,7 @@
 # OpenAEC Cloud — desktop sync-client
 
+[![Build OpenAEC Cloud (Windows)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml)
+
 Dropbox-achtige desktop-app voor de OpenAEC SuperCloud: synchroniseer lokale
 mappen met je eigen Nextcloud (`cloud.openaec.lan`), deel hele mappen en stuur
 bestanden naar mensen — via je eigen server. Gebouwd met **Tauri 2 + Rust +

@@ -1,0 +1,8 @@
+# Normaliseer tekst naar LF in de repo; werkboom-checkout blijft platform-eigen.
+* text=auto
+
+# Binair — nooit regeleinde-normalisatie (beschermt o.a. WebView2Loader.dll).
+*.dll binary
+*.png binary
+*.ico binary
+*.icns binary
