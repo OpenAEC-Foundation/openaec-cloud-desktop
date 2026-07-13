@@ -40,6 +40,11 @@ impl Conn {
         })
     }
 
+    /// (base, user, app-wachtwoord) — voor de Cloud Filter-hydrator (Fase 2b).
+    pub fn creds(&self) -> (String, String, String) {
+        (self.base.clone(), self.user.clone(), self.pass.clone())
+    }
+
     fn dav_url(&self, path: &str) -> String {
         let p = path.trim_start_matches('/');
         format!("{}/remote.php/dav/files/{}/{}", self.base, self.user, p)

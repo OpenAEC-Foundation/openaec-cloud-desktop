@@ -63,6 +63,34 @@ async fn enable_cloud_folder(
         let c = current(&state)?;
         std::fs::create_dir_all(&local).map_err(|e| e.to_string())?;
         cloudfilter::register(&local, "OpenAEC Cloud", "0.1.0").map_err(|e| e.to_string())?;
+
+        // Hydrator: bij het openen van een placeholder het echte bestand via
+        // WebDAV (blocking, op de CfAPI-callback-thread) ophalen. Eén hydrator
+        // bedient alle cloud-mappen — hij downloadt op remote-pad.
+        let (base, user, pass) = c.creds();
+        cloudfilter::set_hydrator(move |remote, offset, length| {
+            let client = match reqwest::blocking::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+            {
+                Ok(cl) => cl,
+                Err(_) => return Vec::new(),
+            };
+            let url = format!("{}/remote.php/dav/files/{}/{}", base, user, remote.trim_start_matches('/'));
+            let bytes = client
+                .get(&url)
+                .basic_auth(&user, Some(&pass))
+                .send()
+                .and_then(|r| r.error_for_status())
+                .and_then(|r| r.bytes())
+                .map(|b| b.to_vec())
+                .unwrap_or_default();
+            let start = (offset as usize).min(bytes.len());
+            let end = (start + length as usize).min(bytes.len());
+            bytes[start..end].to_vec()
+        });
+        cloudfilter::connect(&local).map_err(|e| e.to_string())?;
+
         let entries = c.list(&remote).await.map_err(|e| e.to_string())?;
         let mut n = 0u32;
         for e in entries.iter().filter(|e| !e.is_dir) {

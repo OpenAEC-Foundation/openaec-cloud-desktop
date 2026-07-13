@@ -11,7 +11,9 @@ use anyhow::{anyhow, Result};
 use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
+use std::sync::OnceLock;
 use windows::core::PCWSTR;
+use windows::Win32::Foundation::NTSTATUS;
 use windows::Win32::Storage::CloudFilters::*;
 use windows::Win32::Storage::FileSystem::FILE_BASIC_INFO;
 
@@ -96,4 +98,88 @@ pub fn create_file_placeholder(base_dir: &str, name: &str, size: i64, remote_id:
         }
     }
     Ok(())
+}
+
+// ---- Fase 2b: hydration (files-on-demand downloaden bij openen) ----
+
+/// Databron voor hydration: (remote-identiteit, offset, lengte) -> bytes.
+type Hydrator = Box<dyn Fn(&str, i64, i64) -> Vec<u8> + Send + Sync>;
+static HYDRATOR: OnceLock<Hydrator> = OnceLock::new();
+
+/// Zet de globale hydrator. De CfAPI-callback is een kale `extern "system" fn`
+/// die geen closure kan capturen, dus de databron leeft in een static.
+pub fn set_hydrator<F>(f: F)
+where
+    F: Fn(&str, i64, i64) -> Vec<u8> + Send + Sync + 'static,
+{
+    let _ = HYDRATOR.set(Box::new(f));
+}
+
+/// Verbind een callback-tabel aan de sync-root zodat FETCH_DATA-verzoeken
+/// (het openen van een placeholder) worden bediend. De teruggegeven key moet
+/// bij afsluiten aan `disconnect` worden gegeven.
+pub fn connect(path: &str) -> Result<CF_CONNECTION_KEY> {
+    let wpath = wide(path);
+    let table = [
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_FETCH_DATA,
+            Callback: Some(fetch_cb),
+        },
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_NONE,
+            Callback: None,
+        },
+    ];
+    unsafe {
+        let key = CfConnectSyncRoot(
+            PCWSTR(wpath.as_ptr()),
+            table.as_ptr(),
+            None,
+            CF_CONNECT_FLAG_NONE,
+        )
+        .map_err(|e| anyhow!("CfConnectSyncRoot({path}): {e}"))?;
+        Ok(key)
+    }
+}
+
+pub fn disconnect(key: CF_CONNECTION_KEY) -> Result<()> {
+    unsafe {
+        CfDisconnectSyncRoot(key).map_err(|e| anyhow!("CfDisconnectSyncRoot: {e}"))?;
+    }
+    Ok(())
+}
+
+/// FETCH_DATA-callback: haal de data via de hydrator en schrijf 'm met
+/// CfExecute(TRANSFER_DATA) in de placeholder. (Grote bestanden: nog per hele
+/// gevraagde range in één keer — sector-chunking is een latere verfijning.)
+unsafe extern "system" fn fetch_cb(info: *const CF_CALLBACK_INFO, params: *const CF_CALLBACK_PARAMETERS) {
+    let info = &*info;
+    let params = &*params;
+
+    let id = if !info.FileIdentity.is_null() && info.FileIdentityLength >= 2 {
+        let s = std::slice::from_raw_parts(info.FileIdentity as *const u16, (info.FileIdentityLength / 2) as usize);
+        String::from_utf16_lossy(s).trim_end_matches('\0').to_string()
+    } else {
+        String::new()
+    };
+
+    let fetch = params.Anonymous.FetchData;
+    let offset = fetch.RequiredFileOffset;
+    let length = fetch.RequiredLength;
+    let data = HYDRATOR.get().map(|h| h(&id, offset, length)).unwrap_or_default();
+
+    let mut opinfo: CF_OPERATION_INFO = zeroed();
+    opinfo.StructSize = size_of::<CF_OPERATION_INFO>() as u32;
+    opinfo.Type = CF_OPERATION_TYPE_TRANSFER_DATA;
+    opinfo.ConnectionKey = info.ConnectionKey;
+    opinfo.TransferKey = info.TransferKey;
+
+    let mut op: CF_OPERATION_PARAMETERS = zeroed();
+    op.ParamSize = size_of::<CF_OPERATION_PARAMETERS>() as u32;
+    op.Anonymous.TransferData.CompletionStatus = NTSTATUS(0); // STATUS_SUCCESS
+    op.Anonymous.TransferData.Buffer = data.as_ptr() as *const c_void;
+    op.Anonymous.TransferData.Offset = offset;
+    op.Anonymous.TransferData.Length = data.len() as i64;
+
+    let _ = CfExecute(&opinfo, &mut op);
 }
