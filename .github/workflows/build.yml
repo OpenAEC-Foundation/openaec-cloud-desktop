@@ -29,3 +29,14 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "OpenAEC Cloud ${{ github.ref_name }}"
           releaseDraft: true
+      # Bij een handmatige/branch-build is er geen release; upload dan de
+      # installers als downloadbaar workflow-artefact.
+      - name: Upload installers als artefact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openaec-cloud-windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
