@@ -1,0 +1,31 @@
+name: Build OpenAEC Cloud (Windows)
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm install
+      # Bouwt de Windows-installer (.msi + NSIS .exe). Bundelt WebView2 mee
+      # (embedBootstrapper, zie tauri.conf.json). Publiceert bij een v*-tag een
+      # release; anders staan de installers onder de workflow-artefacten.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: "OpenAEC Cloud ${{ github.ref_name }}"
+          releaseDraft: true

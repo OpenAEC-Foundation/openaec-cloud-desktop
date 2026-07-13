@@ -1,0 +1,38 @@
+[package]
+name = "openaec-cloud"
+version = "0.1.0"
+description = "OpenAEC Cloud — desktop sync-client"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "openaec_cloud_lib"
+# Alleen rlib: dit is een desktop-only app. staticlib/cdylib zijn mobiele
+# artefacten (Android .so / iOS static) en de cdylib faalt op de windows-gnu
+# toolchain met "export ordinal too large" (te grote export-tabel). main.rs
+# linkt gewoon tegen de rlib — er is geen aparte DLL nodig.
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-store = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+quick-xml = "0.37"
+notify = "6"
+dirs = "5"
+keyring = "3"
+urlencoding = "2"
+walkdir = "2"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"

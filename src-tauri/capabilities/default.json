@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Standaardrechten voor het hoofdvenster van OpenAEC Cloud.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "notification:default",
+    "store:default",
+    "shell:allow-open"
+  ]
+}
