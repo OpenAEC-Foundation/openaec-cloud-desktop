@@ -18,7 +18,8 @@ zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een li
     De server beslist over conflicten (basisversie); bij een conflict blijven beide versies bestaan.
   - `opslag` — de motor over de echte API (mappen worden onderweg aangemaakt).
 - **`src-tauri`** — de app: verbinden (sleutel in de sleutelbos van het besturingssysteem), ruimtes
-  koppelen aan mappen, elke 30 s een sync-ronde, vergrendelen, deellinks, en op Windows cloud-mappen
+  koppelen aan mappen, synchroniseren zodra er lokaal iets verandert (bestandswachter) of de wijzigingenlijst
+  van de server iets nieuws meldt (controle elke 30 s, eens per 10 minuten een volledige ronde), vergrendelen, deellinks, en op Windows cloud-mappen
   via de **Cloud Filter API** (placeholders die pas bij openen worden opgehaald).
 - **`src`** — de UI (SolidJS).
 
@@ -45,7 +46,5 @@ Een GitHub Actions-workflow (`tauri-action`) bouwt de installer reproduceerbaar.
 
 ## Nog te doen
 
-
-- Live bewaking van de map (direct syncen bij een wijziging) naast de ronde van 30 s.
 - Status-vinkjes per bestand in Verkenner en vergrendelen/delen vanuit het contextmenu.
 - Tray, autostart en automatische updates.

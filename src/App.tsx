@@ -184,7 +184,7 @@ export default function App() {
                   )}
                 </For>
               </ul>
-              <p class="hint">Synchroniseert automatisch elke 30 seconden{laatste() && ` · laatst ${laatste()}`}.</p>
+              <p class="hint">Synchroniseert automatisch zodra er iets verandert, hier of op de server{laatste() && ` · laatst ${laatste()}`}.</p>
             </Show>
           </section>
 

@@ -3,6 +3,7 @@
 //! en later ook de WebDAV-gateway en een macOS/Linux-client.
 
 pub mod api;
+pub mod bewaking;
 pub mod blokken;
 pub mod motor;
 pub mod oauth;

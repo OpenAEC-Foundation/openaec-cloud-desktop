@@ -1,6 +1,7 @@
 //! OpenAEC Cloud desktop: koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk
 //! met de sync-motor uit de crate `openaec-sync`.
 
+mod bewaking;
 mod instellingen;
 
 #[cfg(windows)]
@@ -15,12 +16,10 @@ use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 
 use instellingen::{Instellingen, Koppeling};
-
-const RONDE: Duration = Duration::from_secs(30);
 
 struct AppState {
     instellingen: std::sync::Mutex<Instellingen>,
@@ -153,11 +152,19 @@ struct MapRapport {
 }
 
 async fn sync_alles(state: &AppState) -> Result<Vec<MapRapport>, String> {
+    sync_mappen(state, None).await
+}
+
+/// Sync-ronde voor de gekoppelde mappen in `alleen` (lokale paden), of voor alle mappen.
+async fn sync_mappen(
+    state: &AppState,
+    alleen: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<MapRapport>, String> {
     let _slot = state.bezig.lock().await;
     let client = client(state).await?;
     let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
     let mut uit = Vec::new();
-    for k in koppelingen {
+    for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
         let r = sync_eenmalig(&opslag, Path::new(&k.lokaal)).await;
         uit.push(MapRapport {
@@ -286,22 +293,6 @@ fn hydrator(client: Client) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync 
     }
 }
 
-/// Achtergrondronde: elke 30 seconden alle gekoppelde mappen; meldt het resultaat aan het venster.
-fn start_achtergrond(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(RONDE).await;
-            let state = app.state::<AppState>();
-            if state.instellingen.lock().unwrap().koppelingen.is_empty() {
-                continue;
-            }
-            if let Ok(r) = sync_alles(&state).await {
-                let _ = app.emit("sync", &r);
-            }
-        }
-    });
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -313,7 +304,7 @@ pub fn run() {
             bezig: tokio::sync::Mutex::new(()),
         })
         .setup(|app| {
-            start_achtergrond(app.handle().clone());
+            bewaking::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
