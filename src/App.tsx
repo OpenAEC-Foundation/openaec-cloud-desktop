@@ -1,82 +1,115 @@
-import { createSignal, For, Show } from "solid-js"
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { open } from "@tauri-apps/plugin-dialog"
-import { api, type RemoteEntry, type SyncReport } from "./lib/api"
+import { api, type Koppeling, type MapRapport, type Ruimte } from "./lib/api"
+
+const samenvatting = (m: MapRapport) => {
+  if (m.fout) return `fout: ${m.fout}`
+  const r = m.rapport!
+  const delen = [
+    r.geupload && `↑ ${r.geupload}`,
+    r.gedownload && `↓ ${r.gedownload}`,
+    r.verwijderd && `🗑 ${r.verwijderd}`,
+    r.conflicten && `⚠ ${r.conflicten} conflict`,
+  ].filter(Boolean)
+  return delen.length ? delen.join(" · ") : "bijgewerkt"
+}
 
 export default function App() {
-  const [base, setBase] = createSignal("https://cloud.openaec.lan")
-  const [user, setUser] = createSignal("")
-  const [pass, setPass] = createSignal("")
-  const [connected, setConnected] = createSignal(false)
-  const [busy, setBusy] = createSignal(false)
-  const [status, setStatus] = createSignal("Niet verbonden")
-  const [root, setRoot] = createSignal<RemoteEntry[]>([])
-  const [localDir, setLocalDir] = createSignal("")
-  const [remoteDir, setRemoteDir] = createSignal("OpenAEC Cloud")
-  const [report, setReport] = createSignal<SyncReport | null>(null)
-  const [shareOf, setShareOf] = createSignal("")
-  const [shareUrl, setShareUrl] = createSignal("")
-  const [cloudMsg, setCloudMsg] = createSignal("")
+  const [basis, setBasis] = createSignal("")
+  const [sleutel, setSleutel] = createSignal("")
+  const [verbonden, setVerbonden] = createSignal(false)
+  const [bezig, setBezig] = createSignal(false)
+  const [melding, setMelding] = createSignal("Niet verbonden")
+  const [ruimtes, setRuimtes] = createSignal<Ruimte[]>([])
+  const [koppelingen, setKoppelingen] = createSignal<Koppeling[]>([])
+  const [rapporten, setRapporten] = createSignal<Record<string, MapRapport>>({})
+  const [laatste, setLaatste] = createSignal("")
+  const [bestand, setBestand] = createSignal("")
+  const [wachtwoord, setWachtwoord] = createSignal("")
+  const [link, setLink] = createSignal("")
 
-  const connect = async () => {
-    setBusy(true)
-    setStatus("Verbinden…")
+  const verwerk = (r: MapRapport[]) => {
+    setRapporten(Object.fromEntries(r.map((m) => [m.lokaal, m])))
+    setLaatste(new Date().toLocaleTimeString("nl-NL"))
+  }
+
+  const doe = async (wat: string, f: () => Promise<unknown>) => {
+    setBezig(true)
+    setMelding(wat + "…")
     try {
-      const r = await api.connect(base(), user(), pass())
-      setRoot(r)
-      setConnected(true)
-      setStatus(`Verbonden als ${user()}`)
+      await f()
     } catch (e) {
-      setStatus("Verbinden mislukt: " + e)
+      setMelding(`${wat} mislukt: ${e}`)
     }
-    setBusy(false)
+    setBezig(false)
   }
 
-  const pickLocal = async () => {
-    const dir = await open({ directory: true, multiple: false })
-    if (typeof dir === "string") setLocalDir(dir)
+  onMount(async () => {
+    const s = await api.status()
+    setBasis(s.basis ?? "")
+    setKoppelingen(s.koppelingen)
+    if (s.verbonden) {
+      setVerbonden(true)
+      setMelding(`Verbonden met ${s.basis}`)
+      api.ruimtes().then(setRuimtes).catch((e) => setMelding("Ruimtes ophalen mislukt: " + e))
+    }
+    const stop = await api.opSync(verwerk)
+    onCleanup(stop)
+  })
+
+  const verbind = () =>
+    doe("Verbinden", async () => {
+      setRuimtes(await api.verbind(basis(), sleutel()))
+      setSleutel("")
+      setVerbonden(true)
+      setMelding(`Verbonden met ${basis()}`)
+    })
+
+  const verbreek = () =>
+    doe("Verbreken", async () => {
+      await api.verbreek()
+      setVerbonden(false)
+      setMelding("Niet verbonden")
+    })
+
+  const koppel = (r: Ruimte) =>
+    doe("Koppelen", async () => {
+      const map = await open({ directory: true, multiple: false, title: `Lokale map voor ${r.naam}` })
+      if (typeof map !== "string") return setMelding("Geen map gekozen")
+      setKoppelingen(await api.koppel(r.name, r.naam, map))
+      verwerk(await api.syncNu())
+      setMelding(`${r.naam} gekoppeld aan ${map}`)
+    })
+
+  const ontkoppel = (k: Koppeling) =>
+    doe("Ontkoppelen", async () => {
+      setKoppelingen(await api.ontkoppel(k.lokaal))
+      setMelding(`${k.ruimte_naam} ontkoppeld; de lokale bestanden blijven staan`)
+    })
+
+  const syncNu = () =>
+    doe("Synchroniseren", async () => {
+      verwerk(await api.syncNu())
+      setMelding("Synchronisatie klaar")
+    })
+
+  const kiesBestand = async () => {
+    const f = await open({ directory: false, multiple: false })
+    if (typeof f === "string") {
+      setBestand(f)
+      setLink("")
+    }
   }
 
-  const doSync = async () => {
-    if (!localDir()) return setStatus("Kies eerst een lokale map")
-    setBusy(true)
-    setStatus("Synchroniseren…")
-    setReport(null)
-    try {
-      const rep = await api.syncFolder(localDir(), remoteDir())
-      setReport(rep)
-      setStatus(`Sync klaar — ${rep.uploaded} geüpload, ${rep.downloaded} gedownload`)
-    } catch (e) {
-      setStatus("Sync mislukt: " + e)
-    }
-    setBusy(false)
-  }
+  const cloudmap = (r: Ruimte) =>
+    doe("Cloud-map maken", async () => {
+      const map = await open({ directory: true, multiple: false, title: `Lege map voor cloud-map ${r.naam}` })
+      if (typeof map !== "string") return setMelding("Geen map gekozen")
+      const n = await api.maakCloudmap(r.name, map)
+      setMelding(`${n} bestand(en) als placeholder geplaatst in ${map}`)
+    })
 
-  const makeLink = async () => {
-    if (!shareOf()) return
-    setBusy(true)
-    try {
-      setShareUrl(await api.createLink(shareOf()))
-      setStatus("Deellink aangemaakt")
-    } catch (e) {
-      setStatus("Delen mislukt: " + e)
-    }
-    setBusy(false)
-  }
-
-  const makeCloud = async () => {
-    if (!localDir()) return setStatus("Kies eerst een lokale map (bij Synchroniseren)")
-    setBusy(true)
-    setStatus("Cloud-map instellen…")
-    setCloudMsg("")
-    try {
-      const n = await api.enableCloudFolder(localDir(), remoteDir())
-      setCloudMsg(`${n} bestand(en) als cloud-placeholder geplaatst — open de map in Verkenner voor de wolk-vinkjes`)
-      setStatus("Cloud-map klaar")
-    } catch (e) {
-      setStatus("Cloud-map mislukt: " + e)
-    }
-    setBusy(false)
-  }
+  const gekoppeld = (r: Ruimte) => koppelingen().some((k) => k.ruimte === r.name)
 
   return (
     <div class="app">
@@ -84,74 +117,126 @@ export default function App() {
         <div class="wordmark">
           Open<span>AEC</span> Cloud
         </div>
-        <div class="dot" classList={{ on: connected() }} title={connected() ? "verbonden" : "niet verbonden"} />
+        <div class="dot" classList={{ on: verbonden() }} title={verbonden() ? "verbonden" : "niet verbonden"} />
       </header>
 
       <main class="body">
         <Show
-          when={connected()}
+          when={verbonden()}
           fallback={
             <section class="card">
-              <h2>Verbinden met je OpenAEC Cloud</h2>
-              <label>Server<input value={base()} onInput={(e) => setBase(e.currentTarget.value)} /></label>
-              <label>Gebruiker<input value={user()} placeholder="maarten@open-aec.com" onInput={(e) => setUser(e.currentTarget.value)} /></label>
-              <label>App-wachtwoord<input type="password" value={pass()} onInput={(e) => setPass(e.currentTarget.value)} /></label>
-              <p class="hint">Maak een app-wachtwoord in Nextcloud → Instellingen → Beveiliging. (SSO-login volgt in een volgende versie.)</p>
-              <button class="primary" disabled={busy()} onClick={connect}>Verbinden</button>
+              <h2>Verbinden met OpenAEC Storage</h2>
+              <label>
+                Adres van je omgeving
+                <input value={basis()} placeholder="https://jouwbedrijf.cloud.open-aec.com" onInput={(e) => setBasis(e.currentTarget.value)} />
+              </label>
+              <label>
+                Sleutel
+                <input type="password" value={sleutel()} placeholder="token sleutel:geheim" onInput={(e) => setSleutel(e.currentTarget.value)} />
+              </label>
+              <p class="hint">
+                Maak een API-sleutel in je omgeving (Mijn instellingen → API-toegang). De sleutel wordt in de sleutelbos van
+                Windows bewaard. Inloggen met je OpenAEC-account volgt in een volgende versie.
+              </p>
+              <button class="primary" disabled={bezig() || !basis() || !sleutel()} onClick={verbind}>
+                Verbinden
+              </button>
             </section>
           }
         >
           <section class="card">
-            <h2>Map synchroniseren</h2>
-            <div class="row">
-              <button onClick={pickLocal}>Lokale map kiezen…</button>
-              <span class="path">{localDir() || "(geen map gekozen)"}</span>
+            <div class="kop">
+              <h2>Gekoppelde mappen</h2>
+              <button class="primary" disabled={bezig() || !koppelingen().length} onClick={syncNu}>
+                Nu synchroniseren
+              </button>
             </div>
-            <label>Nextcloud-map<input value={remoteDir()} onInput={(e) => setRemoteDir(e.currentTarget.value)} /></label>
-            <button class="primary" disabled={busy() || !localDir()} onClick={doSync}>Nu synchroniseren</button>
-            <Show when={report()}>
-              {(r) => (
-                <div class="report">
-                  ↑ {r().uploaded} geüpload · ↓ {r().downloaded} gedownload · = {r().skipped} ongewijzigd
-                  <Show when={r().errors.length}>
-                    <ul class="errs"><For each={r().errors}>{(err) => <li>{err}</li>}</For></ul>
-                  </Show>
-                </div>
-              )}
+            <Show when={koppelingen().length} fallback={<p class="hint">Nog geen mappen gekoppeld. Kies hieronder een ruimte.</p>}>
+              <ul class="lijst">
+                <For each={koppelingen()}>
+                  {(k) => (
+                    <li>
+                      <div>
+                        <strong>{k.ruimte_naam}</strong>
+                        <span class="path">{k.lokaal}</span>
+                        <Show when={rapporten()[k.lokaal]}>
+                          {(m) => (
+                            <span class="status" classList={{ fout: !!m().fout || !!m().rapport?.fouten.length }}>
+                              {samenvatting(m())}
+                            </span>
+                          )}
+                        </Show>
+                      </div>
+                      <button disabled={bezig()} onClick={() => ontkoppel(k)}>
+                        Ontkoppelen
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
+              <p class="hint">Synchroniseert automatisch elke 30 seconden{laatste() && ` · laatst ${laatste()}`}.</p>
             </Show>
           </section>
 
           <section class="card">
-            <h2>Map of bestand delen</h2>
-            <div class="row">
-              <select onChange={(e) => setShareOf(e.currentTarget.value)}>
-                <option value="">— kies uit je cloud —</option>
-                <For each={root()}>{(e) => <option value={e.path}>{e.is_dir ? "📁 " : "📄 "}{e.name}</option>}</For>
-              </select>
-              <button disabled={busy() || !shareOf()} onClick={makeLink}>Deellink maken</button>
-            </div>
-            <Show when={shareUrl()}>
-              <div class="sharelink"><a href={shareUrl()} target="_blank" rel="noreferrer">{shareUrl()}</a></div>
-            </Show>
+            <h2>Ruimtes</h2>
+            <ul class="lijst">
+              <For each={ruimtes()}>
+                {(r) => (
+                  <li>
+                    <div>
+                      <strong>{r.naam}</strong>
+                      <span class="path">{r.rol}</span>
+                    </div>
+                    <div class="row">
+                      <button disabled={bezig() || gekoppeld(r)} onClick={() => koppel(r)}>
+                        {gekoppeld(r) ? "Gekoppeld" : "Koppel aan map…"}
+                      </button>
+                      <button disabled={bezig()} onClick={() => cloudmap(r)} title="Alleen Windows: bestanden worden opgehaald zodra je ze opent">
+                        Cloud-map…
+                      </button>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </ul>
           </section>
 
           <section class="card">
-            <h2>Cloud-map met Verkenner-vinkjes</h2>
-            <p class="hint">
-              Maakt van de gekozen lokale map (hierboven) een OneDrive-achtige cloud-map: bestanden
-              verschijnen als placeholder met een wolk-vinkje en downloaden zodra je ze opent. Alleen Windows.
-            </p>
-            <button class="primary" disabled={busy() || !localDir()} onClick={makeCloud}>
-              Maak cloud-map van {localDir() ? `"${localDir()}"` : "de gekozen map"}
+            <h2>Bestand vergrendelen of delen</h2>
+            <div class="row">
+              <button onClick={kiesBestand}>Bestand kiezen…</button>
+              <span class="path">{bestand() || "(uit een gekoppelde map)"}</span>
+            </div>
+            <div class="row">
+              <button disabled={bezig() || !bestand()} onClick={() => doe("Vergrendelen", async () => { await api.vergrendel(bestand()); setMelding("Vergrendeld: collega's zien dat jij eraan werkt") })}>
+                Vergrendelen
+              </button>
+              <button disabled={bezig() || !bestand()} onClick={() => doe("Ontgrendelen", async () => { await api.ontgrendel(bestand()); setMelding("Ontgrendeld") })}>
+                Ontgrendelen
+              </button>
+            </div>
+            <label>
+              Wachtwoord voor de link (optioneel)
+              <input type="password" value={wachtwoord()} onInput={(e) => setWachtwoord(e.currentTarget.value)} />
+            </label>
+            <button disabled={bezig() || !bestand()} onClick={() => doe("Delen", async () => { setLink(await api.deel(bestand(), wachtwoord())); setMelding("Deellink gemaakt") })}>
+              Deellink maken
             </button>
-            <Show when={cloudMsg()}>
-              <div class="report">{cloudMsg()}</div>
+            <Show when={link()}>
+              <div class="sharelink">
+                <a href={link()} target="_blank" rel="noreferrer">{link()}</a>
+              </div>
             </Show>
           </section>
+
+          <button class="link" disabled={bezig()} onClick={verbreek}>
+            Verbinding verbreken
+          </button>
         </Show>
       </main>
 
-      <footer class="statusbar">{status()}</footer>
+      <footer class="statusbar">{melding()}</footer>
     </div>
   )
 }

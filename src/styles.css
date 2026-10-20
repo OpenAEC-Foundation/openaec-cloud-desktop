@@ -58,3 +58,17 @@ button.primary:hover:not(:disabled) { background: var(--amber-bright); }
   border-top: 1px solid var(--line); background: #fff; padding: 6px 16px;
   font-size: 12px; color: var(--stone); font-variant-numeric: tabular-nums;
 }
+
+.kop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.kop h2 { margin-bottom: 0; }
+.lijst { list-style: none; margin-bottom: 8px; }
+.lijst li {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--line);
+}
+.lijst li:first-child { border-top: none; }
+.lijst li > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lijst li .row { margin-bottom: 0; flex-wrap: nowrap; }
+.status { font-size: 12px; color: #15803d; }
+.status.fout { color: #b91c1c; }
+button.link { align-self: flex-start; border: none; background: none; color: var(--stone); padding: 4px 0; text-decoration: underline; }

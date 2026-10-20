@@ -75,7 +75,7 @@ pub struct Wijzigingen {
     pub wijzigingen: Vec<Wijziging>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ruimte {
     pub name: String,
     pub naam: String,
@@ -109,6 +109,13 @@ pub struct Inhoud {
 pub struct NieuweMap {
     pub map: String,
     pub nieuw: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Deling {
+    pub deling: String,
+    pub token: String,
+    pub rechten: String,
 }
 
 #[derive(Deserialize)]
@@ -205,6 +212,19 @@ impl Client {
     /// Naar de prullenbak; de server bewaart het bestand nog 30 dagen.
     pub async fn verwijder(&self, bestand: &str) -> Result<(), Fout> {
         self.roep_leeg("verwijder", json!({"bestand": bestand})).await
+    }
+
+    /// Leeslink zonder account voor een bestand; de gastpagina staat op `<basis>/delen/<token>`.
+    pub async fn deel_bestand(&self, bestand: &str, wachtwoord: Option<&str>) -> Result<Deling, Fout> {
+        self.roep(
+            "deel",
+            json!({"doel_doctype": "Opslagbestand", "doel": bestand, "soort": "link", "wachtwoord": wachtwoord}),
+        )
+        .await
+    }
+
+    pub fn basis(&self) -> &str {
+        &self.basis
     }
 
     pub async fn ontgrendel(&self, bestand: &str) -> Result<(), Fout> {

@@ -20,19 +20,15 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-store = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"] }
-quick-xml = "0.37"
-notify = "6"
 dirs = "5"
-keyring = "3"
-urlencoding = "2"
-walkdir = "2"
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+openaec-sync = { path = "../crates/openaec-sync" }
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"

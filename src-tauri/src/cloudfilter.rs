@@ -3,7 +3,7 @@
 // Registreert een lokale map als "sync root" zodat Verkenner cloud-status-
 // overlays toont (wolk / groen vinkje / sync-pijlen) en maakt placeholders:
 // bestanden die als metadata bestaan maar pas bij openen worden gedownload
-// (files-on-demand), net als OneDrive. Hydration (het downloaden bij openen)
+// (files-on-demand). Hydration (het downloaden bij openen)
 // is Fase 2b; in-sync-states + pin/unpin Fase 2c.
 #![cfg(windows)]
 

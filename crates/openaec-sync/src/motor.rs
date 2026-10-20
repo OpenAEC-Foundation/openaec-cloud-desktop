@@ -43,7 +43,7 @@ pub trait Opslag {
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout>;
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct Rapport {
     pub geupload: u32,
     pub gedownload: u32,
@@ -136,6 +136,12 @@ fn onthoud(toestand: &mut Toestand, root: &Path, pad: &str, bestand: &str, versi
         .bestanden
         .insert(pad.to_string(), Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns });
     Ok(())
+}
+
+/// Bestand-id en versie van een gesynchroniseerd bestand (pad met '/' ten opzichte van `root`), uit de toestand
+/// van de laatste ronde. Voor vergrendelen en delen vanuit de Verkenner.
+pub fn bekend_bestand(root: &Path, pad: &str) -> Option<(String, u64)> {
+    laad(root).bestanden.get(pad).map(|b| (b.bestand.clone(), b.versie))
 }
 
 /// Eén sync-ronde voor de map `root` tegen `opslag`.
