@@ -75,6 +75,42 @@ pub struct Wijzigingen {
     pub wijzigingen: Vec<Wijziging>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Ruimte {
+    pub name: String,
+    pub naam: String,
+    pub soort: Option<String>,
+    pub rol: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MapItem {
+    pub name: String,
+    pub naam: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BestandItem {
+    pub name: String,
+    pub naam: String,
+    #[serde(default)]
+    pub grootte: u64,
+    #[serde(default)]
+    pub huidige_versie: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Inhoud {
+    pub mappen: Vec<MapItem>,
+    pub bestanden: Vec<BestandItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NieuweMap {
+    pub map: String,
+    pub nieuw: bool,
+}
+
 #[derive(Deserialize)]
 struct Antwoord<T> {
     message: T,
@@ -90,6 +126,15 @@ impl Client {
     }
 
     async fn roep<T: DeserializeOwned>(&self, methode: &str, gegevens: Value) -> Result<T, Fout> {
+        Ok(self.verstuur(methode, gegevens).await?.json::<Antwoord<T>>().await?.message)
+    }
+
+    /// Voor methoden zonder antwoord: Frappe laat `message` dan weg.
+    async fn roep_leeg(&self, methode: &str, gegevens: Value) -> Result<(), Fout> {
+        self.verstuur(methode, gegevens).await.map(|_| ())
+    }
+
+    async fn verstuur(&self, methode: &str, gegevens: Value) -> Result<reqwest::Response, Fout> {
         let antwoord = self
             .http
             .post(format!("{}{}{}", self.basis, API, methode))
@@ -102,7 +147,7 @@ impl Client {
             let tekst = antwoord.text().await.unwrap_or_default();
             return Err(Fout::Server { status: status.as_u16(), tekst });
         }
-        Ok(antwoord.json::<Antwoord<T>>().await?.message)
+        Ok(antwoord)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -145,7 +190,24 @@ impl Client {
         self.roep("vergrendel", json!({"bestand": bestand, "apparaat": apparaat, "reden": reden})).await
     }
 
-    pub async fn ontgrendel(&self, bestand: &str) -> Result<Value, Fout> {
-        self.roep("ontgrendel", json!({"bestand": bestand})).await
+    pub async fn ruimtes(&self) -> Result<Vec<Ruimte>, Fout> {
+        self.roep("ruimtes", json!({})).await
+    }
+
+    pub async fn bladeren(&self, ruimte: &str, map: Option<&str>) -> Result<Inhoud, Fout> {
+        self.roep("bladeren", json!({"ruimte": ruimte, "map": map})).await
+    }
+
+    pub async fn maak_map(&self, ruimte: &str, naam: &str, bovenliggende: Option<&str>) -> Result<NieuweMap, Fout> {
+        self.roep("maak_map", json!({"ruimte": ruimte, "naam": naam, "bovenliggende": bovenliggende})).await
+    }
+
+    /// Naar de prullenbak; de server bewaart het bestand nog 30 dagen.
+    pub async fn verwijder(&self, bestand: &str) -> Result<(), Fout> {
+        self.roep_leeg("verwijder", json!({"bestand": bestand})).await
+    }
+
+    pub async fn ontgrendel(&self, bestand: &str) -> Result<(), Fout> {
+        self.roep_leeg("ontgrendel", json!({"bestand": bestand})).await
     }
 }

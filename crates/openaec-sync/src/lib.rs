@@ -4,6 +4,8 @@
 
 pub mod api;
 pub mod blokken;
+pub mod motor;
+pub mod opslag;
 
 use std::io::SeekFrom;
 use std::path::Path;
