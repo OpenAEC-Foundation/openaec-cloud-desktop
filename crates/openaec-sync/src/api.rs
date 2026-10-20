@@ -227,6 +227,28 @@ impl Client {
         &self.basis
     }
 
+    /// Hernoem of verplaats een bestand (`map` None = hoofdniveau). Met `overschrijf` wordt de inhoud een nieuwe
+    /// versie van een bestaand doel.
+    pub async fn verplaats(&self, bestand: &str, naam: &str, map: Option<&str>, overschrijf: bool) -> Result<UploadResultaat, Fout> {
+        let r: Value = self
+            .roep("verplaats", json!({"bestand": bestand, "naam": naam, "map": map, "overschrijf": overschrijf as u8}))
+            .await?;
+        Ok(UploadResultaat {
+            bestand: r["bestand"].as_str().unwrap_or_default().to_string(),
+            naam: r["naam"].as_str().unwrap_or_default().to_string(),
+            versie: r["versie"].as_u64().unwrap_or_default(),
+            conflict: false,
+        })
+    }
+
+    pub async fn verplaats_map(&self, map: &str, naam: &str, bovenliggende: Option<&str>) -> Result<(), Fout> {
+        self.roep_leeg("verplaats_map", json!({"map": map, "naam": naam, "bovenliggende": bovenliggende})).await
+    }
+
+    pub async fn verwijder_map(&self, map: &str) -> Result<(), Fout> {
+        self.roep_leeg("verwijder_map", json!({"map": map})).await
+    }
+
     pub async fn ontgrendel(&self, bestand: &str) -> Result<(), Fout> {
         self.roep_leeg("ontgrendel", json!({"bestand": bestand})).await
     }
