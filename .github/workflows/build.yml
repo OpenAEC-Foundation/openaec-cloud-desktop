@@ -5,6 +5,10 @@ on:
   push:
     tags: ["v*"]
 
+# Release aanmaken en installers eraan hangen.
+permissions:
+  contents: write
+
 jobs:
   # Desktop-app: Windows (.exe/.msi, met WebView2-bootstrapper en WebView2Loader.dll) en Linux (.deb/.AppImage).
   app:
