@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-const DIENST: &str = "OpenAEC Cloud";
+const DIENST: &str = "OpenAEC Storage";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Koppeling {
@@ -22,7 +22,7 @@ pub struct Instellingen {
 }
 
 fn bestand() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("OpenAEC Cloud").join("instellingen.json")
+    dirs::config_dir().unwrap_or_else(std::env::temp_dir).join("OpenAEC Storage").join("instellingen.json")
 }
 
 impl Instellingen {

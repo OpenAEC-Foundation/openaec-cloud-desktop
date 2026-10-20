@@ -1,0 +1,15 @@
+# systemd-gebruikersdienst: houdt de gekoppelde mappen bij, ook zonder ingelogde sessie (met lingering).
+#   cp openaec-storage.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now openaec-storage
+#   loginctl enable-linger "$USER"     # blijft draaien na uitloggen (servers)
+[Unit]
+Description=OpenAEC Storage: mappen synchroniseren
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/openaec-storage bewaak
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

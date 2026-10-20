@@ -1,6 +1,6 @@
-# OpenAEC Cloud — desktop sync-client
+# OpenAEC Storage — desktop-app en opdrachtregel
 
-[![Build OpenAEC Cloud (Windows)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml)
+[![Build OpenAEC Storage](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml)
 
 Desktop-app voor **OpenAEC Storage**: koppel lokale mappen aan ruimtes in je OpenAEC-omgeving, werk samen
 zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een link. Gebouwd met
@@ -22,6 +22,27 @@ zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een li
   van de server iets nieuws meldt (controle elke 30 s, eens per 10 minuten een volledige ronde), vergrendelen, deellinks, en op Windows cloud-mappen
   via de **Cloud Filter API** (placeholders die pas bij openen worden opgehaald).
 - **`src`** — de UI (SolidJS).
+
+## Installeren
+
+De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow **Build OpenAEC Storage**; bij een
+`v*`-tag als conceptrelease).
+
+- **Windows:** `OpenAEC Storage_<versie>_x64-setup.exe` (of `.msi`). WebView2 wordt zo nodig meegeïnstalleerd.
+- **Linux (desktop):** `.deb` voor Debian/Ubuntu (`sudo apt install ./openaec-storage_<versie>_amd64.deb`) of de
+  `.AppImage` (uitvoerbaar maken en starten). Het pictogram verschijnt in het systeemvak; sleutels gaan naar de
+  sleutelbos van de desktop (Secret Service).
+- **Linux zonder scherm (servers):** het programma `openaec-storage`:
+
+```bash
+install -m 755 openaec-storage ~/.local/bin/
+openaec-storage inloggen https://bedrijf.cloud.open-aec.com          # via de browser
+OPENAEC_SLEUTEL="sleutel:geheim" openaec-storage inloggen https://bedrijf.cloud.open-aec.com --sleutel
+openaec-storage ruimtes
+openaec-storage koppel "Project A" ~/OpenAEC/Project-A
+openaec-storage sync            # één ronde
+openaec-storage bewaak          # blijft draaien; zie packaging/openaec-storage.service voor systemd
+```
 
 ## Testen
 

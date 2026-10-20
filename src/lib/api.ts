@@ -50,5 +50,7 @@ export const api = {
   ontgrendel: (bestand: string) => invoke<void>("ontgrendel", { bestand }),
   deel: (bestand: string, wachtwoord: string) => invoke<string>("deel", { bestand, wachtwoord }),
   maakCloudmap: (ruimte: string, lokaal: string) => invoke<number>("maak_cloudmap", { ruimte, lokaal }),
+  autostart: () => invoke<boolean>("autostart"),
+  zetAutostart: (aan: boolean) => invoke<boolean>("zet_autostart", { aan }),
   opSync: (f: (r: MapRapport[]) => void) => listen<MapRapport[]>("sync", (e) => f(e.payload)),
 }

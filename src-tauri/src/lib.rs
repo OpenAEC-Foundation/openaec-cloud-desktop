@@ -1,8 +1,9 @@
-//! OpenAEC Cloud desktop: koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk
+//! OpenAEC Storage (desktop): koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk
 //! met de sync-motor uit de crate `openaec-sync`.
 
 mod bewaking;
 mod instellingen;
+mod systeemvak;
 
 #[cfg(windows)]
 pub mod cloudfilter;
@@ -237,7 +238,7 @@ async fn maak_cloudmap(state: tauri::State<'_, AppState>, ruimte: String, lokaal
         let client = client(&state).await?;
         let bestanden = ClientOpslag::new(client.clone(), &ruimte).lijst().await.map_err(fout)?;
         std::fs::create_dir_all(&lokaal).map_err(fout)?;
-        cloudfilter::register(&lokaal, "OpenAEC Cloud", env!("CARGO_PKG_VERSION")).map_err(fout)?;
+        cloudfilter::register(&lokaal, "OpenAEC Storage", env!("CARGO_PKG_VERSION")).map_err(fout)?;
         cloudfilter::set_hydrator(hydrator(client));
         cloudfilter::connect(&lokaal).map_err(fout)?;
         let mut n = 0u32;
@@ -293,9 +294,30 @@ fn hydrator(client: Client) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync 
     }
 }
 
+/// Starten bij inloggen (aan/uit); de app start dan verborgen in het systeemvak.
+#[tauri::command]
+fn autostart(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn zet_autostart(app: AppHandle, aan: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let a = app.autolaunch();
+    if aan { a.enable() } else { a.disable() }.map_err(fout)?;
+    a.is_enabled().map_err(fout)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Eén exemplaar tegelijk: een tweede start toont het bestaande venster.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| systeemvak::toon(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![systeemvak::VERBORGEN]),
+        ))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -304,9 +326,11 @@ pub fn run() {
             bezig: tokio::sync::Mutex::new(()),
         })
         .setup(|app| {
+            systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
             Ok(())
         })
+        .on_window_event(systeemvak::venster_gebeurtenis)
         .invoke_handler(tauri::generate_handler![
             status,
             verbind,
@@ -319,8 +343,10 @@ pub fn run() {
             vergrendel,
             ontgrendel,
             deel,
-            maak_cloudmap
+            maak_cloudmap,
+            autostart,
+            zet_autostart
         ])
         .run(tauri::generate_context!())
-        .expect("fout bij het starten van OpenAEC Cloud");
+        .expect("fout bij het starten van OpenAEC Storage");
 }

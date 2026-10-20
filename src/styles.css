@@ -74,3 +74,5 @@ button.primary:hover:not(:disabled) { background: var(--amber-bright); }
 button.link { align-self: flex-start; border: none; background: none; color: var(--stone); padding: 4px 0; text-decoration: underline; }
 .alternatief { margin-top: 16px; font-size: 13px; }
 .alternatief summary { cursor: pointer; color: var(--stone); margin-bottom: 12px; }
+label.vinkje { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); margin: 4px 0 6px; }
+label.vinkje input { width: auto; margin: 0; }

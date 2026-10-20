@@ -1,7 +1,7 @@
 {
   "name": "openaec-cloud",
   "version": "0.1.0",
-  "description": "OpenAEC Cloud — desktop sync-client (Tauri 2 + SolidJS)",
+  "description": "OpenAEC Storage — desktop-app voor synchroniseren en delen (Tauri 2 + SolidJS)",
   "type": "module",
   "scripts": {
     "dev": "vite",

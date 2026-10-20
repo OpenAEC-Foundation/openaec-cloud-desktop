@@ -27,6 +27,7 @@ export default function App() {
   const [bestand, setBestand] = createSignal("")
   const [wachtwoord, setWachtwoord] = createSignal("")
   const [link, setLink] = createSignal("")
+  const [autostart, setAutostart] = createSignal(false)
 
   const verwerk = (r: MapRapport[]) => {
     setRapporten(Object.fromEntries(r.map((m) => [m.lokaal, m])))
@@ -53,6 +54,7 @@ export default function App() {
       setMelding(`Verbonden met ${s.basis}`)
       api.ruimtes().then(setRuimtes).catch((e) => setMelding("Ruimtes ophalen mislukt: " + e))
     }
+    api.autostart().then(setAutostart).catch(() => {})
     const stop = await api.opSync(verwerk)
     onCleanup(stop)
   })
@@ -122,7 +124,7 @@ export default function App() {
     <div class="app">
       <header class="titlebar" data-tauri-drag-region>
         <div class="wordmark">
-          Open<span>AEC</span> Cloud
+          Open<span>AEC</span> Storage
         </div>
         <div class="dot" classList={{ on: verbonden() }} title={verbonden() ? "verbonden" : "niet verbonden"} />
       </header>
@@ -239,6 +241,16 @@ export default function App() {
               </div>
             </Show>
           </section>
+
+          <label class="vinkje">
+            <input
+              type="checkbox"
+              checked={autostart()}
+              onChange={(e) => api.zetAutostart(e.currentTarget.checked).then(setAutostart).catch((f) => setMelding("Autostart: " + f))}
+            />
+            Starten bij inloggen (op de achtergrond, in het systeemvak)
+          </label>
+          <p class="hint">Sluit je het venster, dan blijft OpenAEC Storage synchroniseren. Afsluiten doe je via het pictogram in het systeemvak.</p>
 
           <button class="link" disabled={bezig()} onClick={verbreek}>
             Verbinding verbreken
