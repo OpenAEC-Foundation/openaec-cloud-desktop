@@ -1,0 +1,172 @@
+use std::sync::{Arc, Mutex};
+
+use openaec_sync::blokken::{blokgrootte, gewijzigde_blokken, hash_bytes, BLOK};
+use openaec_sync::{download_bestand, upload_bestand, Client};
+use serde_json::json;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+const MIB: u64 = 1024 * 1024;
+
+#[test]
+fn blokgrootte_volgt_de_serverregels() {
+    assert_eq!(blokgrootte(0), BLOK);
+    assert_eq!(blokgrootte(10 * 1024 * MIB), BLOK);
+    let groot = 200 * 1024 * MIB;
+    let blok = blokgrootte(groot);
+    assert!(blok > BLOK);
+    assert_eq!(blok % MIB, 0);
+    assert!(groot.div_ceil(blok) <= 9000);
+}
+
+#[test]
+fn hashes_per_blok_en_verschillen() {
+    let a = vec![b'a'; 10];
+    let b = [&a[..], b"bbbb"].concat();
+    let ha = hash_bytes(&a, 4);
+    let hb = hash_bytes(&b, 4);
+    assert_eq!(ha.len(), 3);
+    assert_eq!(hb.len(), 4);
+    assert_eq!(gewijzigde_blokken(&ha, &hb), vec![2, 3]);
+    assert_eq!(hash_bytes(&[], 4).len(), 1);
+}
+
+/// Antwoordt op GET met (een stuk van) de inhoud, op basis van de Range-header; telt de verzoeken.
+struct Object {
+    inhoud: Vec<u8>,
+    bereiken: Arc<Mutex<Vec<String>>>,
+}
+
+impl Respond for Object {
+    fn respond(&self, verzoek: &Request) -> ResponseTemplate {
+        match verzoek.headers.get("range").and_then(|w| w.to_str().ok()) {
+            Some(bereik) => {
+                self.bereiken.lock().unwrap().push(bereik.to_string());
+                let (begin, eind) = bereik.trim_start_matches("bytes=").split_once('-').unwrap();
+                let (begin, eind): (usize, usize) = (begin.parse().unwrap(), eind.parse().unwrap());
+                ResponseTemplate::new(206).set_body_bytes(self.inhoud[begin..=eind].to_vec())
+            }
+            None => ResponseTemplate::new(200).set_body_bytes(self.inhoud.clone()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn upload_stuurt_alleen_gevraagde_blokken() {
+    let server = MockServer::start().await;
+    let inhoud: Vec<u8> = [vec![b'A'; BLOK as usize], vec![b'X'; BLOK as usize], b"staart".to_vec()].concat();
+    let dir = tempfile::tempdir().unwrap();
+    let pad = dir.path().join("wolk.e57");
+    std::fs::write(&pad, &inhoud).unwrap();
+
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.upload_start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "upload": "tok", "deelgrootte": BLOK, "hergebruik": [1, 3],
+            "delen": [{"nummer": 2, "url": format!("{}/s3/deel2", server.uri())}]
+        }})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/s3/deel2"))
+        .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"etag2\""))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.upload_klaar"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "bestand": "b1", "naam": "wolk.e57", "versie": 2, "conflict": false
+        }})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    let resultaat = upload_bestand(&client, "r1", None, "wolk.e57", &pad, Some(1)).await.unwrap();
+    assert_eq!(resultaat.versie, 2);
+    assert!(!resultaat.conflict);
+
+    let ontvangen = server.received_requests().await.unwrap();
+    let put = ontvangen.iter().find(|r| r.method.as_str() == "PUT").unwrap();
+    assert_eq!(put.body.len() as u64, BLOK);
+    let klaar = ontvangen.iter().find(|r| r.url.path().ends_with("upload_klaar")).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&klaar.body).unwrap();
+    assert_eq!(body["delen"], json!([{"nummer": 2, "etag": "\"etag2\""}]));
+    let start = ontvangen.iter().find(|r| r.url.path().ends_with("upload_start")).unwrap();
+    let start: serde_json::Value = serde_json::from_slice(&start.body).unwrap();
+    assert_eq!(start["blokhashes"].as_array().unwrap().len(), 3);
+    assert_eq!(start["basis_versie"], json!(1));
+}
+
+#[tokio::test]
+async fn download_haalt_alleen_gewijzigde_blokken() {
+    let server = MockServer::start().await;
+    let oud: Vec<u8> = [vec![b'A'; BLOK as usize], vec![b'B'; BLOK as usize], b"staart".to_vec()].concat();
+    let nieuw: Vec<u8> = [vec![b'A'; BLOK as usize], vec![b'C'; BLOK as usize], b"nieuwe staart!".to_vec()].concat();
+    let dir = tempfile::tempdir().unwrap();
+    let pad = dir.path().join("wolk.e57");
+    std::fs::write(&pad, &oud).unwrap();
+    let bereiken = Arc::new(Mutex::new(Vec::new()));
+
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.blokken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "versie": 2, "grootte": nieuw.len(), "blokgrootte": BLOK, "hashes": hash_bytes(&nieuw, BLOK)
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.download"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "url": format!("{}/s3/object", server.uri()), "versie": 2
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/s3/object"))
+        .respond_with(Object { inhoud: nieuw.clone(), bereiken: bereiken.clone() })
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    download_bestand(&client, "b1", &pad).await.unwrap();
+
+    assert_eq!(std::fs::read(&pad).unwrap(), nieuw);
+    let opgehaald = bereiken.lock().unwrap().clone();
+    assert_eq!(opgehaald.len(), 2, "alleen blok 2 en de staart: {opgehaald:?}");
+    assert!(opgehaald.iter().all(|b| !b.starts_with("bytes=0-")), "blok 1 was ongewijzigd: {opgehaald:?}");
+}
+
+#[tokio::test]
+async fn download_zonder_lokaal_bestand_haalt_alles() {
+    let server = MockServer::start().await;
+    let nieuw = b"klein bestand".to_vec();
+    let dir = tempfile::tempdir().unwrap();
+    let pad = dir.path().join("nieuw.txt");
+    let bereiken = Arc::new(Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.blokken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "versie": 1, "grootte": nieuw.len(), "blokgrootte": BLOK, "hashes": hash_bytes(&nieuw, BLOK)
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.download"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "url": format!("{}/s3/object", server.uri()), "versie": 1
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/s3/object"))
+        .respond_with(Object { inhoud: nieuw.clone(), bereiken })
+        .mount(&server)
+        .await;
+
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    download_bestand(&client, "b1", &pad).await.unwrap();
+    assert_eq!(std::fs::read(&pad).unwrap(), nieuw);
+}
