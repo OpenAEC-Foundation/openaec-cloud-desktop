@@ -83,13 +83,16 @@ pub struct Ruimte {
     pub rol: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MapItem {
     pub name: String,
     pub naam: String,
+    /// Frappe-tijdstempel (`JJJJ-MM-DD uu:mm:ss.ffffff`, tijdzone van de site).
+    #[serde(default)]
+    pub modified: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BestandItem {
     pub name: String,
     pub naam: String,
@@ -97,9 +100,11 @@ pub struct BestandItem {
     pub grootte: u64,
     #[serde(default)]
     pub huidige_versie: u64,
+    #[serde(default)]
+    pub modified: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Inhoud {
     pub mappen: Vec<MapItem>,
     pub bestanden: Vec<BestandItem>,
@@ -212,6 +217,10 @@ impl Client {
     /// Naar de prullenbak; de server bewaart het bestand nog 30 dagen.
     pub async fn verwijder(&self, bestand: &str) -> Result<(), Fout> {
         self.roep_leeg("verwijder", json!({"bestand": bestand})).await
+    }
+
+    pub async fn quotum(&self) -> Result<Value, Fout> {
+        self.roep("quotum", json!({})).await
     }
 
     /// Leeslink zonder account voor een bestand; de gastpagina staat op `<basis>/delen/<token>`.
