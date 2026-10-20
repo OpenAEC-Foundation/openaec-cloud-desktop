@@ -11,10 +11,12 @@ use std::time::Duration;
 
 use openaec_sync::api::Ruimte;
 use openaec_sync::motor::{bekend_bestand, sync_eenmalig, Rapport};
+use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_shell::ShellExt;
 
 use instellingen::{Instellingen, Koppeling};
 
@@ -30,11 +32,34 @@ fn fout(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn client(state: &AppState) -> Result<Client, String> {
-    let inst = state.instellingen.lock().unwrap();
-    let basis = inst.basis.clone().ok_or("niet verbonden")?;
-    let autorisatie = instellingen::lees_sleutel(&basis).ok_or("geen sleutel bewaard; verbind opnieuw")?;
-    Ok(Client::new(&basis, &autorisatie))
+/// Voorkomt dat twee taken tegelijk het token vernieuwen (het oude refresh-token vervalt daarbij).
+static VERNIEUWEN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Waarde voor de Authorization-header: een API-sleutel zoals bewaard, of een OAuth-token dat zo nodig
+/// eerst wordt vernieuwd.
+async fn autorisatie(basis: &str) -> Result<String, String> {
+    let _slot = VERNIEUWEN.lock().await;
+    let bewaard = instellingen::lees_sleutel(basis).ok_or("niet ingelogd; verbind opnieuw")?;
+    let Ok(tokens) = serde_json::from_str::<Tokens>(&bewaard) else {
+        return Ok(bewaard);
+    };
+    if !tokens.verlopen() {
+        return Ok(tokens.autorisatie());
+    }
+    let nieuw = oauth::vernieuw(basis, &tokens).await.map_err(|e| format!("sessie verlopen, log opnieuw in ({e})"))?;
+    instellingen::bewaar_sleutel(basis, &serde_json::to_string(&nieuw).unwrap()).map_err(fout)?;
+    Ok(nieuw.autorisatie())
+}
+
+async fn client(state: &AppState) -> Result<Client, String> {
+    let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
+    Ok(Client::new(&basis, &autorisatie(&basis).await?))
+}
+
+fn onthoud_basis(state: &AppState, basis: String) -> Result<(), String> {
+    let mut inst = state.instellingen.lock().unwrap();
+    inst.basis = Some(basis);
+    inst.bewaar().map_err(fout)
 }
 
 #[derive(Serialize)]
@@ -57,9 +82,30 @@ async fn verbind(state: tauri::State<'_, AppState>, basis: String, autorisatie: 
     let basis = basis.trim().trim_end_matches('/').to_string();
     let ruimtes = Client::new(&basis, autorisatie.trim()).ruimtes().await.map_err(fout)?;
     instellingen::bewaar_sleutel(&basis, autorisatie.trim()).map_err(fout)?;
-    let mut inst = state.instellingen.lock().unwrap();
-    inst.basis = Some(basis);
-    inst.bewaar().map_err(fout)?;
+    onthoud_basis(&state, basis)?;
+    Ok(ruimtes)
+}
+
+/// Inloggen met het OpenAEC-account: opent de browser en wacht (max. 5 minuten) op de terugkeer.
+#[tauri::command]
+async fn log_in(app: AppHandle, state: tauri::State<'_, AppState>, basis: String) -> Result<Vec<Ruimte>, String> {
+    let basis = basis.trim().trim_end_matches('/').to_string();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", oauth::POORT))
+        .await
+        .map_err(|e| format!("poort {} is bezet ({e}); sluit een eerder inlogvenster", oauth::POORT))?;
+    let verifier = oauth::verifier();
+    let state_waarde = oauth::verifier();
+    let url = oauth::autorisatie_url(&basis, &oauth::challenge(&verifier), &state_waarde);
+    #[allow(deprecated)]
+    app.shell().open(&url, None).map_err(fout)?;
+    let code = tokio::time::timeout(Duration::from_secs(300), oauth::wacht_op_code(listener, state_waarde))
+        .await
+        .map_err(|_| "inloggen duurde te lang".to_string())?
+        .map_err(fout)?;
+    let tokens = oauth::wissel_code(&basis, &code, &verifier).await.map_err(fout)?;
+    let ruimtes = Client::new(&basis, &tokens.autorisatie()).ruimtes().await.map_err(fout)?;
+    instellingen::bewaar_sleutel(&basis, &serde_json::to_string(&tokens).unwrap()).map_err(fout)?;
+    onthoud_basis(&state, basis)?;
     Ok(ruimtes)
 }
 
@@ -74,7 +120,7 @@ fn verbreek(state: tauri::State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn ruimtes(state: tauri::State<'_, AppState>) -> Result<Vec<Ruimte>, String> {
-    client(&state)?.ruimtes().await.map_err(fout)
+    client(&state).await?.ruimtes().await.map_err(fout)
 }
 
 #[tauri::command]
@@ -108,7 +154,7 @@ struct MapRapport {
 
 async fn sync_alles(state: &AppState) -> Result<Vec<MapRapport>, String> {
     let _slot = state.bezig.lock().await;
-    let client = client(state)?;
+    let client = client(state).await?;
     let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
     let mut uit = Vec::new();
     for k in koppelingen {
@@ -155,20 +201,20 @@ fn bestand_id(state: &AppState, bestand: &str) -> Result<String, String> {
 async fn vergrendel(state: tauri::State<'_, AppState>, bestand: String) -> Result<(), String> {
     let id = bestand_id(&state, &bestand)?;
     let apparaat = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into());
-    client(&state)?.vergrendel(&id, &apparaat, false).await.map(|_| ()).map_err(fout)
+    client(&state).await?.vergrendel(&id, &apparaat, false).await.map(|_| ()).map_err(fout)
 }
 
 #[tauri::command]
 async fn ontgrendel(state: tauri::State<'_, AppState>, bestand: String) -> Result<(), String> {
     let id = bestand_id(&state, &bestand)?;
-    client(&state)?.ontgrendel(&id).await.map_err(fout)
+    client(&state).await?.ontgrendel(&id).await.map_err(fout)
 }
 
 /// Leeslink voor een lokaal (gesynchroniseerd) bestand.
 #[tauri::command]
 async fn deel(state: tauri::State<'_, AppState>, bestand: String, wachtwoord: Option<String>) -> Result<String, String> {
     let id = bestand_id(&state, &bestand)?;
-    let client = client(&state)?;
+    let client = client(&state).await?;
     let wachtwoord = wachtwoord.filter(|w| !w.is_empty());
     let deling = client.deel_bestand(&id, wachtwoord.as_deref()).await.map_err(fout)?;
     Ok(format!("{}/delen/{}", client.basis(), deling.token))
@@ -181,7 +227,7 @@ async fn maak_cloudmap(state: tauri::State<'_, AppState>, ruimte: String, lokaal
     #[cfg(windows)]
     {
         use openaec_sync::motor::Opslag;
-        let client = client(&state)?;
+        let client = client(&state).await?;
         let bestanden = ClientOpslag::new(client.clone(), &ruimte).lijst().await.map_err(fout)?;
         std::fs::create_dir_all(&lokaal).map_err(fout)?;
         cloudfilter::register(&lokaal, "OpenAEC Cloud", env!("CARGO_PKG_VERSION")).map_err(fout)?;
@@ -213,8 +259,9 @@ async fn maak_cloudmap(state: tauri::State<'_, AppState>, ruimte: String, lokaal
 #[cfg(windows)]
 fn hydrator(client: Client) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync + 'static {
     let basis = client.basis().to_string();
-    let autorisatie = instellingen::lees_sleutel(&basis).unwrap_or_default();
     move |bestand, begin, lengte| {
+        // Callback-thread van Windows (geen async runtime): token zo nodig vernieuwen via block_on.
+        let Ok(autorisatie) = tauri::async_runtime::block_on(autorisatie(&basis)) else { return Vec::new() };
         let http = reqwest::blocking::Client::new();
         let link: Option<String> = http
             .post(format!("{basis}/api/method/openaec_storage.api.download"))
@@ -272,6 +319,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             status,
             verbind,
+            log_in,
             verbreek,
             ruimtes,
             koppel,

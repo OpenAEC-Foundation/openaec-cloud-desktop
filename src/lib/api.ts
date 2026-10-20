@@ -39,6 +39,7 @@ export interface MapRapport {
 export const api = {
   status: () => invoke<Status>("status"),
   verbind: (basis: string, autorisatie: string) => invoke<Ruimte[]>("verbind", { basis, autorisatie }),
+  logIn: (basis: string) => invoke<Ruimte[]>("log_in", { basis }),
   verbreek: () => invoke<void>("verbreek"),
   ruimtes: () => invoke<Ruimte[]>("ruimtes"),
   koppel: (ruimte: string, ruimteNaam: string, lokaal: string) =>

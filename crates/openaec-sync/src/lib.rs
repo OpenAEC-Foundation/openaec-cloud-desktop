@@ -5,6 +5,7 @@
 pub mod api;
 pub mod blokken;
 pub mod motor;
+pub mod oauth;
 pub mod opslag;
 
 use std::io::SeekFrom;

@@ -45,7 +45,7 @@ Een GitHub Actions-workflow (`tauri-action`) bouwt de installer reproduceerbaar.
 
 ## Nog te doen
 
-- Inloggen met het centrale OpenAEC-account (OIDC met PKCE) in plaats van een API-sleutel.
+
 - Live bewaking van de map (direct syncen bij een wijziging) naast de ronde van 30 s.
 - Status-vinkjes per bestand in Verkenner en vergrendelen/delen vanuit het contextmenu.
 - Tray, autostart en automatische updates.

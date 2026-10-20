@@ -72,3 +72,5 @@ button.primary:hover:not(:disabled) { background: var(--amber-bright); }
 .status { font-size: 12px; color: #15803d; }
 .status.fout { color: #b91c1c; }
 button.link { align-self: flex-start; border: none; background: none; color: var(--stone); padding: 4px 0; text-decoration: underline; }
+.alternatief { margin-top: 16px; font-size: 13px; }
+.alternatief summary { cursor: pointer; color: var(--stone); margin-bottom: 12px; }

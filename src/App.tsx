@@ -65,6 +65,13 @@ export default function App() {
       setMelding(`Verbonden met ${basis()}`)
     })
 
+  const logIn = () =>
+    doe("Inloggen (rond het af in je browser)", async () => {
+      setRuimtes(await api.logIn(basis()))
+      setVerbonden(true)
+      setMelding(`Ingelogd bij ${basis()}`)
+    })
+
   const verbreek = () =>
     doe("Verbreken", async () => {
       await api.verbreek()
@@ -130,17 +137,20 @@ export default function App() {
                 Adres van je omgeving
                 <input value={basis()} placeholder="https://jouwbedrijf.cloud.open-aec.com" onInput={(e) => setBasis(e.currentTarget.value)} />
               </label>
-              <label>
-                Sleutel
-                <input type="password" value={sleutel()} placeholder="token sleutel:geheim" onInput={(e) => setSleutel(e.currentTarget.value)} />
-              </label>
-              <p class="hint">
-                Maak een API-sleutel in je omgeving (Mijn instellingen → API-toegang). De sleutel wordt in de sleutelbos van
-                Windows bewaard. Inloggen met je OpenAEC-account volgt in een volgende versie.
-              </p>
-              <button class="primary" disabled={bezig() || !basis() || !sleutel()} onClick={verbind}>
-                Verbinden
+              <button class="primary" disabled={bezig() || !basis()} onClick={logIn}>
+                Inloggen met OpenAEC-account
               </button>
+              <details class="alternatief">
+                <summary>Of verbind met een API-sleutel</summary>
+                <label>
+                  Sleutel
+                  <input type="password" value={sleutel()} placeholder="token sleutel:geheim" onInput={(e) => setSleutel(e.currentTarget.value)} />
+                </label>
+                <p class="hint">Voor servers en scripts: maak een API-sleutel in je omgeving (Mijn instellingen → API-toegang).</p>
+                <button disabled={bezig() || !basis() || !sleutel()} onClick={verbind}>
+                  Verbinden met sleutel
+                </button>
+              </details>
             </section>
           }
         >

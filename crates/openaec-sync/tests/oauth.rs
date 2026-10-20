@@ -1,0 +1,91 @@
+//! Inloggen met het OpenAEC-account: PKCE, loopback-redirect en tokens (Frappe als OAuth-provider).
+
+use openaec_sync::oauth::{autorisatie_url, challenge, vernieuw, verifier, wacht_op_code, wissel_code, Tokens};
+use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wiremock::matchers::{body_string_contains, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const TOKEN: &str = "/api/method/frappe.integrations.oauth2.get_token";
+
+#[test]
+fn challenge_volgt_rfc_7636() {
+    assert_eq!(
+        challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
+    let v = verifier();
+    assert!((43..=128).contains(&v.len()));
+    assert_ne!(v, verifier());
+}
+
+#[test]
+fn autorisatie_url_bevat_pkce_en_redirect() {
+    let url = autorisatie_url("https://klant.cloud.open-aec.com/", "abc", "xyz");
+    assert!(url.starts_with("https://klant.cloud.open-aec.com/api/method/frappe.integrations.oauth2.authorize?"));
+    for deel in [
+        "client_id=openaec-cloud-desktop",
+        "response_type=code",
+        "code_challenge=abc",
+        "code_challenge_method=S256",
+        "state=xyz",
+        "redirect_uri=http%3A%2F%2F127.0.0.1%3A47613%2Fcallback",
+    ] {
+        assert!(url.contains(deel), "{deel} ontbreekt in {url}");
+    }
+}
+
+async fn browser(poort: u16, pad: &str) -> String {
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", poort)).await.unwrap();
+    s.write_all(format!("GET {pad} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes()).await.unwrap();
+    let mut uit = String::new();
+    s.read_to_string(&mut uit).await.unwrap();
+    uit
+}
+
+#[tokio::test]
+async fn loopback_vangt_de_code_en_controleert_state() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let poort = listener.local_addr().unwrap().port();
+    let wacht = tokio::spawn(wacht_op_code(listener, "goed".to_string()));
+    let pagina = browser(poort, "/callback?code=C123&state=goed").await;
+    assert!(pagina.contains("200"));
+    assert_eq!(wacht.await.unwrap().unwrap(), "C123");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let poort = listener.local_addr().unwrap().port();
+    let wacht = tokio::spawn(wacht_op_code(listener, "goed".to_string()));
+    browser(poort, "/callback?code=C123&state=fout").await;
+    assert!(wacht.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn code_inwisselen_en_vernieuwen() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN))
+        .and(body_string_contains("grant_type=authorization_code"))
+        .and(body_string_contains("code_verifier=geheim"))
+        .and(body_string_contains("code=C123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"access_token": "A1", "refresh_token": "R1", "expires_in": 3600, "token_type": "Bearer"}),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("refresh_token=R1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"access_token": "A2", "refresh_token": "R2", "expires_in": 3600}),
+        ))
+        .mount(&server)
+        .await;
+
+    let t: Tokens = wissel_code(&server.uri(), "C123", "geheim").await.unwrap();
+    assert_eq!((t.access_token.as_str(), t.refresh_token.as_str()), ("A1", "R1"));
+    assert!(!t.verlopen());
+    assert_eq!(t.autorisatie(), "Bearer A1");
+    let t2 = vernieuw(&server.uri(), &t).await.unwrap();
+    assert_eq!(t2.access_token, "A2");
+}
