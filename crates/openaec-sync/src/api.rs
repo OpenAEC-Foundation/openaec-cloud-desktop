@@ -250,6 +250,11 @@ impl Client {
         })
     }
 
+    /// Haal een bestand uit de prullenbak (krijgt "(hersteld)" in de naam als de plek bezet is).
+    pub async fn herstel(&self, bestand: &str) -> Result<(), Fout> {
+        self.roep::<Value>("herstel", json!({"bestand": bestand})).await.map(|_| ())
+    }
+
     pub async fn verplaats_map(&self, map: &str, naam: &str, bovenliggende: Option<&str>) -> Result<(), Fout> {
         self.roep_leeg("verplaats_map", json!({"map": map, "naam": naam, "bovenliggende": bovenliggende})).await
     }
