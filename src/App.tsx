@@ -186,7 +186,7 @@ export default function App() {
               <h2>Verbinden met OpenAEC Storage</h2>
               <label>
                 Adres van je omgeving
-                <input value={basis()} placeholder="https://jouwbedrijf.cloud.open-aec.com" onInput={(e) => setBasis(e.currentTarget.value)} />
+                <input value={basis()} placeholder="https://jouwbedrijf.cloud.open-aec.eu" onInput={(e) => setBasis(e.currentTarget.value)} />
               </label>
               <button class="primary" disabled={bezig() || !basis()} onClick={logIn}>
                 Inloggen met OpenAEC-account

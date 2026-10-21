@@ -36,8 +36,8 @@ De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow *
 
 ```bash
 install -m 755 openaec-storage ~/.local/bin/
-openaec-storage inloggen https://bedrijf.cloud.open-aec.com          # via de browser
-OPENAEC_SLEUTEL="sleutel:geheim" openaec-storage inloggen https://bedrijf.cloud.open-aec.com --sleutel
+openaec-storage inloggen https://bedrijf.cloud.open-aec.eu          # via de browser
+OPENAEC_SLEUTEL="sleutel:geheim" openaec-storage inloggen https://bedrijf.cloud.open-aec.eu --sleutel
 openaec-storage ruimtes
 openaec-storage koppel "Project A" ~/OpenAEC/Project-A
 openaec-storage sync            # één ronde

@@ -2,7 +2,7 @@
 //! Dezelfde sync-motor als de desktop-app.
 //!
 //! ```text
-//! openaec-storage inloggen https://bedrijf.cloud.open-aec.com      # via de browser (OpenAEC-account)
+//! openaec-storage inloggen https://bedrijf.cloud.open-aec.eu      # via de browser (OpenAEC-account)
 //! openaec-storage inloggen https://… --sleutel                     # API-sleutel uit OPENAEC_SLEUTEL ("sleutel:geheim")
 //! openaec-storage ruimtes
 //! openaec-storage koppel "Project A" ~/OpenAEC/Project-A
