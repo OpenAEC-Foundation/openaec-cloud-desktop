@@ -31,6 +31,19 @@ impl ClientOpslag {
         &self.client
     }
 
+    /// Map-id voor een bestaand mappad (zonder iets aan te maken); None als de map niet (meer) bestaat.
+    pub async fn zoek_map(&self, mappad: &str) -> Result<Option<String>, Fout> {
+        let mut map: Option<String> = None;
+        for deel in mappad.split('/').filter(|d| !d.is_empty()) {
+            let inhoud = self.client.bladeren(&self.ruimte, map.as_deref()).await?;
+            match inhoud.mappen.into_iter().find(|m| m.naam == deel) {
+                Some(m) => map = Some(m.name),
+                None => return Ok(None),
+            }
+        }
+        Ok(map)
+    }
+
     /// Map-id voor een mappad ("" = hoofdniveau), mappen die nog ontbreken worden aangemaakt.
     async fn zorg_voor_map(&self, mappad: &str) -> Result<Option<String>, Fout> {
         if mappad.is_empty() {

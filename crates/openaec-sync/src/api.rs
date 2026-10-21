@@ -116,6 +116,17 @@ pub struct NieuweMap {
     pub nieuw: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Versie {
+    pub volgnummer: u64,
+    #[serde(default)]
+    pub grootte: u64,
+    #[serde(default)]
+    pub maker: Option<String>,
+    #[serde(default)]
+    pub creation: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Deling {
     pub deling: String,
@@ -225,11 +236,28 @@ impl Client {
 
     /// Leeslink zonder account voor een bestand; de gastpagina staat op `<basis>/delen/<token>`.
     pub async fn deel_bestand(&self, bestand: &str, wachtwoord: Option<&str>) -> Result<Deling, Fout> {
+        self.deel("Opslagbestand", bestand, wachtwoord, None).await
+    }
+
+    /// Leeslink zonder account voor een bestand (`Opslagbestand`) of map (`Opslagmap`); `verloopt` als
+    /// `JJJJ-MM-DD` (einde van die dag) of None.
+    pub async fn deel(&self, doctype: &str, doel: &str, wachtwoord: Option<&str>, verloopt: Option<&str>) -> Result<Deling, Fout> {
+        let verloopt = verloopt.map(|d| format!("{d} 23:59:59"));
         self.roep(
             "deel",
-            json!({"doel_doctype": "Opslagbestand", "doel": bestand, "soort": "link", "wachtwoord": wachtwoord}),
+            json!({"doel_doctype": doctype, "doel": doel, "soort": "link", "wachtwoord": wachtwoord, "verloopt": verloopt}),
         )
         .await
+    }
+
+    /// Alle versies van een bestand, nieuwste eerst.
+    pub async fn versies(&self, bestand: &str) -> Result<Vec<Versie>, Fout> {
+        self.roep("versies", json!({"bestand": bestand})).await
+    }
+
+    /// Downloadlink voor een bepaalde versie.
+    pub async fn download_versie(&self, bestand: &str, versie: u64) -> Result<DownloadLink, Fout> {
+        self.roep("download", json!({"bestand": bestand, "versie": versie})).await
     }
 
     pub fn basis(&self) -> &str {

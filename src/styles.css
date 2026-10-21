@@ -76,3 +76,6 @@ button.link { align-self: flex-start; border: none; background: none; color: var
 .alternatief summary { cursor: pointer; color: var(--stone); margin-bottom: 12px; }
 label.vinkje { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); margin: 4px 0 6px; }
 label.vinkje input { width: auto; margin: 0; }
+.twee { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.lijst.versies { margin: 4px 0 12px; }
+.sharelink { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

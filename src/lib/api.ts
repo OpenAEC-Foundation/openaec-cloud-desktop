@@ -28,6 +28,13 @@ export interface Rapport {
   fouten: string[]
 }
 
+export interface Versie {
+  volgnummer: number
+  grootte: number
+  maker: string | null
+  creation: string | null
+}
+
 export interface MapRapport {
   lokaal: string
   ruimte_naam: string
@@ -48,7 +55,11 @@ export const api = {
   syncNu: () => invoke<MapRapport[]>("sync_nu"),
   vergrendel: (bestand: string) => invoke<void>("vergrendel", { bestand }),
   ontgrendel: (bestand: string) => invoke<void>("ontgrendel", { bestand }),
-  deel: (bestand: string, wachtwoord: string) => invoke<string>("deel", { bestand, wachtwoord }),
+  deel: (bestand: string, wachtwoord: string, verloopt: string) => invoke<string>("deel", { bestand, wachtwoord, verloopt }),
+  versies: (bestand: string) => invoke<Versie[]>("versies", { bestand }),
+  openVersie: (bestand: string, versie: number) => invoke<void>("open_versie", { bestand, versie }),
+  opActie: (f: (a: { actie: string; pad: string }) => void) =>
+    listen<{ actie: string; pad: string }>("actie", (e) => f(e.payload)),
   maakCloudmap: (ruimte: string, lokaal: string) => invoke<number>("maak_cloudmap", { ruimte, lokaal }),
   autostart: () => invoke<boolean>("autostart"),
   zetAutostart: (aan: boolean) => invoke<boolean>("zet_autostart", { aan }),

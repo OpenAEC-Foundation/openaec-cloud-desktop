@@ -4,6 +4,7 @@
 mod bewaking;
 mod instellingen;
 mod systeemvak;
+mod verkenner;
 
 #[cfg(windows)]
 pub mod cloudfilter;
@@ -17,7 +18,7 @@ use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
 use instellingen::{Instellingen, Koppeling};
@@ -132,7 +133,15 @@ fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String
     }
     inst.koppelingen.push(Koppeling { ruimte, ruimte_naam, lokaal });
     inst.bewaar().map_err(fout)?;
+    werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
+}
+
+fn werk_menu_bij(koppelingen: &[Koppeling]) {
+    let mappen: Vec<String> = koppelingen.iter().map(|k| k.lokaal.clone()).collect();
+    if let Err(e) = verkenner::registreer(&mappen) {
+        log::warn!("rechtermuismenu bijwerken mislukt: {e}");
+    }
 }
 
 /// Ontkoppelen laat de lokale bestanden staan.
@@ -141,6 +150,7 @@ fn ontkoppel(state: tauri::State<'_, AppState>, lokaal: String) -> Result<Vec<Ko
     let mut inst = state.instellingen.lock().unwrap();
     inst.koppelingen.retain(|k| k.lokaal != lokaal);
     inst.bewaar().map_err(fout)?;
+    werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
 }
 
@@ -220,12 +230,89 @@ async fn ontgrendel(state: tauri::State<'_, AppState>, bestand: String) -> Resul
 
 /// Leeslink voor een lokaal (gesynchroniseerd) bestand.
 #[tauri::command]
-async fn deel(state: tauri::State<'_, AppState>, bestand: String, wachtwoord: Option<String>) -> Result<String, String> {
-    let id = bestand_id(&state, &bestand)?;
-    let client = client(&state).await?;
-    let wachtwoord = wachtwoord.filter(|w| !w.is_empty());
-    let deling = client.deel_bestand(&id, wachtwoord.as_deref()).await.map_err(fout)?;
+async fn deel(
+    state: tauri::State<'_, AppState>,
+    bestand: String,
+    wachtwoord: Option<String>,
+    verloopt: Option<String>,
+) -> Result<String, String> {
+    maak_deellink(&state, &bestand, wachtwoord.filter(|w| !w.is_empty()), verloopt.filter(|v| !v.is_empty())).await
+}
+
+/// Deellink voor een lokaal bestand of een lokale map in een gekoppelde map.
+async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, verloopt: Option<String>) -> Result<String, String> {
+    let client = client(state).await?;
+    let (doctype, id) = if Path::new(pad).is_dir() {
+        let (k, rel) = zoek(state, pad)?;
+        let id = ClientOpslag::new(client.clone(), &k.ruimte)
+            .zoek_map(&rel)
+            .await
+            .map_err(fout)?
+            .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
+        ("Opslagmap", id)
+    } else {
+        ("Opslagbestand", bestand_id(state, pad)?)
+    };
+    let deling = client.deel(doctype, &id, wachtwoord.as_deref(), verloopt.as_deref()).await.map_err(fout)?;
     Ok(format!("{}/delen/{}", client.basis(), deling.token))
+}
+
+#[tauri::command]
+async fn versies(state: tauri::State<'_, AppState>, bestand: String) -> Result<Vec<openaec_sync::api::Versie>, String> {
+    let id = bestand_id(&state, &bestand)?;
+    client(&state).await?.versies(&id).await.map_err(fout)
+}
+
+/// Een oudere versie downloaden (opent de tijdelijke downloadlink in de browser).
+#[tauri::command]
+async fn open_versie(app: AppHandle, state: tauri::State<'_, AppState>, bestand: String, versie: u64) -> Result<(), String> {
+    let id = bestand_id(&state, &bestand)?;
+    let link = client(&state).await?.download_versie(&id, versie).await.map_err(fout)?;
+    #[allow(deprecated)]
+    app.shell().open(&link.url, None).map_err(fout)
+}
+
+fn melding(app: &AppHandle, tekst: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title("OpenAEC Storage").body(tekst).show();
+}
+
+async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    match actie {
+        "deel" => {
+            let link = maak_deellink(&state, pad, None, None).await?;
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            app.clipboard().write_text(link).map_err(fout)?;
+            Ok(format!("Deellink van {naam} staat op het klembord."))
+        }
+        "vergrendel" => {
+            let id = bestand_id(&state, pad)?;
+            let apparaat = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into());
+            client(&state).await?.vergrendel(&id, &apparaat, false).await.map_err(fout)?;
+            Ok(format!("{naam} is vergrendeld: collega's zien dat jij eraan werkt."))
+        }
+        "ontgrendel" => {
+            let id = bestand_id(&state, pad)?;
+            client(&state).await?.ontgrendel(&id).await.map_err(fout)?;
+            Ok(format!("{naam} is ontgrendeld."))
+        }
+        _ => Err(format!("onbekende actie: {actie}")),
+    }
+}
+
+/// Actie uit het rechtermuismenu van de Verkenner.
+pub(crate) async fn voer_actie(app: AppHandle, actie: String, pad: String) {
+    if actie == "verzend" || actie == "versies" {
+        systeemvak::toon(&app);
+        let _ = app.emit("actie", serde_json::json!({ "actie": actie, "pad": pad }));
+        return;
+    }
+    let naam = Path::new(&pad).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    match actie_uitvoeren(&app, &actie, &pad, &naam).await {
+        Ok(t) => melding(&app, &t),
+        Err(e) => melding(&app, &format!("{naam}: {e}")),
+    }
 }
 
 /// Maak van een lokale map een cloud-map (alleen Windows): bestanden van de ruimte verschijnen als
@@ -313,7 +400,13 @@ fn zet_autostart(app: AppHandle, aan: bool) -> Result<bool, String> {
 pub fn run() {
     tauri::Builder::default()
         // Eén exemplaar tegelijk: een tweede start toont het bestaande venster.
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| systeemvak::toon(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _| match verkenner::actie_uit(&argv) {
+            Some((actie, pad)) => {
+                tauri::async_runtime::spawn(voer_actie(app.clone(), actie, pad));
+            }
+            None => systeemvak::toon(app),
+        }))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![systeemvak::VERBORGEN]),
@@ -328,6 +421,12 @@ pub fn run() {
         .setup(|app| {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
+            werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
+            // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
+            let argv: Vec<String> = std::env::args().collect();
+            if let Some((actie, pad)) = verkenner::actie_uit(&argv) {
+                tauri::async_runtime::spawn(voer_actie(app.handle().clone(), actie, pad));
+            }
             Ok(())
         })
         .on_window_event(systeemvak::venster_gebeurtenis)
@@ -345,7 +444,9 @@ pub fn run() {
             deel,
             maak_cloudmap,
             autostart,
-            zet_autostart
+            zet_autostart,
+            versies,
+            open_versie
         ])
         .run(tauri::generate_context!())
         .expect("fout bij het starten van OpenAEC Storage");

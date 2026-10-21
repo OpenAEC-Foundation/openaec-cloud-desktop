@@ -1,6 +1,6 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { open } from "@tauri-apps/plugin-dialog"
-import { api, type Koppeling, type MapRapport, type Ruimte } from "./lib/api"
+import { api, type Koppeling, type MapRapport, type Ruimte, type Versie } from "./lib/api"
 
 const samenvatting = (m: MapRapport) => {
   if (m.fout) return `fout: ${m.fout}`
@@ -27,6 +27,9 @@ export default function App() {
   const [bestand, setBestand] = createSignal("")
   const [wachtwoord, setWachtwoord] = createSignal("")
   const [link, setLink] = createSignal("")
+  const [verloopt, setVerloopt] = createSignal("")
+  const [versielijst, setVersielijst] = createSignal<Versie[] | null>(null)
+  let deelKaart: HTMLElement | undefined
   const [autostart, setAutostart] = createSignal(false)
 
   const verwerk = (r: MapRapport[]) => {
@@ -55,6 +58,15 @@ export default function App() {
       api.ruimtes().then(setRuimtes).catch((e) => setMelding("Ruimtes ophalen mislukt: " + e))
     }
     api.autostart().then(setAutostart).catch(() => {})
+    // Rechtermuismenu in de Verkenner: "Verzenden…" en "Versies bekijken" komen hier binnen.
+    const stopActie = await api.opActie(async ({ actie, pad }) => {
+      setBestand(pad)
+      setLink("")
+      setVersielijst(null)
+      deelKaart?.scrollIntoView({ behavior: "smooth" })
+      if (actie === "versies") toonVersies()
+    })
+    onCleanup(stopActie)
     const stop = await api.opSync(verwerk)
     onCleanup(stop)
   })
@@ -102,13 +114,22 @@ export default function App() {
       setMelding("Synchronisatie klaar")
     })
 
-  const kiesBestand = async () => {
-    const f = await open({ directory: false, multiple: false })
+  const kies = async (map: boolean) => {
+    const f = await open({ directory: map, multiple: false })
     if (typeof f === "string") {
       setBestand(f)
       setLink("")
+      setVersielijst(null)
     }
   }
+
+  const toonVersies = () =>
+    doe("Versies ophalen", async () => {
+      setVersielijst(await api.versies(bestand()))
+      setMelding("")
+    })
+
+  const mb = (b: number) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} kB`)
 
   const cloudmap = (r: Ruimte) =>
     doe("Cloud-map maken", async () => {
@@ -214,11 +235,12 @@ export default function App() {
             </ul>
           </section>
 
-          <section class="card">
-            <h2>Bestand vergrendelen of delen</h2>
+          <section class="card" ref={deelKaart}>
+            <h2>Delen, vergrendelen en versies</h2>
             <div class="row">
-              <button onClick={kiesBestand}>Bestand kiezen…</button>
-              <span class="path">{bestand() || "(uit een gekoppelde map)"}</span>
+              <button onClick={() => kies(false)}>Bestand kiezen…</button>
+              <button onClick={() => kies(true)}>Map kiezen…</button>
+              <span class="path">{bestand() || "(uit een gekoppelde map, of via de rechtermuisknop in de Verkenner)"}</span>
             </div>
             <div class="row">
               <button disabled={bezig() || !bestand()} onClick={() => doe("Vergrendelen", async () => { await api.vergrendel(bestand()); setMelding("Vergrendeld: collega's zien dat jij eraan werkt") })}>
@@ -227,17 +249,46 @@ export default function App() {
               <button disabled={bezig() || !bestand()} onClick={() => doe("Ontgrendelen", async () => { await api.ontgrendel(bestand()); setMelding("Ontgrendeld") })}>
                 Ontgrendelen
               </button>
+              <button disabled={bezig() || !bestand()} onClick={toonVersies}>
+                Versies bekijken
+              </button>
             </div>
-            <label>
-              Wachtwoord voor de link (optioneel)
-              <input type="password" value={wachtwoord()} onInput={(e) => setWachtwoord(e.currentTarget.value)} />
-            </label>
-            <button disabled={bezig() || !bestand()} onClick={() => doe("Delen", async () => { setLink(await api.deel(bestand(), wachtwoord())); setMelding("Deellink gemaakt") })}>
+            <Show when={versielijst()}>
+              {(lijst) => (
+                <ul class="lijst versies">
+                  <For each={lijst()}>
+                    {(v) => (
+                      <li>
+                        <div>
+                          <strong>Versie {v.volgnummer}</strong>
+                          <span class="path">{[v.creation?.slice(0, 16), v.maker, mb(v.grootte)].filter(Boolean).join(" · ")}</span>
+                        </div>
+                        <button disabled={bezig()} onClick={() => doe("Downloaden", async () => { await api.openVersie(bestand(), v.volgnummer); setMelding(`Versie ${v.volgnummer} wordt gedownload`) })}>
+                          Downloaden
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              )}
+            </Show>
+            <div class="twee">
+              <label>
+                Wachtwoord voor de link (optioneel)
+                <input type="password" value={wachtwoord()} onInput={(e) => setWachtwoord(e.currentTarget.value)} />
+              </label>
+              <label>
+                Geldig tot (optioneel)
+                <input type="date" value={verloopt()} onInput={(e) => setVerloopt(e.currentTarget.value)} />
+              </label>
+            </div>
+            <button class="primary" disabled={bezig() || !bestand()} onClick={() => doe("Delen", async () => { setLink(await api.deel(bestand(), wachtwoord(), verloopt())); setMelding("Deellink gemaakt; ook mappen kun je zo delen") })}>
               Deellink maken
             </button>
             <Show when={link()}>
               <div class="sharelink">
                 <a href={link()} target="_blank" rel="noreferrer">{link()}</a>
+                <button class="link" onClick={() => navigator.clipboard.writeText(link()).then(() => setMelding("Link gekopieerd"))}>Kopiëren</button>
               </div>
             </Show>
           </section>
