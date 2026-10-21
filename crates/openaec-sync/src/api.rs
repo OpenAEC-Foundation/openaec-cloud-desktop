@@ -132,6 +132,9 @@ pub struct Deling {
     pub deling: String,
     pub token: String,
     pub rechten: String,
+    /// Volledig publiek adres van de deelpagina (nieuwere servers); anders zelf bouwen met `basis`.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Deserialize)]

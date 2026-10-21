@@ -12,6 +12,9 @@ pub struct ClientOpslag {
     client: Client,
     ruimte: String,
     mappen: Mutex<HashMap<String, String>>,
+    /// Mappen één voor één aanmaken: parallelle uploads (importeren) die dezelfde ontbrekende map nodig hebben,
+    /// maken hem anders allemaal tegelijk aan.
+    aanmaken: tokio::sync::Mutex<()>,
 }
 
 fn splits(pad: &str) -> (&str, &str) {
@@ -24,7 +27,7 @@ fn samen(map: &str, naam: &str) -> String {
 
 impl ClientOpslag {
     pub fn new(client: Client, ruimte: &str) -> Self {
-        Self { client, ruimte: ruimte.to_string(), mappen: Mutex::new(HashMap::new()) }
+        Self { client, ruimte: ruimte.to_string(), mappen: Mutex::new(HashMap::new()), aanmaken: tokio::sync::Mutex::new(()) }
     }
 
     pub fn client(&self) -> &Client {
@@ -60,6 +63,7 @@ impl ClientOpslag {
         if let Some(id) = self.mappen.lock().unwrap().get(mappad) {
             return Ok(Some(id.clone()));
         }
+        let _beurt = self.aanmaken.lock().await;
         let mut bovenliggende: Option<String> = None;
         let mut pad = String::new();
         for deel in mappad.split('/') {

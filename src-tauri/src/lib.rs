@@ -270,7 +270,7 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
         ("Opslagbestand", bestand_id(state, pad)?)
     };
     let deling = client.deel(doctype, &id, wachtwoord.as_deref(), verloopt.as_deref()).await.map_err(fout)?;
-    Ok(format!("{}/delen/{}", client.basis(), deling.token))
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
 }
 
 #[tauri::command]
