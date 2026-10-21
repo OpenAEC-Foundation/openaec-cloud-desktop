@@ -31,6 +31,14 @@ impl ClientOpslag {
         &self.client
     }
 
+    /// Alle mappen van de ruimte als paden met '/', gesorteerd (voor de mapselectie).
+    pub async fn alle_mappen(&self) -> Result<Vec<String>, Fout> {
+        self.lijst().await?;
+        let mut mappen: Vec<String> = self.mappen.lock().unwrap().keys().cloned().collect();
+        mappen.sort();
+        Ok(mappen)
+    }
+
     /// Map-id voor een bestaand mappad (zonder iets aan te maken); None als de map niet (meer) bestaat.
     pub async fn zoek_map(&self, mappad: &str) -> Result<Option<String>, Fout> {
         let mut map: Option<String> = None;

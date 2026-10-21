@@ -146,6 +146,32 @@ pub fn bekend_bestand(root: &Path, pad: &str) -> Option<(String, u64)> {
 
 /// Eén sync-ronde voor de map `root` tegen `opslag`.
 pub async fn sync_eenmalig<O: Opslag>(opslag: &O, root: &Path) -> Result<Rapport, Fout> {
+    sync_met_selectie(opslag, root, &[]).await
+}
+
+/// Ligt `pad` in een van de uitgesloten mappen (hele mapnamen, met '/')?
+fn uitgesloten_pad(pad: &str, uitgesloten: &[String]) -> bool {
+    uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()).any(|u| {
+        pad == u || pad.strip_prefix(u).is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+/// Lege mappen opruimen onder `map` (van diep naar ondiep); niet-lege blijven staan.
+fn ruim_lege_mappen_op(map: &Path) {
+    if let Ok(items) = std::fs::read_dir(map) {
+        for item in items.flatten() {
+            if item.file_type().is_ok_and(|t| t.is_dir()) {
+                ruim_lege_mappen_op(&item.path());
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(map);
+}
+
+/// Eén sync-ronde met mapselectie: mappen in `uitgesloten` (paden met '/') blijven op de server maar komen niet
+/// (meer) op deze computer. Een ongewijzigde lokale kopie verdwijnt; lokaal nieuw of gewijzigd werk erin wordt
+/// toch geüpload (niets gaat verloren) en verdwijnt daarna in een volgende ronde.
+pub async fn sync_met_selectie<O: Opslag>(opslag: &O, root: &Path, uitgesloten: &[String]) -> Result<Rapport, Fout> {
     let mut toestand = laad(root);
     let mut rapport = Rapport::default();
     let server: BTreeMap<String, OpslagBestand> =
@@ -174,6 +200,17 @@ pub async fn sync_eenmalig<O: Opslag>(opslag: &O, root: &Path) -> Result<Rapport
             (Some(_), None) => true,
             _ => false,
         };
+        if uitgesloten_pad(&pad, uitgesloten) && !(hier.is_some() && lokaal_gewijzigd) {
+            if hier.is_some() {
+                // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg, op de server blijft hij staan.
+                if let Err(fout) = std::fs::remove_file(lokaal_pad(root, &pad)) {
+                    rapport.fouten.push(format!("{pad}: {fout}"));
+                    continue;
+                }
+            }
+            toestand.bestanden.remove(&pad);
+            continue;
+        }
         let uitkomst = stap(
             opslag, root, &mut toestand, &mut rapport, &pad, bekend, op_server, hier.is_some(),
             lokaal_gewijzigd, server_gewijzigd,
@@ -182,6 +219,9 @@ pub async fn sync_eenmalig<O: Opslag>(opslag: &O, root: &Path) -> Result<Rapport
         if let Err(fout) = uitkomst {
             rapport.fouten.push(format!("{pad}: {fout}"));
         }
+    }
+    for u in uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()) {
+        ruim_lege_mappen_op(&lokaal_pad(root, u));
     }
     bewaar(root, &toestand)?;
     Ok(rapport)

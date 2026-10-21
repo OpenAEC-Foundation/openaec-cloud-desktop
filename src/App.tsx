@@ -28,6 +28,10 @@ export default function App() {
   const [wachtwoord, setWachtwoord] = createSignal("")
   const [link, setLink] = createSignal("")
   const [verloopt, setVerloopt] = createSignal("")
+  // Mapselectie: welke koppeling, alle mappen van de ruimte en de uitgevinkte mappen.
+  const [selectieVoor, setSelectieVoor] = createSignal<Koppeling | null>(null)
+  const [alleMappen, setAlleMappen] = createSignal<string[]>([])
+  const [uit, setUit] = createSignal<string[]>([])
   const [versielijst, setVersielijst] = createSignal<Versie[] | null>(null)
   let deelKaart: HTMLElement | undefined
   const [autostart, setAutostart] = createSignal(false)
@@ -123,6 +127,30 @@ export default function App() {
     }
   }
 
+  const kiesMappen = (k: Koppeling) =>
+    doe("Mappen ophalen", async () => {
+      setAlleMappen(await api.mappenVan(k.ruimte))
+      setUit(k.uitgesloten ?? [])
+      setSelectieVoor(k)
+      setMelding("")
+    })
+
+  // Een map is uitgesloten als hij zelf of een bovenliggende map uitgevinkt is.
+  const onder = (map: string, ouder: string) => map === ouder || map.startsWith(ouder + "/")
+  const isUit = (map: string) => uit().some((u) => onder(map, u))
+  const ouderUit = (map: string) => uit().some((u) => u !== map && onder(map, u))
+  const wissel = (map: string) =>
+    setUit(isUit(map) ? uit().filter((u) => u !== map) : [...uit().filter((u) => !onder(u, map)), map])
+
+  const bewaarSelectie = () =>
+    doe("Mapselectie opslaan", async () => {
+      const k = selectieVoor()!
+      setKoppelingen(await api.zetSelectie(k.lokaal, uit()))
+      setSelectieVoor(null)
+      verwerk(await api.syncNu())
+      setMelding(uit().length ? `${uit().length} map(pen) niet meer op deze computer; ze blijven op de server` : "Alle mappen staan op deze computer")
+    })
+
   const toonVersies = () =>
     doe("Versies ophalen", async () => {
       setVersielijst(await api.versies(bestand()))
@@ -200,9 +228,14 @@ export default function App() {
                           )}
                         </Show>
                       </div>
-                      <button disabled={bezig()} onClick={() => ontkoppel(k)}>
-                        Ontkoppelen
-                      </button>
+                      <div class="row">
+                        <button disabled={bezig()} onClick={() => kiesMappen(k)}>
+                          Mappen kiezen…
+                        </button>
+                        <button disabled={bezig()} onClick={() => ontkoppel(k)}>
+                          Ontkoppelen
+                        </button>
+                      </div>
                     </li>
                   )}
                 </For>
@@ -210,6 +243,33 @@ export default function App() {
               <p class="hint">Synchroniseert automatisch zodra er iets verandert, hier of op de server{laatste() && ` · laatst ${laatste()}`}.</p>
             </Show>
           </section>
+
+          <Show when={selectieVoor()}>
+            {(k) => (
+              <section class="card">
+                <div class="kop">
+                  <h2>Mappen op deze computer: {k().ruimte_naam}</h2>
+                  <button disabled={bezig()} onClick={() => setSelectieVoor(null)}>Annuleren</button>
+                </div>
+                <p class="hint">Uitgevinkte mappen blijven op de server en voor collega's beschikbaar, maar komen niet (meer) op deze computer.</p>
+                <Show when={alleMappen().length} fallback={<p class="hint">Deze ruimte heeft nog geen mappen.</p>}>
+                  <ul class="mapboom">
+                    <For each={alleMappen()}>
+                      {(m) => (
+                        <li style={{ "padding-left": `${(m.split("/").length - 1) * 18}px` }}>
+                          <label class="vinkje">
+                            <input type="checkbox" checked={!isUit(m)} disabled={ouderUit(m)} onChange={() => wissel(m)} />
+                            {m.split("/").pop()}
+                          </label>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+                <button class="primary" disabled={bezig()} onClick={bewaarSelectie}>Opslaan</button>
+              </section>
+            )}
+          </Show>
 
           <section class="card">
             <h2>Ruimtes</h2>

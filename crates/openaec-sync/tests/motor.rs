@@ -112,3 +112,54 @@ async fn interne_toestandsmap_wordt_niet_gesynchroniseerd() {
     sync_eenmalig(&opslag, dir.path()).await.unwrap();
     assert_eq!(opslag.paden(), vec!["a.txt".to_string()]);
 }
+
+// --- mapselectie (selectieve sync) ---------------------------------------------------------------
+
+use openaec_sync::motor::sync_met_selectie;
+
+#[tokio::test]
+async fn uitgesloten_map_wordt_niet_gedownload() {
+    let opslag = NepOpslag::default();
+    opslag.zet("Archief/oud.pdf", b"oud");
+    opslag.zet("Actueel/plan.pdf", b"plan");
+    let dir = tempfile::tempdir().unwrap();
+    let r = sync_met_selectie(&opslag, dir.path(), &["Archief".to_string()]).await.unwrap();
+    assert_eq!(r.gedownload, 1);
+    assert!(dir.path().join("Actueel/plan.pdf").exists());
+    assert!(!dir.path().join("Archief").exists());
+}
+
+#[tokio::test]
+async fn uitvinken_haalt_de_lokale_kopie_weg_maar_niet_die_op_de_server() {
+    let opslag = NepOpslag::default();
+    opslag.zet("Archief/2024/oud.pdf", b"oud");
+    let dir = tempfile::tempdir().unwrap();
+    sync_met_selectie(&opslag, dir.path(), &[]).await.unwrap();
+    assert!(dir.path().join("Archief/2024/oud.pdf").exists());
+    sync_met_selectie(&opslag, dir.path(), &["Archief".to_string()]).await.unwrap();
+    assert!(!dir.path().join("Archief").exists(), "lege map moet ook weg");
+    assert_eq!(opslag.inhoud("Archief/2024/oud.pdf").unwrap(), b"oud");
+    // weer aanvinken: komt terug
+    let r = sync_met_selectie(&opslag, dir.path(), &[]).await.unwrap();
+    assert_eq!(r.gedownload, 1);
+    assert!(dir.path().join("Archief/2024/oud.pdf").exists());
+}
+
+#[tokio::test]
+async fn lokaal_werk_in_een_uitgesloten_map_gaat_niet_verloren() {
+    let opslag = NepOpslag::default();
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "Archief/nieuw.txt", b"belangrijk");
+    let r = sync_met_selectie(&opslag, dir.path(), &["Archief".to_string()]).await.unwrap();
+    assert_eq!(r.geupload, 1);
+    assert_eq!(opslag.inhoud("Archief/nieuw.txt").unwrap(), b"belangrijk");
+}
+
+#[tokio::test]
+async fn alleen_hele_mapnamen_tellen() {
+    let opslag = NepOpslag::default();
+    opslag.zet("Archief 2/a.txt", b"a");
+    let dir = tempfile::tempdir().unwrap();
+    let r = sync_met_selectie(&opslag, dir.path(), &["Archief".to_string()]).await.unwrap();
+    assert_eq!(r.gedownload, 1, "'Archief 2' is een andere map dan 'Archief'");
+}

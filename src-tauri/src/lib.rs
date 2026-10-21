@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use openaec_sync::api::Ruimte;
-use openaec_sync::motor::{bekend_bestand, sync_eenmalig, Rapport};
+use openaec_sync::motor::{bekend_bestand, sync_met_selectie, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
@@ -131,7 +131,7 @@ fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String
     if inst.koppelingen.iter().any(|k| Path::new(&k.lokaal) == Path::new(&lokaal)) {
         return Err("deze map is al gekoppeld".into());
     }
-    inst.koppelingen.push(Koppeling { ruimte, ruimte_naam, lokaal });
+    inst.koppelingen.push(Koppeling { ruimte, ruimte_naam, lokaal, uitgesloten: Vec::new() });
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
@@ -142,6 +142,22 @@ fn werk_menu_bij(koppelingen: &[Koppeling]) {
     if let Err(e) = verkenner::registreer(&mappen) {
         log::warn!("rechtermuismenu bijwerken mislukt: {e}");
     }
+}
+
+/// Alle mappen van een ruimte (voor de mapselectie).
+#[tauri::command]
+async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<String>, String> {
+    ClientOpslag::new(client(&state).await?, &ruimte).alle_mappen().await.map_err(fout)
+}
+
+/// Mapselectie van een koppeling instellen; de volgende ronde haalt uitgevinkte mappen lokaal weg.
+#[tauri::command]
+fn zet_selectie(state: tauri::State<'_, AppState>, lokaal: String, uitgesloten: Vec<String>) -> Result<Vec<Koppeling>, String> {
+    let mut inst = state.instellingen.lock().unwrap();
+    let k = inst.koppelingen.iter_mut().find(|k| k.lokaal == lokaal).ok_or("deze map is niet gekoppeld")?;
+    k.uitgesloten = uitgesloten;
+    inst.bewaar().map_err(fout)?;
+    Ok(inst.koppelingen.clone())
 }
 
 /// Ontkoppelen laat de lokale bestanden staan.
@@ -177,7 +193,7 @@ async fn sync_mappen(
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
-        let r = sync_eenmalig(&opslag, Path::new(&k.lokaal)).await;
+        let r = sync_met_selectie(&opslag, Path::new(&k.lokaal), &k.uitgesloten).await;
         uit.push(MapRapport {
             lokaal: k.lokaal,
             ruimte_naam: k.ruimte_naam,
@@ -446,7 +462,9 @@ pub fn run() {
             autostart,
             zet_autostart,
             versies,
-            open_versie
+            open_versie,
+            mappen_van,
+            zet_selectie
         ])
         .run(tauri::generate_context!())
         .expect("fout bij het starten van OpenAEC Storage");

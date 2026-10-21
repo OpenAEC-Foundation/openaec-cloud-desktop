@@ -79,3 +79,6 @@ label.vinkje input { width: auto; margin: 0; }
 .twee { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .lijst.versies { margin: 4px 0 12px; }
 .sharelink { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mapboom { list-style: none; max-height: 320px; overflow: auto; margin: 4px 0 14px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.mapboom li { padding: 2px 0; }
+.mapboom label.vinkje { margin: 0; }

@@ -12,6 +12,7 @@ export interface Koppeling {
   ruimte: string
   ruimte_naam: string
   lokaal: string
+  uitgesloten: string[]
 }
 
 export interface Status {
@@ -56,6 +57,8 @@ export const api = {
   vergrendel: (bestand: string) => invoke<void>("vergrendel", { bestand }),
   ontgrendel: (bestand: string) => invoke<void>("ontgrendel", { bestand }),
   deel: (bestand: string, wachtwoord: string, verloopt: string) => invoke<string>("deel", { bestand, wachtwoord, verloopt }),
+  mappenVan: (ruimte: string) => invoke<string[]>("mappen_van", { ruimte }),
+  zetSelectie: (lokaal: string, uitgesloten: string[]) => invoke<Koppeling[]>("zet_selectie", { lokaal, uitgesloten }),
   versies: (bestand: string) => invoke<Versie[]>("versies", { bestand }),
   openVersie: (bestand: string, versie: number) => invoke<void>("open_versie", { bestand, versie }),
   opActie: (f: (a: { actie: string; pad: string }) => void) =>

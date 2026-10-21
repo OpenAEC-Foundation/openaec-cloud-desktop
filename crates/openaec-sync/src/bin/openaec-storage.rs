@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand};
 use notify::{RecursiveMode, Watcher};
 use openaec_sync::bewaking::{nieuwe_wijzigingen, telt_mee};
-use openaec_sync::motor::{sync_eenmalig, Rapport};
+use openaec_sync::motor::{sync_met_selectie, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::{Client, Fout};
@@ -51,6 +51,13 @@ enum Actie {
     Koppel { ruimte: String, map: PathBuf },
     /// Een koppeling opheffen (de lokale bestanden blijven staan)
     Ontkoppel { map: PathBuf },
+    /// Mapselectie: welke mappen van de ruimte niet op deze computer komen (zonder --zonder: alles weer aan)
+    Selectie {
+        map: PathBuf,
+        /// Map in de ruimte die hier niet komt (mag vaker); paden met '/'
+        #[arg(long = "zonder")]
+        zonder: Vec<String>,
+    },
     /// Gekoppelde mappen tonen
     Status,
     /// Eén sync-ronde voor alle gekoppelde mappen
@@ -75,6 +82,9 @@ struct Koppeling {
     ruimte: String,
     ruimte_naam: String,
     lokaal: PathBuf,
+    /// Mappen die niet op deze computer komen (mapselectie).
+    #[serde(default)]
+    uitgesloten: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -201,7 +211,7 @@ async fn sync(config: &mut Config, alleen: Option<&HashSet<PathBuf>>) -> Result<
     let client = config.client().await?;
     for k in config.koppelingen.iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
-        let r = sync_eenmalig(&opslag, &k.lokaal).await;
+        let r = sync_met_selectie(&opslag, &k.lokaal, &k.uitgesloten).await;
         toon_rapport(k, &r);
     }
     Ok(())
@@ -305,7 +315,7 @@ async fn voer_uit(actie: Actie) -> Result<(), String> {
             if config.koppelingen.iter().any(|k| k.lokaal == lokaal) {
                 return Err("deze map is al gekoppeld".into());
             }
-            config.koppelingen.push(Koppeling { ruimte: r.name, ruimte_naam: r.naam.clone(), lokaal: lokaal.clone() });
+            config.koppelingen.push(Koppeling { ruimte: r.name, ruimte_naam: r.naam.clone(), lokaal: lokaal.clone(), uitgesloten: Vec::new() });
             config.bewaar().map_err(|e| e.to_string())?;
             println!("{} gekoppeld aan {}", r.naam, lokaal.display());
             Ok(())
@@ -321,10 +331,22 @@ async fn voer_uit(actie: Actie) -> Result<(), String> {
             println!("Ontkoppeld; de bestanden blijven staan.");
             Ok(())
         }
+        Actie::Selectie { map, zonder } => {
+            let lokaal = volledig(&map).unwrap_or(map);
+            let k = config.koppelingen.iter_mut().find(|k| k.lokaal == lokaal).ok_or("deze map is niet gekoppeld")?;
+            k.uitgesloten = zonder.iter().map(|z| z.trim_matches('/').to_string()).filter(|z| !z.is_empty()).collect();
+            let tekst = if k.uitgesloten.is_empty() { "alle mappen staan weer op deze computer".to_string() } else { format!("niet op deze computer: {}", k.uitgesloten.join(", ")) };
+            config.bewaar().map_err(|e| e.to_string())?;
+            println!("Mapselectie opgeslagen ({tekst}); de volgende sync past het toe.");
+            Ok(())
+        }
         Actie::Status => {
             println!("Omgeving: {}", config.basis.as_deref().unwrap_or("(niet ingelogd)"));
             for k in &config.koppelingen {
                 println!("  {} -> {}", k.ruimte_naam, Path::new(&k.lokaal).display());
+                if !k.uitgesloten.is_empty() {
+                    println!("      niet op deze computer: {}", k.uitgesloten.join(", "));
+                }
             }
             Ok(())
         }

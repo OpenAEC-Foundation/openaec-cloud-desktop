@@ -12,6 +12,9 @@ pub struct Koppeling {
     pub ruimte: String,
     pub ruimte_naam: String,
     pub lokaal: String,
+    /// Mappen (paden met '/') die niet op deze computer komen (mapselectie).
+    #[serde(default)]
+    pub uitgesloten: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
