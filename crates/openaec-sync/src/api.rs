@@ -245,10 +245,28 @@ impl Client {
     /// Leeslink zonder account voor een bestand (`Opslagbestand`) of map (`Opslagmap`); `verloopt` als
     /// `JJJJ-MM-DD` (einde van die dag) of None.
     pub async fn deel(&self, doctype: &str, doel: &str, wachtwoord: Option<&str>, verloopt: Option<&str>) -> Result<Deling, Fout> {
+        self.deel_link(doctype, doel, "lezen", wachtwoord, verloopt).await
+    }
+
+    /// Uploadlink voor een map (bestanden opvragen): wie hem opent, kan bestanden aanleveren zonder account, maar
+    /// ziet de inhoud van de map niet.
+    pub async fn vraag_bestanden(&self, map: &str, wachtwoord: Option<&str>, verloopt: Option<&str>) -> Result<Deling, Fout> {
+        self.deel_link("Opslagmap", map, "uploaden", wachtwoord, verloopt).await
+    }
+
+    async fn deel_link(
+        &self,
+        doctype: &str,
+        doel: &str,
+        rechten: &str,
+        wachtwoord: Option<&str>,
+        verloopt: Option<&str>,
+    ) -> Result<Deling, Fout> {
         let verloopt = verloopt.map(|d| format!("{d} 23:59:59"));
         self.roep(
             "deel",
-            json!({"doel_doctype": doctype, "doel": doel, "soort": "link", "wachtwoord": wachtwoord, "verloopt": verloopt}),
+            json!({"doel_doctype": doctype, "doel": doel, "soort": "link", "rechten": rechten,
+                "wachtwoord": wachtwoord, "verloopt": verloopt}),
         )
         .await
     }

@@ -273,6 +273,22 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
     Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
 }
 
+/// Uploadlink (bestanden opvragen) voor een lokale map in een gekoppelde map.
+async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> {
+    if !Path::new(pad).is_dir() {
+        return Err("bestanden opvragen kan alleen voor een map".into());
+    }
+    let client = client(state).await?;
+    let (k, rel) = zoek(state, pad)?;
+    let id = ClientOpslag::new(client.clone(), &k.ruimte)
+        .zoek_map(&rel)
+        .await
+        .map_err(fout)?
+        .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
+    let deling = client.vraag_bestanden(&id, None, None).await.map_err(fout)?;
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
+}
+
 #[tauri::command]
 async fn versies(state: tauri::State<'_, AppState>, bestand: String) -> Result<Vec<openaec_sync::api::Versie>, String> {
     let id = bestand_id(&state, &bestand)?;
@@ -301,6 +317,12 @@ async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) ->
             use tauri_plugin_clipboard_manager::ClipboardExt;
             app.clipboard().write_text(link).map_err(fout)?;
             Ok(format!("Deellink van {naam} staat op het klembord."))
+        }
+        "opvragen" => {
+            let link = maak_uploadlink(&state, pad).await?;
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+            app.clipboard().write_text(link).map_err(fout)?;
+            Ok(format!("Uploadlink voor {naam} staat op het klembord: wie hem opent, kan bestanden in deze map zetten."))
         }
         "vergrendel" => {
             let id = bestand_id(&state, pad)?;

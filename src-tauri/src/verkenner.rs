@@ -10,7 +10,11 @@ pub const BESTANDSACTIES: [(&str, &str); 5] = [
     ("ontgrendel", "Ontgrendelen"),
     ("versies", "Versies bekijken"),
 ];
-pub const MAPACTIES: [(&str, &str); 2] = [("deel", "Deellink kopiëren"), ("verzend", "Verzenden…")];
+pub const MAPACTIES: [(&str, &str); 3] = [
+    ("deel", "Deellink kopiëren"),
+    ("opvragen", "Bestanden opvragen (uploadlink)"),
+    ("verzend", "Verzenden…"),
+];
 
 /// AQS-voorwaarde: het pad begint met een van de gekoppelde mappen.
 pub fn applies_to(mappen: &[String]) -> String {
