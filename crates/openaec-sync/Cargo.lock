@@ -966,6 +966,7 @@ dependencies = [
  "blake3",
  "clap",
  "dirs",
+ "futures-util",
  "notify",
  "rand 0.8.8",
  "reqwest",

@@ -5,6 +5,7 @@
 pub mod api;
 pub mod bewaking;
 pub mod blokken;
+pub mod importeer;
 pub mod motor;
 pub mod oauth;
 pub mod opslag;

@@ -57,6 +57,17 @@ enum Actie {
     Sync,
     /// Blijven synchroniseren: direct bij een lokale wijziging, en bij wijzigingen op de server
     Bewaak,
+    /// Een bestaande map in één richting naar een ruimte uploaden (overstappen); hervatbaar, de bron blijft staan
+    Importeer {
+        bron: PathBuf,
+        ruimte: String,
+        /// Map in de ruimte waarin de bestanden komen (standaard het hoofdniveau)
+        #[arg(long, default_value = "")]
+        doel: String,
+        /// Aantal uploads tegelijk
+        #[arg(long, default_value_t = 8)]
+        parallel: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +329,45 @@ async fn voer_uit(actie: Actie) -> Result<(), String> {
             Ok(())
         }
         Actie::Sync => sync(&mut config, None).await,
+        Actie::Importeer { bron, ruimte, doel, parallel } => {
+            let client = config.client().await?;
+            let ruimtes = client.ruimtes().await.map_err(|e| e.to_string())?;
+            let r = ruimtes
+                .iter()
+                .find(|r| r.name == ruimte || r.naam == ruimte || r.naam.eq_ignore_ascii_case(&ruimte))
+                .ok_or_else(|| format!("ruimte \"{ruimte}\" niet gevonden (zie `openaec-storage ruimtes`)"))?;
+            if !bron.is_dir() {
+                return Err(format!("{} is geen map", bron.display()));
+            }
+            println!("Importeren van {} naar {}{} ({} tegelijk)…", bron.display(), r.naam, if doel.is_empty() { String::new() } else { format!("/{doel}") }, parallel);
+            let opslag = ClientOpslag::new(client.clone(), &r.name);
+            let begin = Instant::now();
+            let (mut n, mut mb) = (0u64, 0f64);
+            let rapport = openaec_sync::importeer::importeer(&opslag, &bron, &doel, parallel, |v| {
+                n += 1;
+                if !v.overgeslagen && v.fout.is_none() {
+                    mb += v.bytes as f64 / 1_048_576.0;
+                }
+                if let Some(f) = &v.fout {
+                    eprintln!("  fout: {}: {f}", v.pad);
+                }
+                if n % 25 == 0 {
+                    let s = begin.elapsed().as_secs_f64().max(0.1);
+                    println!("  {n} bestanden, {mb:.0} MB geüpload ({:.1} MB/s)", mb / s);
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            println!(
+                "Klaar: {} geüpload ({:.0} MB), {} al aanwezig, {} fout(en) in {:.0} s.",
+                rapport.geupload,
+                rapport.bytes as f64 / 1_048_576.0,
+                rapport.overgeslagen,
+                rapport.fouten.len(),
+                begin.elapsed().as_secs_f64()
+            );
+            if rapport.fouten.is_empty() { Ok(()) } else { Err("niet alles is geüpload; start opnieuw om het restant te doen".into()) }
+        }
         Actie::Bewaak => bewaak(&mut config).await,
     }
 }
