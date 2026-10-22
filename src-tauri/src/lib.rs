@@ -1,4 +1,4 @@
-//! OpenAEC SuperCloud Desktop: koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk met de
+//! OpenAEC Desktop App: koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk met de
 //! sync-motor uit de crate `openaec-sync`.
 
 mod activiteit;
@@ -543,7 +543,7 @@ async fn open_versie(app: AppHandle, state: tauri::State<'_, AppState>, bestand:
 
 fn melding(app: &AppHandle, tekst: &str) {
     use tauri_plugin_notification::NotificationExt;
-    let _ = app.notification().builder().title("OpenAEC SuperCloud Desktop").body(tekst).show();
+    let _ = app.notification().builder().title("OpenAEC Desktop App").body(tekst).show();
 }
 
 async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) -> Result<String, String> {
@@ -750,5 +750,5 @@ pub fn run() {
             tools::tool_verwijderen
         ])
         .run(tauri::generate_context!())
-        .expect("fout bij het starten van OpenAEC SuperCloud Desktop");
+        .expect("fout bij het starten van OpenAEC Desktop App");
 }

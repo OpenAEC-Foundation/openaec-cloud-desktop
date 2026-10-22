@@ -55,7 +55,7 @@ export default function Status() {
     <div class="status">
       <header class="status-kop">
         <div class="woordmerk">
-          Open<span>AEC</span> SuperCloud
+          Open<span>AEC</span> Desktop App
         </div>
       </header>
 

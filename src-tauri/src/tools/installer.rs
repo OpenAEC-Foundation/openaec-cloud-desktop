@@ -87,12 +87,12 @@ pub async fn download_and_run(
     }
 
     // Eigen map (niet die van de losse installer), zodat twee downloads van dezelfde tool elkaar niet raken.
-    let dir = std::env::temp_dir().join("openaec-supercloud-tools");
+    let dir = std::env::temp_dir().join("openaec-desktop-app-tools");
     std::fs::create_dir_all(&dir).map_err(|e| format!("tijdelijke map: {e}"))?;
     let target = dir.join(&file_name);
 
     let client = reqwest::Client::builder()
-        .user_agent("OpenAEC-SuperCloud-Desktop")
+        .user_agent("OpenAEC-Desktop-App")
         .build()
         .map_err(|e| format!("http client: {e}"))?;
     let resp = client

@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-const USER_AGENT: &str = "OpenAEC-SuperCloud-Desktop (https://github.com/OpenAEC-Foundation)";
+const USER_AGENT: &str = "OpenAEC-Desktop-App (https://github.com/OpenAEC-Foundation)";
 
 /// De enige GitHub-organisatie waarvan releases worden opgehaald en gedownload.
 pub const ORGANISATIE: &str = "OpenAEC-Foundation";

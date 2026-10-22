@@ -1,4 +1,4 @@
-//! Rechtermuismenu in de Verkenner (Windows): een submenu "OpenAEC SuperCloud" op bestanden en mappen, alleen binnen
+//! Rechtermuismenu in de Verkenner (Windows): een submenu "OpenAEC Desktop App" op bestanden en mappen, alleen binnen
 //! de gekoppelde mappen (AppliesTo). Staat in HKCU, dus zonder beheerdersrechten; wordt bij het starten en na elke
 //! (ont)koppeling opnieuw geschreven. Een keuze start de app met `--actie <naam> "<pad>"`; draait de app al, dan
 //! stuurt de single-instance-plugin de opdracht door.
@@ -43,7 +43,7 @@ pub fn registreer(mappen: &[String]) -> std::io::Result<()> {
     let voorwaarde = applies_to(mappen);
     for (soort, acties) in [("*", &BESTANDSACTIES[..]), ("Directory", &MAPACTIES[..])] {
         let (menu, _) = klassen.create_subkey(format!("{soort}\\shell\\OpenAECStorage"))?;
-        menu.set_value("MUIVerb", &"OpenAEC SuperCloud")?;
+        menu.set_value("MUIVerb", &"OpenAEC Desktop App")?;
         menu.set_value("SubCommands", &"")?;
         menu.set_value("Icon", &format!("\"{exe}\",0"))?;
         menu.set_value("AppliesTo", &voorwaarde)?;

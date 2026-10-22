@@ -1,4 +1,4 @@
-; Overstap van de oude productnaam ("OpenAEC Storage", versies t/m 0.4) naar "OpenAEC SuperCloud Desktop".
+; Overstap van de oude productnaam ("OpenAEC Storage", versies t/m 0.4) naar "OpenAEC Desktop App".
 ;
 ; De NSIS-installer van Tauri leidt de installatiemap ($LOCALAPPDATA\<productnaam>), de uninstall-sleutel
 ; (HKCU\...\Uninstall\<productnaam>) en de sleutel met de installatiemap (HKCU\Software\<uitgever>\<productnaam>) af

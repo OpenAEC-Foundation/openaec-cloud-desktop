@@ -154,7 +154,7 @@ fn write_desktop_entry(
     let apps = data_home.join("applications");
     std::fs::create_dir_all(&apps).map_err(|e| e.to_string())?;
     let entry = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\"\nTerminal=false\nCategories=Office;Engineering;\nComment=Geïnstalleerd door OpenAEC SuperCloud Desktop\n",
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\"\nTerminal=false\nCategories=Office;Engineering;\nComment=Geïnstalleerd door OpenAEC Desktop App\n",
         display_name,
         appimage.display(),
     );

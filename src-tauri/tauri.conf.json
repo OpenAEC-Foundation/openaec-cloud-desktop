@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenAEC SuperCloud Desktop",
+  "productName": "OpenAEC Desktop App",
   "version": "0.4.0",
   "identifier": "com.openaec.cloud",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "OpenAEC SuperCloud Desktop",
+        "title": "OpenAEC Desktop App",
         "width": 1000,
         "height": 680,
         "minWidth": 760,
@@ -20,7 +20,7 @@
         "label": "main"
       },
       {
-        "title": "OpenAEC SuperCloud Desktop – status",
+        "title": "OpenAEC Desktop App – status",
         "label": "status",
         "url": "status.html",
         "width": 380,

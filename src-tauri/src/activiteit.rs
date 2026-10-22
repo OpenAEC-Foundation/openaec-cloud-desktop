@@ -182,7 +182,7 @@ pub fn meld(app: &AppHandle) {
     let state = app.state::<AppState>();
     let stand = state.activiteit.stand();
     let _ = app.emit("activiteit", &stand);
-    let vak = (stand.toestand, format!("OpenAEC SuperCloud – {}", stand.samenvatting));
+    let vak = (stand.toestand, format!("OpenAEC Desktop App – {}", stand.samenvatting));
     let veranderd = {
         let mut vorige = state.activiteit.vak.lock().unwrap();
         let veranderd = vorige.as_ref() != Some(&vak);
