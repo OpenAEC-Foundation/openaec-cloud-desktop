@@ -229,4 +229,8 @@ async fn bekende_paden_zijn_alle_bestanden_die_in_sync_zijn() {
     schrijf(dir.path(), "kapot.txt", b"x");
     sync_eenmalig(&opslag, dir.path()).await.unwrap();
     assert_eq!(gesorteerd(bekende_paden(dir.path())), vec!["Map/b.txt", "a.txt"]);
+    // lokaal gewijzigd of verwijderd sinds de laatste ronde: niet (meer) in sync
+    schrijf(dir.path(), "a.txt", b"a v2");
+    std::fs::remove_file(dir.path().join("Map/b.txt")).unwrap();
+    assert!(bekende_paden(dir.path()).is_empty());
 }

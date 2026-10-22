@@ -168,10 +168,16 @@ pub fn bekend_bestand(root: &Path, pad: &str) -> Option<(String, u64)> {
     laad(root).bestanden.get(pad).map(|b| (b.bestand.clone(), b.versie))
 }
 
-/// Alle paden (met '/') die volgens de toestand van de laatste ronde in sync zijn; leeg als de map nog nooit is
-/// gesynchroniseerd. Voor de eerste volledige markering in de Verkenner.
+/// Alle paden (met '/') die in sync zijn: in de toestand van de laatste ronde en lokaal ongewijzigd sinds die ronde
+/// (zelfde grootte en wijzigingstijd); leeg als de map nog nooit is gesynchroniseerd. Voor de statusvinkjes in de
+/// Verkenner: een bestand dat gewijzigd is terwijl de app niet draaide, krijgt zo geen vinkje.
 pub fn bekende_paden(root: &Path) -> Vec<String> {
-    laad(root).bestanden.into_keys().collect()
+    laad(root)
+        .bestanden
+        .into_iter()
+        .filter(|(pad, b)| kenmerk(&lokaal_pad(root, pad)).is_ok_and(|k| k == (b.grootte, b.mtime_ns)))
+        .map(|(pad, _)| pad)
+        .collect()
 }
 
 /// Eén sync-ronde voor de map `root` tegen `opslag`.
