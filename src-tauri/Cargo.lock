@@ -2871,7 +2871,7 @@ dependencies = [
 
 [[package]]
 name = "openaec-cloud"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "openaec-sync"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
