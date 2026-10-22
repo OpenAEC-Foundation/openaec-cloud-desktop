@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::motor::{Opslag, OpslagBestand, Upload};
-use crate::{download_bestand, upload_bestand, Client, Fout};
+use crate::motor::{Opslag, OpslagBestand, Upload, Voortgang};
+use crate::{download_met_voortgang, upload_met_voortgang, Client, Fout};
 
 pub struct ClientOpslag {
     client: Client,
@@ -109,17 +109,31 @@ impl Opslag for ClientOpslag {
     }
 
     async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout> {
-        let (mappad, naam) = splits(pad);
-        let map = self.zorg_voor_map(mappad).await?;
-        let r = upload_bestand(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis_versie).await?;
-        Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict })
+        self.upload_met_voortgang(pad, lokaal, basis_versie, &|_, _| {}).await
     }
 
     async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
+        self.download_met_voortgang(bestand, lokaal, &|_, _| {}).await
+    }
+
+    async fn upload_met_voortgang(
+        &self,
+        pad: &str,
+        lokaal: &Path,
+        basis_versie: Option<u64>,
+        voortgang: Voortgang<'_>,
+    ) -> Result<Upload, Fout> {
+        let (mappad, naam) = splits(pad);
+        let map = self.zorg_voor_map(mappad).await?;
+        let r = upload_met_voortgang(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis_versie, voortgang).await?;
+        Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict })
+    }
+
+    async fn download_met_voortgang(&self, bestand: &OpslagBestand, lokaal: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
         if let Some(map) = lokaal.parent() {
             tokio::fs::create_dir_all(map).await?;
         }
-        download_bestand(&self.client, &bestand.bestand, lokaal).await
+        download_met_voortgang(&self.client, &bestand.bestand, lokaal, voortgang).await
     }
 
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {

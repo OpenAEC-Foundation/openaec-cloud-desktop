@@ -9,6 +9,7 @@ pub mod importeer;
 pub mod motor;
 pub mod oauth;
 pub mod opslag;
+pub mod voortgang;
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -16,6 +17,7 @@ use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub use api::{Client, UploadResultaat};
+use motor::Voortgang;
 use api::Etag;
 use blokken::{aantal_blokken, blokgrootte, gewijzigde_blokken, hash_bestand};
 
@@ -49,6 +51,20 @@ pub async fn upload_bestand(
     pad: &Path,
     basis_versie: Option<u64>,
 ) -> Result<UploadResultaat, Fout> {
+    upload_met_voortgang(client, ruimte, map, naam, pad, basis_versie, &|_, _| {}).await
+}
+
+/// Als [`upload_bestand`]; `voortgang` krijgt na elk deel (overgezet, totaal) in bytes, voor de delen die echt
+/// over de lijn gaan.
+pub async fn upload_met_voortgang(
+    client: &Client,
+    ruimte: &str,
+    map: Option<&str>,
+    naam: &str,
+    pad: &Path,
+    basis_versie: Option<u64>,
+    voortgang: Voortgang<'_>,
+) -> Result<UploadResultaat, Fout> {
     let grootte = tokio::fs::metadata(pad).await?.len();
     let blok = blokgrootte(grootte);
     let hashes = hash_bestand(pad, blok).await?;
@@ -56,10 +72,15 @@ pub async fn upload_bestand(
         .upload_start(ruimte, map, naam, grootte, basis_versie, &hashes, "sync")
         .await?;
 
+    let lengte_van = |nummer: u64| {
+        let begin = (nummer - 1) * start.deelgrootte;
+        (begin, start.deelgrootte.min(grootte.saturating_sub(begin)))
+    };
+    let totaal: u64 = start.delen.iter().map(|d| lengte_van(d.nummer).1).sum();
+    let mut gedaan = 0u64;
     let mut etags = Vec::with_capacity(start.delen.len());
     for deel in &start.delen {
-        let begin = (deel.nummer - 1) * start.deelgrootte;
-        let lengte = start.deelgrootte.min(grootte.saturating_sub(begin));
+        let (begin, lengte) = lengte_van(deel.nummer);
         let stuk = lees_stuk(pad, begin, lengte).await?;
         let antwoord = client.http.put(&deel.url).body(stuk).send().await?;
         if !antwoord.status().is_success() {
@@ -73,6 +94,8 @@ pub async fn upload_bestand(
             .ok_or_else(|| Fout::Controle(format!("geen ETag voor deel {}", deel.nummer)))?
             .to_string();
         etags.push(Etag { nummer: deel.nummer, etag });
+        gedaan += lengte;
+        voortgang(gedaan, totaal);
     }
     client.upload_klaar(&start.upload, &etags).await
 }
@@ -81,6 +104,12 @@ pub async fn upload_bestand(
 /// lokaal anders zijn; de rest komt uit het lokale bestand. Het resultaat wordt gecontroleerd en pas daarna
 /// atomair op de plek van het oude bestand gezet.
 pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Result<(), Fout> {
+    download_met_voortgang(client, bestand, pad, &|_, _| {}).await
+}
+
+/// Als [`download_bestand`]; `voortgang` krijgt tijdens het ophalen (overgezet, totaal) in bytes, voor de blokken
+/// die echt over de lijn gaan.
+pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
     let info = client.blokken(bestand).await?;
     let link = client.download(bestand).await?;
     let blok = info.blokgrootte;
@@ -96,6 +125,8 @@ pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Res
         _ => (0..aantal).collect(),
     };
 
+    let totaal: u64 = ophalen.iter().map(|&i| blok.min(info.grootte.saturating_sub(i as u64 * blok))).sum();
+    let mut gedaan = 0u64;
     let tijdelijk = pad.with_extension("openaec-download");
     let mut uit = tokio::fs::File::create(&tijdelijk).await?;
     for index in 0..aantal {
@@ -105,7 +136,7 @@ pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Res
             continue;
         }
         let stuk = if ophalen.contains(&index) {
-            let antwoord = client
+            let mut antwoord = client
                 .http
                 .get(&link.url)
                 .header("Range", format!("bytes={}-{}", begin, begin + lengte - 1))
@@ -115,7 +146,14 @@ pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Res
                 let status = antwoord.status().as_u16();
                 return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
             }
-            antwoord.bytes().await?.to_vec()
+            // In stukjes binnenhalen, zodat de voortgang ook binnen een blok doorloopt.
+            let mut stuk = Vec::with_capacity(lengte as usize);
+            while let Some(brok) = antwoord.chunk().await? {
+                gedaan += brok.len() as u64;
+                stuk.extend_from_slice(&brok);
+                voortgang(gedaan.min(totaal), totaal);
+            }
+            stuk
         } else {
             lees_stuk(pad, begin, lengte).await?
         };

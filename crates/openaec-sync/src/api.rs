@@ -137,6 +137,26 @@ pub struct Deling {
     pub url: Option<String>,
 }
 
+/// Actieve vergrendeling van een bestand (wie eraan werkt, tot wanneer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vergrendeling {
+    pub gebruiker: String,
+    #[serde(default)]
+    pub apparaat: Option<String>,
+    #[serde(default)]
+    pub verloopt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BestandInfo {
+    pub bestand: String,
+    pub naam: String,
+    #[serde(default)]
+    pub huidige_versie: u64,
+    #[serde(default)]
+    pub vergrendeling: Option<Vergrendeling>,
+}
+
 #[derive(Deserialize)]
 struct Antwoord<T> {
     message: T,
@@ -222,6 +242,11 @@ impl Client {
 
     pub async fn bladeren(&self, ruimte: &str, map: Option<&str>) -> Result<Inhoud, Fout> {
         self.roep("bladeren", json!({"ruimte": ruimte, "map": map})).await
+    }
+
+    /// Gegevens van één bestand, met de actieve vergrendeling (of None).
+    pub async fn info(&self, bestand: &str) -> Result<BestandInfo, Fout> {
+        self.roep("info", json!({"bestand": bestand})).await
     }
 
     pub async fn maak_map(&self, ruimte: &str, naam: &str, bovenliggende: Option<&str>) -> Result<NieuweMap, Fout> {
