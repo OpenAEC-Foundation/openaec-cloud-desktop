@@ -4,10 +4,17 @@
 mod bewaking;
 mod instellingen;
 mod systeemvak;
+mod updates;
 mod verkenner;
+mod vinkjes;
 
 #[cfg(windows)]
 pub mod cloudfilter;
+
+// Unit-tests: het app-manifest (zie build.rs) ook in de testbinary.
+#[cfg(all(test, windows))]
+#[link(name = "resource", kind = "static", modifiers = "+whole-archive")]
+extern "C" {}
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -160,13 +167,18 @@ fn zet_selectie(state: tauri::State<'_, AppState>, lokaal: String, uitgesloten: 
     Ok(inst.koppelingen.clone())
 }
 
-/// Ontkoppelen laat de lokale bestanden staan.
+/// Ontkoppelen laat de lokale bestanden staan; de statusvinkjes gaan eraf (na een eventueel lopende ronde).
 #[tauri::command]
-fn ontkoppel(state: tauri::State<'_, AppState>, lokaal: String) -> Result<Vec<Koppeling>, String> {
+fn ontkoppel(app: AppHandle, state: tauri::State<'_, AppState>, lokaal: String) -> Result<Vec<Koppeling>, String> {
     let mut inst = state.instellingen.lock().unwrap();
     inst.koppelingen.retain(|k| k.lokaal != lokaal);
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst.koppelingen);
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let _slot = state.bezig.lock().await;
+        let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::ontkoppel(&lokaal)).await;
+    });
     Ok(inst.koppelingen.clone())
 }
 
@@ -193,7 +205,13 @@ async fn sync_mappen(
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
-        let r = sync_met_selectie(&opslag, Path::new(&k.lokaal), &k.uitgesloten).await;
+        let mut r = sync_met_selectie(&opslag, Path::new(&k.lokaal), &k.uitgesloten).await;
+        if let Ok(rapport) = &mut r {
+            let lokaal = k.lokaal.clone();
+            let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
+            let foutpaden = std::mem::take(&mut rapport.foutpaden);
+            let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::na_ronde(&lokaal, &bijgewerkt, &foutpaden)).await;
+        }
         uit.push(MapRapport {
             lokaal: k.lokaal,
             ruimte_naam: k.ruimte_naam,
@@ -452,6 +470,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             instellingen: std::sync::Mutex::new(Instellingen::laad()),
             bezig: tokio::sync::Mutex::new(()),
@@ -459,6 +478,7 @@ pub fn run() {
         .setup(|app| {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
+            updates::start(app.handle().clone());
             werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();

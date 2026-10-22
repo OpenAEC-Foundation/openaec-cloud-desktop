@@ -1,7 +1,7 @@
 //! Gedeelde testhulp: een opslag in het geheugen met dezelfde conflictregel als de server.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -15,6 +15,8 @@ pub type Inhoud = BTreeMap<String, (String, u64, Vec<u8>)>;
 pub struct NepOpslag {
     pub bestanden: Mutex<Inhoud>,
     pub teller: Mutex<u64>,
+    /// Paden waarvoor uploaden en downloaden mislukt (om fouten per bestand na te bootsen).
+    pub weigeren: Mutex<BTreeSet<String>>,
 }
 
 impl NepOpslag {
@@ -33,6 +35,15 @@ impl NepOpslag {
     }
     pub fn paden(&self) -> Vec<String> {
         self.bestanden.lock().unwrap().keys().cloned().collect()
+    }
+    pub fn weiger(&self, pad: &str) {
+        self.weigeren.lock().unwrap().insert(pad.to_string());
+    }
+    fn geweigerd(&self, pad: &str) -> Result<(), Fout> {
+        if self.weigeren.lock().unwrap().contains(pad) {
+            return Err(Fout::Controle(format!("{pad} geweigerd (test)")));
+        }
+        Ok(())
     }
 }
 
@@ -53,6 +64,7 @@ impl Opslag for NepOpslag {
     }
 
     async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout> {
+        self.geweigerd(pad)?;
         let inhoud = std::fs::read(lokaal)?;
         let huidig = self.bestanden.lock().unwrap().get(pad).map(|x| x.1);
         let doel = match (huidig, basis_versie) {
@@ -69,6 +81,7 @@ impl Opslag for NepOpslag {
     }
 
     async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
+        self.geweigerd(&bestand.pad)?;
         let inhoud = self.inhoud(&bestand.pad).unwrap();
         if let Some(map) = lokaal.parent() {
             std::fs::create_dir_all(map)?;

@@ -163,3 +163,74 @@ async fn alleen_hele_mapnamen_tellen() {
     let r = sync_met_selectie(&opslag, dir.path(), &["Archief".to_string()]).await.unwrap();
     assert_eq!(r.gedownload, 1, "'Archief 2' is een andere map dan 'Archief'");
 }
+
+// --- paden per ronde (statusvinkjes in de Verkenner) ---------------------------------------------
+
+use openaec_sync::motor::bekende_paden;
+
+fn gesorteerd(mut paden: Vec<String>) -> Vec<String> {
+    paden.sort();
+    paden
+}
+
+#[tokio::test]
+async fn rapport_noemt_de_geuploade_en_gedownloade_paden() {
+    let opslag = NepOpslag::default();
+    opslag.zet("Model/gebouw.ifc", b"ifc");
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "Tekeningen/plan.pdf", b"pdf");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(gesorteerd(r.bijgewerkt), vec!["Model/gebouw.ifc", "Tekeningen/plan.pdf"]);
+    assert!(r.foutpaden.is_empty());
+    // niets veranderd: niets bijgewerkt
+    let r2 = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert!(r2.bijgewerkt.is_empty());
+    // alleen het gewijzigde bestand
+    schrijf(dir.path(), "Tekeningen/plan.pdf", b"pdf v2");
+    let r3 = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r3.bijgewerkt, vec!["Tekeningen/plan.pdf"]);
+}
+
+#[tokio::test]
+async fn rapport_noemt_bij_een_conflict_beide_versies() {
+    let opslag = NepOpslag::default();
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "a.txt", b"een");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    opslag.zet("a.txt", b"van collega");
+    schrijf(dir.path(), "a.txt", b"van mij");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(gesorteerd(r.bijgewerkt), vec!["a (conflict test).txt", "a.txt"]);
+}
+
+#[tokio::test]
+async fn fout_bij_een_bestand_komt_in_de_foutpaden_en_de_rest_gaat_door() {
+    let opslag = NepOpslag::default();
+    opslag.weiger("kapot.txt");
+    opslag.weiger("Server/kapot.ifc");
+    opslag.zet("Server/kapot.ifc", b"ifc");
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "kapot.txt", b"x");
+    schrijf(dir.path(), "goed.txt", b"y");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(gesorteerd(r.foutpaden), vec!["Server/kapot.ifc", "kapot.txt"]);
+    assert_eq!(r.fouten.len(), 2);
+    assert_eq!(r.bijgewerkt, vec!["goed.txt"]);
+}
+
+#[tokio::test]
+async fn bekende_paden_zijn_alle_bestanden_die_in_sync_zijn() {
+    let opslag = NepOpslag::default();
+    opslag.weiger("kapot.txt");
+    let dir = tempfile::tempdir().unwrap();
+    assert!(bekende_paden(dir.path()).is_empty(), "nog nooit gesynchroniseerd");
+    schrijf(dir.path(), "a.txt", b"a");
+    schrijf(dir.path(), "Map/b.txt", b"b");
+    schrijf(dir.path(), "kapot.txt", b"x");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(gesorteerd(bekende_paden(dir.path())), vec!["Map/b.txt", "a.txt"]);
+    // lokaal gewijzigd of verwijderd sinds de laatste ronde: niet (meer) in sync
+    schrijf(dir.path(), "a.txt", b"a v2");
+    std::fs::remove_file(dir.path().join("Map/b.txt")).unwrap();
+    assert!(bekende_paden(dir.path()).is_empty());
+}
