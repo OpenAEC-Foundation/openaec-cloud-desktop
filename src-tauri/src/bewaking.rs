@@ -1,6 +1,7 @@
 //! Wanneer de app synchroniseert: direct na een lokale wijziging (bestandswachter, 2 s rust) en wanneer de
 //! wijzigingenlijst van de server iets nieuws heeft (controle elke 30 s). Elke 10 minuten volgt hoe dan ook een
-//! volledige ronde, als vangnet voor gemiste gebeurtenissen.
+//! volledige ronde, als vangnet voor gemiste gebeurtenissen. Een nieuwe koppeling (ook bij het starten) krijgt eerst
+//! zijn statusvinkjes in de Verkenner.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -11,7 +12,8 @@ use openaec_sync::bewaking::{nieuwe_wijzigingen, telt_mee};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-use crate::{client, sync_mappen, AppState};
+use crate::instellingen::Koppeling;
+use crate::{client, sync_mappen, vinkjes, AppState};
 
 const RUST: Duration = Duration::from_secs(2);
 const CONTROLE: Duration = Duration::from_secs(30);
@@ -22,13 +24,26 @@ fn wachter(lokaal: &str, tx: UnboundedSender<String>) -> notify::Result<Recommen
     let sleutel = lokaal.to_string();
     let mut w = notify::recommended_watcher(move |gebeurtenis: notify::Result<notify::Event>| {
         if let Ok(g) = gebeurtenis {
-            if g.paths.iter().any(|p| telt_mee(&root, p)) {
+            // Alle paden langs (ook de statusvinkjes bijwerken); het zetten van een vinkje zelf telt niet mee.
+            let mut mee = false;
+            for p in &g.paths {
+                if telt_mee(&root, p) && vinkjes::gebeurtenis(&root, p) {
+                    mee = true;
+                }
+            }
+            if mee {
                 let _ = tx.send(sleutel.clone());
             }
         }
     })?;
     w.watch(&PathBuf::from(lokaal), RecursiveMode::Recursive)?;
     Ok(w)
+}
+
+/// Statusvinkjes voor een (nieuwe) koppeling, niet tegelijk met een sync-ronde.
+async fn markeer(state: &AppState, k: Koppeling) {
+    let _slot = state.bezig.lock().await;
+    let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::koppel(&k)).await;
 }
 
 pub fn start(app: AppHandle) {
@@ -44,6 +59,12 @@ pub fn start(app: AppHandle) {
             let state = app.state::<AppState>();
             let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
             let actief: HashSet<String> = koppelingen.iter().map(|k| k.lokaal.clone()).collect();
+
+            for k in &koppelingen {
+                if vinkjes::nog_te_koppelen(&k.lokaal) {
+                    markeer(&state, k.clone()).await;
+                }
+            }
 
             // Wachters en cursors gelijk houden met de koppelingen; een nieuwe koppeling direct syncen.
             wachters.retain(|lokaal, _| actief.contains(lokaal));
