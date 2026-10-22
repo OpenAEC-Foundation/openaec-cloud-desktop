@@ -121,11 +121,17 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # De app zelf heet naar de crate of naar de productnaam, afhankelijk van de Tauri-versie.
-          $app = Get-ChildItem 'src-tauri/target/release/openaec-cloud.exe', 'src-tauri/target/release/OpenAEC Storage.exe' -ErrorAction SilentlyContinue |
-            Select-Object -First 1
+          # Tauri ondertekent de app zoals hij in de installer gaat, niet het bestand in target/release; daarom ook de
+          # uitgepakte inhoud van de NSIS-installer nakijken (de WebView2-bestanden dragen de handtekening van Microsoft).
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $inhoud = Join-Path $env:RUNNER_TEMP 'nsis-inhoud'
+          7z x -y "-o$inhoud" $setup.FullName | Out-Null
+          $binnen = @(Get-ChildItem $inhoud -Recurse -Include *.exe, *.dll -ErrorAction SilentlyContinue)
+          if (-not ($binnen | Where-Object { $_.Name -match '^(openaec-cloud|OpenAEC Storage)\.exe$' })) {
+            Write-Error "de app zit niet in de installer: $($binnen.Name -join ', ')"; exit 1
+          }
           $bestanden = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe, src-tauri/target/release/bundle/msi/*.msi,
-            crates/openaec-sync/target/release/openaec-storage.exe -ErrorAction SilentlyContinue) + @($app | Where-Object { $_ })
+            crates/openaec-sync/target/release/openaec-storage.exe -ErrorAction SilentlyContinue) + $binnen
           if ($bestanden.Count -lt 4) { Write-Error "niet alle Windows-bestanden gevonden: $($bestanden.Name -join ', ')"; exit 1 }
           $fout = $false
           foreach ($b in $bestanden) {
