@@ -5,6 +5,7 @@ mod activiteit;
 mod bewaking;
 mod instellingen;
 mod systeemvak;
+mod tools;
 mod updates;
 mod verkenner;
 mod vinkjes;
@@ -741,7 +742,12 @@ pub fn run() {
             installeer_update,
             activiteit_stand,
             pauzeer,
-            toon_hoofdvenster
+            toon_hoofdvenster,
+            tools::tools_geinstalleerd,
+            tools::tools_releases,
+            tools::tool_installeren,
+            tools::tool_starten,
+            tools::tool_verwijderen
         ])
         .run(tauri::generate_context!())
         .expect("fout bij het starten van OpenAEC SuperCloud Desktop");

@@ -4,7 +4,7 @@
 import { createSignal } from "solid-js"
 import { api, type Koppeling, type KoppelStatus, type MapRapport, type Ruimte, type Stand } from "./api"
 
-export type Scherm = "overzicht" | "ruimtes" | "delen" | "instellingen"
+export type Scherm = "overzicht" | "ruimtes" | "delen" | "tools" | "instellingen"
 
 export const [scherm, setScherm] = createSignal<Scherm>("overzicht")
 export const [basis, setBasis] = createSignal("")

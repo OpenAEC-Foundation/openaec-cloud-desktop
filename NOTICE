@@ -1,0 +1,31 @@
+OpenAEC SuperCloud Desktop
+==========================
+
+Herkomst van overgenomen onderdelen
+-----------------------------------
+
+Het tabblad Tools is gebaseerd op de OpenAEC Installer
+(https://github.com/OpenAEC-Foundation/openaec-installer, commit 8b39bae, oktober 2026),
+© OpenAEC Foundation, uitgegeven onder Creative Commons Naamsvermelding-GelijkDelen 4.0 Internationaal
+(CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/).
+
+Overgenomen en bewerkt:
+
+- src-tauri/src/tools/github.rs        uit src-tauri/src/github.rs
+    (alleen repo's van OpenAEC-Foundation; SHA-256 van GitHub per asset; tests aangevuld)
+- src-tauri/src/tools/installer.rs     uit src-tauri/src/installer.rs
+    (alleen release-downloads van OpenAEC-Foundation; controle van SHA-256 en Authenticode-handtekening;
+    verwijderen toegevoegd; zelf-update van de installer weggelaten)
+- src-tauri/src/tools/registry.rs      uit src-tauri/src/registry.rs (UninstallString toegevoegd)
+- src-tauri/src/tools/linux.rs         uit src-tauri/src/linux.rs (verwijderen toegevoegd, zelf-update weggelaten)
+- src/lib/catalogus.ts                 uit src/data/catalog.ts (alleen Nederlandse omschrijvingen, enkele herschreven)
+- src/lib/tools.ts                     versievergelijking en statusmodel uit src/lib/status.ts
+- src/schermen/Tools.tsx               naar src/components/ToolCard.tsx en src/App.tsx, opnieuw opgebouwd in
+                                       SolidJS en de huisstijl van dit venster
+- public/tools/previews/*.jpg, public/tools/logos/*.png
+                                       uit public/previews/ en public/logos/ (afbeeldingen van open-aec.com)
+
+De bewerkingen zijn gemaakt in oktober 2026. Creative Commons heeft CC BY-SA 4.0 eenzijdig verenigbaar verklaard met
+de GNU GPL versie 3 (https://creativecommons.org/share-your-work/licensing-considerations/compatible-licenses/); de
+bewerkte delen vallen daarmee onder de GPLv3 en kunnen samen met de AGPLv3-code van deze repository (crate
+openaec-sync) worden verspreid. De naamsvermelding hierboven moet bij verdere verspreiding behouden blijven.

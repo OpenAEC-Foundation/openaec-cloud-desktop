@@ -25,12 +25,31 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
   van de server iets nieuws meldt (controle elke 30 s, eens per 10 minuten een volledige ronde), vergrendelen, deellinks, automatische
   updates, en op Windows via de **Cloud Filter API** statusvinkjes in gekoppelde mappen en cloud-mappen (placeholders die pas bij
   openen worden opgehaald).
-- **`src`** — de UI (SolidJS). Het hoofdvenster heeft vier schermen: **Overzicht** (status per gekoppelde map),
-  **Ruimtes** (ruimtes koppelen en de bestanden op de server bekijken), **Delen** (deellinks, vergrendelen, versies)
-  en **Instellingen**; onderin een statusbalk. Een linkerklik op het pictogram in het systeemvak opent het
+- **`src`** — de UI (SolidJS). Het hoofdvenster heeft vijf schermen: **Overzicht** (status per gekoppelde map),
+  **Ruimtes** (ruimtes koppelen en de bestanden op de server bekijken), **Delen** (deellinks, vergrendelen, versies),
+  **Tools** (zie hieronder) en **Instellingen**; onderin een statusbalk. Een linkerklik op het pictogram in het systeemvak opent het
   **statusvenster** (`status.html`): wat er nu over de lijn gaat, de laatste activiteit en knoppen om een map te
   openen of te pauzeren. Het pictogram zelf toont met een gekleurde stip of alles bijgewerkt is, de sync bezig of
   gepauzeerd is, of dat er een fout is.
+
+## Tools
+
+Het tabblad **Tools** toont de OpenAEC-tools als kaarten (naam, omschrijving, afbeelding, categorie, versie) en werkt
+ook zonder verbinding met een omgeving. Desktop-apps installeren, bijwerken, starten en verwijderen; webtools openen in
+de browser. De logica komt uit de [OpenAEC Installer](https://github.com/OpenAEC-Foundation/openaec-installer) (zie
+`NOTICE`): `src-tauri/src/tools` (releases, download, detectie) en `src/lib/catalogus.ts` (de lijst met tools).
+
+- **Releases:** de laatste GitHub-release van elke tool, alleen uit repo's van OpenAEC-Foundation; 6 uur bewaard
+  (GitHub staat zonder login 60 aanroepen per uur toe), **Vernieuwen** controleert meteen.
+- **Installeren:** alleen release-downloads van OpenAEC-Foundation. Elke download moet overeenkomen met de SHA-256 die
+  GitHub voor het bestand publiceert; op Windows start de setup bovendien alleen met een geldige Authenticode-
+  handtekening. Daarna loopt de setup van de tool zelf (Windows) of komt de AppImage in de beheerde map (Linux).
+- **Detectie:** Windows-register (Uninstall-sleutels) of de AppImage-map `~/.local/share/openaec-installer/apps`.
+- **Naast de losse OpenAEC Installer:** beide lezen dezelfde registersleutels en dezelfde AppImage-map en installeren via
+  de setup van de tool zelf, dus ze zien dezelfde installaties en schrijven geen eigen, botsende registerwaarden. Dit
+  tabblad werkt de installer zelf niet bij.
+- Tests van de pure logica: `npm test` (frontend) en `cargo test` in `src-tauri` (assetkeuze, download- en
+  digestcontrole, handtekening, uninstall-opdracht).
 
 ## Installeren
 

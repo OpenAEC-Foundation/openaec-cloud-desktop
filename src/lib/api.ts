@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import type { GeinstalleerdeTool, ReleaseInfo } from "./tools.ts"
 
 export interface Ruimte {
   name: string
@@ -104,7 +105,26 @@ export interface Stand {
   recent: Gebeurd[]
 }
 
-// Bindings naar de Rust-commands (src-tauri/src/lib.rs).
+/** Uitkomst van installeren: setup gestart (Windows) of direct geïnstalleerd (Linux). */
+export interface InstallUitkomst {
+  path: string
+  mode: "ranInstaller" | "installed"
+}
+
+export interface DownloadVoortgang {
+  id: string
+  downloaded: number
+  total: number | null
+  done: boolean
+}
+
+export interface ToolVraag {
+  id: string
+  displayName: string
+  exeName: string | null
+}
+
+// Bindings naar de Rust-commands (src-tauri/src/lib.rs en src-tauri/src/tools).
 export const api = {
   status: () => invoke<Status>("status"),
   verbind: (basis: string, autorisatie: string) => invoke<Ruimte[]>("verbind", { basis, autorisatie }),
@@ -140,4 +160,11 @@ export const api = {
   toonHoofdvenster: () => invoke<void>("toon_hoofdvenster"),
   opActiviteit: (f: (s: Stand) => void) => listen<Stand>("activiteit", (e) => f(e.payload)),
   opVensterOpen: (f: () => void) => listen("venster-open", () => f()),
+  toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
+  toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
+  toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>
+    invoke<InstallUitkomst>("tool_installeren", { id, url, bestandsnaam, digest, naam }),
+  toolStarten: (exePad: string) => invoke<void>("tool_starten", { exePad }),
+  toolVerwijderen: (query: ToolVraag) => invoke<"ranUninstaller" | "removed">("tool_verwijderen", { query }),
+  opToolDownload: (f: (v: DownloadVoortgang) => void) => listen<DownloadVoortgang>("tool-download", (e) => f(e.payload)),
 }

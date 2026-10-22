@@ -10,11 +10,13 @@ import Overzicht from "./schermen/Overzicht"
 import Ruimtes from "./schermen/Ruimtes"
 import Delen, { toonVersies, wisDeelresultaat } from "./schermen/Delen"
 import Instellingen from "./schermen/Instellingen"
+import Tools, { aantalToolUpdates } from "./schermen/Tools"
 
 const schermen: { id: Scherm; titel: string; icoon: string }[] = [
   { id: "overzicht", titel: "Overzicht", icoon: "M3 12h4l3-8 4 16 3-8h4" },
   { id: "ruimtes", titel: "Ruimtes", icoon: "M3 6h6l2 2h10v11H3z" },
   { id: "delen", titel: "Delen", icoon: "M18 8a3 3 0 1 0-3-3M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0-3-3M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" },
+  { id: "tools", titel: "Tools", icoon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" },
   { id: "instellingen", titel: "Instellingen", icoon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4 7 17M17 17l1.4 1.4M5.6 5.6 7 7" },
 ]
 
@@ -124,6 +126,7 @@ export default function App() {
   const teller = (id: Scherm) => {
     if (id === "overzicht") return koppelingen().length || ""
     if (id === "ruimtes") return ruimtes().length || ""
+    if (id === "tools") return aantalToolUpdates() || ""
     return ""
   }
 
@@ -141,46 +144,53 @@ export default function App() {
         </Show>
       </header>
 
-      <Show when={verbonden()} fallback={<Inloggen />}>
-        <div class="werkvlak">
-          <nav class="zijbalk">
-            <For each={schermen}>
-              {(s) => (
-                <button class="navknop" classList={{ actief: scherm() === s.id }} onClick={() => setScherm(s.id)}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d={s.icoon} />
-                  </svg>
-                  <span>{s.titel}</span>
-                  <Show when={teller(s.id)}>
-                    <span class="teller">{teller(s.id)}</span>
-                  </Show>
-                </button>
-              )}
-            </For>
+      {/* De zijbalk staat er altijd: het tabblad Tools werkt ook zonder verbinding met een omgeving. */}
+      <div class="werkvlak">
+        <nav class="zijbalk">
+          <For each={schermen}>
+            {(s) => (
+              <button class="navknop" classList={{ actief: scherm() === s.id }} onClick={() => setScherm(s.id)}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={s.icoon} />
+                </svg>
+                <span>{s.titel}</span>
+                <Show when={teller(s.id)}>
+                  <span class="teller">{teller(s.id)}</span>
+                </Show>
+              </button>
+            )}
+          </For>
+          <Show when={verbonden()}>
             <div class="zijbalk-voet">
               <button class="tekstknop" onClick={() => api.pauzeer(!stand()?.gepauzeerd)}>
                 {stand()?.gepauzeerd ? "Synchroniseren hervatten" : "Synchroniseren pauzeren"}
               </button>
             </div>
-          </nav>
-          <main class="inhoud">
-            <Switch>
-              <Match when={scherm() === "overzicht"}>
-                <Overzicht />
-              </Match>
-              <Match when={scherm() === "ruimtes"}>
-                <Ruimtes />
-              </Match>
-              <Match when={scherm() === "delen"}>
-                <Delen />
-              </Match>
-              <Match when={scherm() === "instellingen"}>
-                <Instellingen />
-              </Match>
-            </Switch>
-          </main>
-        </div>
-      </Show>
+          </Show>
+        </nav>
+        <main class="inhoud">
+          <Switch>
+            <Match when={scherm() === "tools"}>
+              <Tools />
+            </Match>
+            <Match when={scherm() === "instellingen" && verbonden()}>
+              <Instellingen />
+            </Match>
+            <Match when={!verbonden()}>
+              <Inloggen />
+            </Match>
+            <Match when={scherm() === "overzicht"}>
+              <Overzicht />
+            </Match>
+            <Match when={scherm() === "ruimtes"}>
+              <Ruimtes />
+            </Match>
+            <Match when={scherm() === "delen"}>
+              <Delen />
+            </Match>
+          </Switch>
+        </main>
+      </div>
 
       <Statusbalk />
     </div>
