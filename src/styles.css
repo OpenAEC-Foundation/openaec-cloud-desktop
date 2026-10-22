@@ -109,6 +109,7 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 }
 .woordmerk { font-family: var(--f-kop); font-weight: 700; letter-spacing: -0.3px; font-size: 16px; }
 .woordmerk span { color: var(--amber); }
+.woordmerk em { font-style: normal; font-weight: 500; color: var(--tekst-op-donker); }
 .omgeving { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tekst-op-donker); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .werkvlak { flex: 1; display: flex; min-height: 0; }

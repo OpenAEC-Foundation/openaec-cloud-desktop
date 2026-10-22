@@ -64,14 +64,14 @@ fn wissel_status(app: &AppHandle, klik: PhysicalPosition<f64>) {
 }
 
 pub fn maak(app: &mut App) -> tauri::Result<()> {
-    let openen = MenuItem::with_id(app, "openen", "OpenAEC Storage openen", true, None::<&str>)?;
+    let openen = MenuItem::with_id(app, "openen", "OpenAEC SuperCloud Desktop openen", true, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "Nu synchroniseren", true, None::<&str>)?;
     let afsluiten = MenuItem::with_id(app, "afsluiten", "Afsluiten", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&openen, &sync, &afsluiten])?;
     app.manage(Vakmenu(menu.clone()));
 
     let mut vak = TrayIconBuilder::with_id(VAK)
-        .tooltip("OpenAEC Storage")
+        .tooltip("OpenAEC SuperCloud Desktop")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, gebeurtenis| match gebeurtenis.id.as_ref() {

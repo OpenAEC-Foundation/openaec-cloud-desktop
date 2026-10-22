@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenAEC Storage",
+  "productName": "OpenAEC SuperCloud Desktop",
   "version": "0.4.0",
   "identifier": "com.openaec.cloud",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "OpenAEC Storage",
+        "title": "OpenAEC SuperCloud Desktop",
         "width": 1000,
         "height": 680,
         "minWidth": 760,
@@ -20,7 +20,7 @@
         "label": "main"
       },
       {
-        "title": "OpenAEC Storage – status",
+        "title": "OpenAEC SuperCloud Desktop – status",
         "label": "status",
         "url": "status.html",
         "width": 380,
@@ -56,9 +56,15 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper",
         "silent": true
+      },
+      "nsis": {
+        "installerHooks": "nsis/hooks.nsh"
+      },
+      "wix": {
+        "upgradeCode": "05e45fa2-f31f-52e2-b4e8-f0b880688a57"
       }
     },
-    "shortDescription": "Projectbestanden synchroniseren en delen met OpenAEC Storage",
+    "shortDescription": "Projectbestanden synchroniseren en delen, en OpenAEC-tools installeren",
     "category": "Productivity"
   },
   "plugins": {

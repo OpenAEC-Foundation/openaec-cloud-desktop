@@ -1,5 +1,5 @@
-//! OpenAEC Storage (desktop): koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk
-//! met de sync-motor uit de crate `openaec-sync`.
+//! OpenAEC SuperCloud Desktop: koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk met de
+//! sync-motor uit de crate `openaec-sync`.
 
 mod activiteit;
 mod bewaking;
@@ -38,6 +38,9 @@ struct AppState {
     /// Wat de sync nu doet (statusvenster, statusbalk, systeemvak) en of hij gepauzeerd is.
     activiteit: activiteit::Activiteit,
 }
+
+/// Naam van de autostart-regel; de productnaam van vóór versie 0.5 (zie `run`).
+const AUTOSTART_NAAM: &str = "OpenAEC Storage";
 
 fn fout(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -539,7 +542,7 @@ async fn open_versie(app: AppHandle, state: tauri::State<'_, AppState>, bestand:
 
 fn melding(app: &AppHandle, tekst: &str) {
     use tauri_plugin_notification::NotificationExt;
-    let _ = app.notification().builder().title("OpenAEC Storage").body(tekst).show();
+    let _ = app.notification().builder().title("OpenAEC SuperCloud Desktop").body(tekst).show();
 }
 
 async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) -> Result<String, String> {
@@ -678,10 +681,15 @@ pub fn run() {
             None => systeemvak::toon(app),
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec![systeemvak::VERBORGEN]),
-        ))
+        // Vaste naam voor de autostart-regel (Run-sleutel op Windows, .desktop-bestand op Linux): standaard is dat de
+        // productnaam, en dan zou een bestaande regel van vóór de nieuwe naam niet meer herkend worden. De
+        // NSIS-uninstaller ruimt deze regel op (nsis/hooks.nsh).
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(AUTOSTART_NAAM)
+                .args([systeemvak::VERBORGEN])
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -736,5 +744,5 @@ pub fn run() {
             toon_hoofdvenster
         ])
         .run(tauri::generate_context!())
-        .expect("fout bij het starten van OpenAEC Storage");
+        .expect("fout bij het starten van OpenAEC SuperCloud Desktop");
 }

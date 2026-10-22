@@ -1,4 +1,4 @@
-name: Build OpenAEC Storage
+name: Build OpenAEC SuperCloud Desktop
 
 on:
   workflow_dispatch: {}
@@ -120,7 +120,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: "OpenAEC Storage ${{ github.ref_name }}"
+          releaseName: "OpenAEC SuperCloud Desktop ${{ github.ref_name }}"
           releaseDraft: true
           includeUpdaterJson: true
           # De Windows-installer in latest.json is de NSIS-setup (zoals in de README), niet de .msi.
@@ -138,7 +138,7 @@ jobs:
           $inhoud = Join-Path $env:RUNNER_TEMP 'nsis-inhoud'
           7z x -y "-o$inhoud" $setup.FullName | Out-Null
           $binnen = @(Get-ChildItem $inhoud -Recurse -Include *.exe, *.dll -ErrorAction SilentlyContinue)
-          if (-not ($binnen | Where-Object { $_.Name -match '^(openaec-cloud|OpenAEC Storage)\.exe$' })) {
+          if (-not ($binnen | Where-Object { $_.Name -match '^(openaec-cloud|OpenAEC SuperCloud Desktop)\.exe$' })) {
             Write-Error "de app zit niet in de installer: $($binnen.Name -join ', ')"; exit 1
           }
           $bestanden = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe, src-tauri/target/release/bundle/msi/*.msi,
@@ -156,7 +156,7 @@ jobs:
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
-          name: openaec-storage-${{ matrix.naam }}
+          name: openaec-supercloud-desktop-${{ matrix.naam }}
           path: ${{ matrix.bundels }}
           if-no-files-found: error
       - name: Opdrachtregel als artefact (Windows)

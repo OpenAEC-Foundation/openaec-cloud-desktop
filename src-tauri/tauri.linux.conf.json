@@ -9,6 +9,15 @@
       "deb": {
         "depends": [
           "libayatana-appindicator3-1"
+        ],
+        "conflicts": [
+          "open-aec-storage"
+        ],
+        "replaces": [
+          "open-aec-storage"
+        ],
+        "provides": [
+          "open-aec-storage"
         ]
       }
     }

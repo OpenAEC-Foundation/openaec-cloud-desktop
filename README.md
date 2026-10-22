@@ -1,9 +1,10 @@
-# OpenAEC Storage — desktop-app en opdrachtregel
+# OpenAEC SuperCloud Desktop — desktop-app en opdrachtregel
 
-[![Build OpenAEC Storage](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml)
+[![Build OpenAEC SuperCloud Desktop](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml/badge.svg)](https://github.com/OpenAEC-Foundation/openaec-cloud-desktop/actions/workflows/build.yml)
 
-Desktop-app voor **OpenAEC Storage**: koppel lokale mappen aan ruimtes in je OpenAEC-omgeving, werk samen
-zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een link. Gebouwd met
+Desktop-app van OpenAEC (tot versie 0.4 heette hij **OpenAEC Storage**). Voor **OpenAEC Storage**: koppel lokale
+mappen aan ruimtes in je OpenAEC-omgeving, werk samen zonder elkaars werk te overschrijven, vergrendel bestanden en
+deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en starten. Gebouwd met
 **Tauri 2 + Rust + SolidJS**.
 
 ## Architectuur
@@ -33,14 +34,15 @@ zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een li
 
 ## Installeren
 
-De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow **Build OpenAEC Storage**; bij een
+De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow **Build OpenAEC SuperCloud Desktop**; bij een
 `v*`-tag als conceptrelease).
 
-- **Windows:** `OpenAEC Storage_<versie>_x64-setup.exe` (of `.msi`). WebView2 wordt zo nodig meegeïnstalleerd.
-- **Linux (desktop):** `.deb` voor Debian/Ubuntu (`sudo apt install ./openaec-storage_<versie>_amd64.deb`) of de
+- **Windows:** `OpenAEC.SuperCloud.Desktop_<versie>_x64-setup.exe` (of `.msi`). WebView2 wordt zo nodig meegeïnstalleerd.
+- **Linux (desktop):** `.deb` voor Debian/Ubuntu (`sudo apt install ./OpenAEC.SuperCloud.Desktop_<versie>_amd64.deb`) of de
   `.AppImage` (uitvoerbaar maken en starten). Het pictogram verschijnt in het systeemvak; sleutels gaan naar de
   sleutelbos van de desktop (Secret Service).
-- **Linux zonder scherm (servers):** het programma `openaec-storage`:
+- **Linux zonder scherm (servers):** het programma `openaec-storage` (de naam blijft: het is de opdrachtregel voor
+  OpenAEC Storage, en scripts en `packaging/openaec-storage.service` gebruiken hem):
 
 ```bash
 install -m 755 openaec-storage ~/.local/bin/
@@ -101,6 +103,36 @@ GitHub-release). Een update wordt op de achtergrond gedownload en gecontroleerd 
 `tauri.conf.json`; dan verschijnt een melding en in het systeemvakmenu **Update installeren (vX.Y.Z)**. Pas na die klik
 wordt hij geïnstalleerd, nooit midden in een sync-ronde. Op Windows sluit de installer de app en start hem daarna
 opnieuw. Een conceptrelease telt pas mee als hij gepubliceerd is.
+
+## Overstap van OpenAEC Storage (0.4 en ouder)
+
+De nieuwe naam komt met de gewone automatische update binnen. Wat er gebeurt:
+
+- **Windows (NSIS):** de installer leidt map, uninstall-sleutel en snelkoppelingen af van de productnaam. De hooks in
+  `src-tauri/nsis/hooks.nsh` zorgen dat een bestaande installatie onder de oude naam wordt bijgewerkt in de map waar
+  hij staat (`%LOCALAPPDATA%\OpenAEC Storage`): het pad van `openaec-cloud.exe` blijft gelijk, dus het
+  rechtermuismenu, de pictogrammen van gekoppelde mappen, vastgemaakte snelkoppelingen en de autostart blijven werken.
+  Daarna verdwijnt de oude regel uit "Apps en onderdelen" (alleen de nieuwe blijft) en krijgen de snelkoppelingen in
+  het Startmenu en op het bureaublad de nieuwe naam. Een nieuwe installatie komt in
+  `%LOCALAPPDATA%\OpenAEC SuperCloud Desktop`.
+- **Blijft gelijk:** de `identifier` (`com.openaec.cloud`, dus ook de WebView-gegevens en de updater-sleutel), de
+  instellingenmap en de sleutelbos-dienst (`OpenAEC Storage`), de naam van de autostart-regel (`OpenAEC Storage`, zie
+  `AUTOSTART_NAAM` in `lib.rs`), de registersleutel van het rechtermuismenu en de sync-root-registraties.
+- **MSI:** de upgrade-code staat vast in `tauri.conf.json` (de waarde die bij de oude naam hoorde), zodat een nieuwe
+  `.msi` de oude vervangt in plaats van ernaast te komen.
+- **Linux (.deb):** het pakket heet nu `open-aec-super-cloud-desktop`; het vervangt `open-aec-storage`
+  (`Conflicts`/`Replaces`/`Provides` in `tauri.linux.conf.json`). De AppImage wordt zoals altijd ter plekke vervangen.
+
+Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte installatie):
+
+1. Installeer `OpenAEC.Storage_0.4.0_x64-setup.exe`, koppel een map, zet "Starten bij inloggen" aan en maak de app vast
+   aan de taakbalk.
+2. Laat de app updaten naar de nieuwe versie (of start de nieuwe setup met `/P /UPDATE`).
+3. Controleer: één regel "OpenAEC SuperCloud Desktop" in Apps en onderdelen, geen regel "OpenAEC Storage"; de map
+   `%LOCALAPPDATA%\OpenAEC Storage` bevat de nieuwe exe; geen map `OpenAEC SuperCloud Desktop`; de Startmenu-
+   snelkoppeling heet nu "OpenAEC SuperCloud Desktop"; de autostart staat nog aan (Instellingen); het
+   rechtermuismenu en de statusvinkjes werken.
+4. Verwijder de app via Apps en onderdelen: de map, de autostart-regel en het rechtermuismenu zijn weg.
 
 ## Nog te doen
 

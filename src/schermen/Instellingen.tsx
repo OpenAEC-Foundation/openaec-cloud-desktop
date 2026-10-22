@@ -82,13 +82,13 @@ export default function Instellingen() {
           Starten bij inloggen (op de achtergrond, in het systeemvak)
         </label>
         <p class="hint">
-          Sluit je dit venster, dan blijft OpenAEC Storage synchroniseren. Klik op het pictogram in het systeemvak voor het statusvenster;
+          Sluit je dit venster, dan blijft OpenAEC SuperCloud Desktop synchroniseren. Klik op het pictogram in het systeemvak voor het statusvenster;
           afsluiten doe je via de rechtermuisknop op dat pictogram.
         </p>
       </section>
 
       <section class="kaart">
-        <h2>Over OpenAEC Storage</h2>
+        <h2>Over OpenAEC SuperCloud Desktop</h2>
         <dl class="gegevens">
           <div>
             <dt>Versie</dt>

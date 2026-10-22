@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Standaardrechten voor het hoofdvenster van OpenAEC Cloud.",
+  "description": "Standaardrechten voor de vensters van OpenAEC SuperCloud Desktop.",
   "windows": [
     "main",
     "status"

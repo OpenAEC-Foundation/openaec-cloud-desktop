@@ -131,7 +131,7 @@ export default function App() {
     <div class="app">
       <header class="kopbalk" data-tauri-drag-region>
         <div class="woordmerk" data-tauri-drag-region>
-          Open<span>AEC</span> Storage
+          Open<span>AEC</span> SuperCloud <em>Desktop</em>
         </div>
         <Show when={verbonden()}>
           <div class="omgeving" title="Verbonden omgeving">
