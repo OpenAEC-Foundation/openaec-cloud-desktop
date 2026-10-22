@@ -43,6 +43,67 @@ export interface MapRapport {
   fout: string | null
 }
 
+export interface MapRegel {
+  id: string
+  naam: string
+  gewijzigd: string | null
+}
+
+export interface BestandRegel {
+  id: string
+  naam: string
+  grootte: number
+  versie: number
+  gewijzigd: string | null
+  vergrendeld_door: string | null
+  vergrendeld_tot: string | null
+}
+
+export interface MapInhoud {
+  mappen: MapRegel[]
+  bestanden: BestandRegel[]
+}
+
+export interface KoppelStatus {
+  lokaal: string
+  aantal: number
+  bestaat: boolean
+}
+
+export interface Overzicht {
+  bezig: boolean
+  koppelingen: KoppelStatus[]
+}
+
+export type Toestand = "bijgewerkt" | "bezig" | "gepauzeerd" | "fout"
+
+export interface Overdracht {
+  lokaal: string
+  pad: string
+  richting: "upload" | "download"
+  gedaan: number
+  totaal: number
+  snelheid: number
+}
+
+export interface Gebeurd {
+  lokaal: string
+  pad: string
+  actie: "geupload" | "gedownload" | "verwijderd" | "conflict" | "fout"
+  tijd: number
+  fout: string | null
+}
+
+export interface Stand {
+  toestand: Toestand
+  samenvatting: string
+  gepauzeerd: boolean
+  uploaden: number
+  downloaden: number
+  actief: Overdracht[]
+  recent: Gebeurd[]
+}
+
 // Bindings naar de Rust-commands (src-tauri/src/lib.rs).
 export const api = {
   status: () => invoke<Status>("status"),
@@ -67,4 +128,16 @@ export const api = {
   autostart: () => invoke<boolean>("autostart"),
   zetAutostart: (aan: boolean) => invoke<boolean>("zet_autostart", { aan }),
   opSync: (f: (r: MapRapport[]) => void) => listen<MapRapport[]>("sync", (e) => f(e.payload)),
+  bladeren: (ruimte: string, map: string | null) => invoke<MapInhoud>("bladeren", { ruimte, map }),
+  overzicht: () => invoke<Overzicht>("overzicht"),
+  openMap: (pad: string) => invoke<void>("open_map", { pad }),
+  openBeheer: () => invoke<void>("open_beheer"),
+  versie: () => invoke<string>("versie"),
+  controleerUpdates: () => invoke<string | null>("controleer_updates"),
+  installeerUpdate: () => invoke<void>("installeer_update"),
+  activiteit: () => invoke<Stand>("activiteit_stand"),
+  pauzeer: (aan: boolean) => invoke<void>("pauzeer", { aan }),
+  toonHoofdvenster: () => invoke<void>("toon_hoofdvenster"),
+  opActiviteit: (f: (s: Stand) => void) => listen<Stand>("activiteit", (e) => f(e.payload)),
+  opVensterOpen: (f: () => void) => listen("venster-open", () => f()),
 }

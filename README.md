@@ -17,12 +17,19 @@ zonder elkaars werk te overschrijven, vergrendel bestanden en deel ze met een li
   - `motor` — één sync-ronde: vergelijkt lokale map, server en de vorige toestand (`.openaec/staat.json`).
     De server beslist over conflicten (basisversie); bij een conflict blijven beide versies bestaan.
   - `opslag` — de motor over de echte API (mappen worden onderweg aangemaakt).
+  - `voortgang` — meldingen van de motor per bestand (start, bytevoortgang, klaar, fout) voor het statusvenster,
+    hoogstens vier keer per seconde per bestand; de app kan de sync hiermee ook pauzeren.
 - **`src-tauri`** — de app: verbinden (sleutel in de sleutelbos van het besturingssysteem), ruimtes
   koppelen aan mappen, synchroniseren zodra er lokaal iets verandert (bestandswachter) of de wijzigingenlijst
   van de server iets nieuws meldt (controle elke 30 s, eens per 10 minuten een volledige ronde), vergrendelen, deellinks, automatische
   updates, en op Windows via de **Cloud Filter API** statusvinkjes in gekoppelde mappen en cloud-mappen (placeholders die pas bij
   openen worden opgehaald).
-- **`src`** — de UI (SolidJS).
+- **`src`** — de UI (SolidJS). Het hoofdvenster heeft vier schermen: **Overzicht** (status per gekoppelde map),
+  **Ruimtes** (ruimtes koppelen en de bestanden op de server bekijken), **Delen** (deellinks, vergrendelen, versies)
+  en **Instellingen**; onderin een statusbalk. Een linkerklik op het pictogram in het systeemvak opent het
+  **statusvenster** (`status.html`): wat er nu over de lijn gaat, de laatste activiteit en knoppen om een map te
+  openen of te pauzeren. Het pictogram zelf toont met een gekleurde stip of alles bijgewerkt is, de sync bezig of
+  gepauzeerd is, of dat er een fout is.
 
 ## Installeren
 

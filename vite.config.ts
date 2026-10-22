@@ -7,5 +7,10 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_"],
-  build: { target: "esnext", minify: true },
+  // Twee vensters: het hoofdvenster (index.html) en het statusvenster bij het systeemvak (status.html).
+  build: {
+    target: "esnext",
+    minify: true,
+    rollupOptions: { input: { main: "index.html", status: "status.html" } },
+  },
 })

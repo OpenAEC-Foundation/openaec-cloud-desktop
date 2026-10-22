@@ -1,0 +1,120 @@
+import { createSignal, onMount, Show } from "solid-js"
+import { api } from "../lib/api"
+import {
+  basis, bezig, doe, koppelingen, setMelding, setRuimtes, setRuimtesOpgehaald, setScherm, setVerbonden, stand,
+} from "../lib/winkel"
+
+export default function Instellingen() {
+  const [autostart, setAutostart] = createSignal(false)
+  const [versie, setVersie] = createSignal("")
+  const [update, setUpdate] = createSignal<"" | "zoeken" | "actueel" | string>("")
+  const [updateFout, setUpdateFout] = createSignal("")
+
+  onMount(() => {
+    api.autostart().then(setAutostart).catch(() => {})
+    api.versie().then(setVersie).catch(() => {})
+  })
+
+  const controleer = async () => {
+    setUpdate("zoeken")
+    setUpdateFout("")
+    try {
+      setUpdate((await api.controleerUpdates()) ?? "actueel")
+    } catch (e) {
+      setUpdate("")
+      setUpdateFout(String(e))
+    }
+  }
+
+  const verbreek = () =>
+    doe("Verbreken", async () => {
+      await api.verbreek()
+      setVerbonden(false)
+      setRuimtes([])
+      setRuimtesOpgehaald(false)
+      setScherm("overzicht")
+      setMelding("Verbinding verbroken; je gekoppelde mappen en bestanden blijven staan")
+    })
+
+  const nieuweVersie = () => !["", "zoeken", "actueel"].includes(update())
+
+  return (
+    <div class="scherm">
+      <div class="schermkop">
+        <div>
+          <h1>Instellingen</h1>
+        </div>
+      </div>
+
+      <section class="kaart">
+        <h2>Account en server</h2>
+        <dl class="gegevens">
+          <div class="vol">
+            <dt>Omgeving</dt>
+            <dd class="pad">{basis()}</dd>
+          </div>
+          <div>
+            <dt>Gekoppelde mappen</dt>
+            <dd>{koppelingen().length}</dd>
+          </div>
+          <div>
+            <dt>Synchronisatie</dt>
+            <dd>{stand()?.gepauzeerd ? "gepauzeerd" : "actief"}</dd>
+          </div>
+        </dl>
+        <div class="knoppen">
+          <button onClick={() => api.pauzeer(!stand()?.gepauzeerd)}>{stand()?.gepauzeerd ? "Hervatten" : "Pauzeren"}</button>
+          <button class="gevaar-licht" disabled={bezig()} onClick={verbreek}>
+            Verbinding verbreken
+          </button>
+        </div>
+        <p class="hint">Na verbreken blijven je gekoppelde mappen en bestanden op deze computer staan; ze synchroniseren weer als je opnieuw inlogt.</p>
+      </section>
+
+      <section class="kaart">
+        <h2>Opstarten</h2>
+        <label class="vinkje">
+          <input
+            type="checkbox"
+            checked={autostart()}
+            onChange={(e) => api.zetAutostart(e.currentTarget.checked).then(setAutostart).catch((f) => setMelding("Starten bij inloggen: " + f))}
+          />
+          Starten bij inloggen (op de achtergrond, in het systeemvak)
+        </label>
+        <p class="hint">
+          Sluit je dit venster, dan blijft OpenAEC Storage synchroniseren. Klik op het pictogram in het systeemvak voor het statusvenster;
+          afsluiten doe je via de rechtermuisknop op dat pictogram.
+        </p>
+      </section>
+
+      <section class="kaart">
+        <h2>Over OpenAEC Storage</h2>
+        <dl class="gegevens">
+          <div>
+            <dt>Versie</dt>
+            <dd>{versie() || "–"}</dd>
+          </div>
+        </dl>
+        <div class="knoppen">
+          <button disabled={update() === "zoeken"} onClick={controleer}>
+            {update() === "zoeken" ? "Controleren…" : "Controleren op updates"}
+          </button>
+          <Show when={nieuweVersie()}>
+            <button class="primair" onClick={() => api.installeerUpdate()}>
+              Versie {update()} installeren
+            </button>
+          </Show>
+        </div>
+        <Show when={update() === "actueel"}>
+          <p class="succesvlak">Je hebt de nieuwste versie.</p>
+        </Show>
+        <Show when={nieuweVersie()}>
+          <p class="hint">Versie {update()} is gedownload. Na installeren start de app opnieuw; een lopende synchronisatie wordt eerst afgemaakt.</p>
+        </Show>
+        <Show when={updateFout()}>
+          <p class="foutvlak">Controleren mislukt: {updateFout()}</p>
+        </Show>
+      </section>
+    </div>
+  )
+}
