@@ -50,6 +50,21 @@ pub struct Rapport {
     pub verwijderd: u32,
     pub conflicten: u32,
     pub fouten: Vec<String>,
+    /// Paden (met '/') die deze ronde in sync zijn gekomen: geüpload, gedownload, als conflictkopie ontstaan of
+    /// voor het eerst in de toestand opgenomen. Voor de statusvinkjes in de Verkenner; niet naar de UI (bij de
+    /// eerste ronde kunnen dit duizenden paden zijn).
+    #[serde(skip)]
+    pub bijgewerkt: Vec<String>,
+    /// Paden (met '/') waarvoor deze ronde een fout optrad; staan in [`Rapport::fouten`] met de reden erbij.
+    #[serde(skip)]
+    pub foutpaden: Vec<String>,
+}
+
+impl Rapport {
+    fn fout(&mut self, pad: &str, fout: impl std::fmt::Display) {
+        self.fouten.push(format!("{pad}: {fout}"));
+        self.foutpaden.push(pad.to_string());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,11 +145,20 @@ fn lokale_bestanden(root: &Path) -> BTreeMap<String, (u64, u128)> {
     uit
 }
 
-fn onthoud(toestand: &mut Toestand, root: &Path, pad: &str, bestand: &str, versie: u64) -> Result<(), Fout> {
+/// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]).
+fn onthoud(
+    toestand: &mut Toestand,
+    rapport: &mut Rapport,
+    root: &Path,
+    pad: &str,
+    bestand: &str,
+    versie: u64,
+) -> Result<(), Fout> {
     let (grootte, mtime_ns) = kenmerk(&lokaal_pad(root, pad))?;
     toestand
         .bestanden
         .insert(pad.to_string(), Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns });
+    rapport.bijgewerkt.push(pad.to_string());
     Ok(())
 }
 
@@ -142,6 +166,12 @@ fn onthoud(toestand: &mut Toestand, root: &Path, pad: &str, bestand: &str, versi
 /// van de laatste ronde. Voor vergrendelen en delen vanuit de Verkenner.
 pub fn bekend_bestand(root: &Path, pad: &str) -> Option<(String, u64)> {
     laad(root).bestanden.get(pad).map(|b| (b.bestand.clone(), b.versie))
+}
+
+/// Alle paden (met '/') die volgens de toestand van de laatste ronde in sync zijn; leeg als de map nog nooit is
+/// gesynchroniseerd. Voor de eerste volledige markering in de Verkenner.
+pub fn bekende_paden(root: &Path) -> Vec<String> {
+    laad(root).bestanden.into_keys().collect()
 }
 
 /// Eén sync-ronde voor de map `root` tegen `opslag`.
@@ -204,7 +234,7 @@ pub async fn sync_met_selectie<O: Opslag>(opslag: &O, root: &Path, uitgesloten: 
             if hier.is_some() {
                 // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg, op de server blijft hij staan.
                 if let Err(fout) = std::fs::remove_file(lokaal_pad(root, &pad)) {
-                    rapport.fouten.push(format!("{pad}: {fout}"));
+                    rapport.fout(&pad, fout);
                     continue;
                 }
             }
@@ -217,7 +247,7 @@ pub async fn sync_met_selectie<O: Opslag>(opslag: &O, root: &Path, uitgesloten: 
         )
         .await;
         if let Err(fout) = uitkomst {
-            rapport.fouten.push(format!("{pad}: {fout}"));
+            rapport.fout(&pad, fout);
         }
     }
     for u in uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()) {
@@ -252,21 +282,21 @@ async fn stap<O: Opslag>(
                     // serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
                     let kopie = lokaal_pad(root, &up.pad);
                     std::fs::rename(&lokaal, &kopie)?;
-                    onthoud(toestand, root, &up.pad, &up.bestand, up.versie)?;
+                    onthoud(toestand, rapport, root, &up.pad, &up.bestand, up.versie)?;
                     opslag.download(server, &lokaal).await?;
-                    onthoud(toestand, root, pad, &server.bestand, server.versie)?;
+                    onthoud(toestand, rapport, root, pad, &server.bestand, server.versie)?;
                     rapport.conflicten += 1;
                     rapport.gedownload += 1;
                 } else {
-                    onthoud(toestand, root, pad, &up.bestand, up.versie)?;
+                    onthoud(toestand, rapport, root, pad, &up.bestand, up.versie)?;
                     rapport.geupload += 1;
                 }
             } else if server_gewijzigd {
                 opslag.download(server, &lokaal).await?;
-                onthoud(toestand, root, pad, &server.bestand, server.versie)?;
+                onthoud(toestand, rapport, root, pad, &server.bestand, server.versie)?;
                 rapport.gedownload += 1;
             } else if bekend.is_none() {
-                onthoud(toestand, root, pad, &server.bestand, server.versie)?;
+                onthoud(toestand, rapport, root, pad, &server.bestand, server.versie)?;
             }
         }
         (true, None) => {
@@ -277,7 +307,7 @@ async fn stap<O: Opslag>(
                 rapport.verwijderd += 1;
             } else {
                 let up = opslag.upload(pad, &lokaal, None).await?;
-                onthoud(toestand, root, &up.pad, &up.bestand, up.versie)?;
+                onthoud(toestand, rapport, root, &up.pad, &up.bestand, up.versie)?;
                 rapport.geupload += 1;
             }
         }
@@ -289,7 +319,7 @@ async fn stap<O: Opslag>(
                 rapport.verwijderd += 1;
             } else {
                 opslag.download(server, &lokaal).await?;
-                onthoud(toestand, root, pad, &server.bestand, server.versie)?;
+                onthoud(toestand, rapport, root, pad, &server.bestand, server.versie)?;
                 rapport.gedownload += 1;
             }
         }
