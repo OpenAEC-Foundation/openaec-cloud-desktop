@@ -1,11 +1,15 @@
 //! Systeemvak: de app blijft op de achtergrond synchroniseren als het venster dicht is. Het menu opent het
-//! venster, start een sync-ronde of sluit de app af. Met `--verborgen` (autostart) start de app zonder venster.
+//! venster, start een sync-ronde of sluit de app af; staat er een update klaar, dan ook "Update installeren".
+//! Met `--verborgen` (autostart) start de app zonder venster.
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Emitter, Manager, Window, WindowEvent};
+use tauri::{App, AppHandle, Emitter, Manager, Window, WindowEvent, Wry};
 
-use crate::{sync_alles, AppState};
+use crate::{sync_alles, updates, AppState};
+
+/// Het menu van het systeemvak, om er later het update-item in te zetten.
+struct Vakmenu(Menu<Wry>);
 
 pub const VERBORGEN: &str = "--verborgen";
 
@@ -22,6 +26,7 @@ pub fn maak(app: &mut App) -> tauri::Result<()> {
     let sync = MenuItem::with_id(app, "sync", "Nu synchroniseren", true, None::<&str>)?;
     let afsluiten = MenuItem::with_id(app, "afsluiten", "Afsluiten", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&openen, &sync, &afsluiten])?;
+    app.manage(Vakmenu(menu.clone()));
 
     let mut vak = TrayIconBuilder::with_id("openaec-storage")
         .tooltip("OpenAEC Storage")
@@ -38,6 +43,7 @@ pub fn maak(app: &mut App) -> tauri::Result<()> {
                     }
                 });
             }
+            "update" => updates::installeer(app),
             "afsluiten" => app.exit(0),
             _ => {}
         })
@@ -57,6 +63,23 @@ pub fn maak(app: &mut App) -> tauri::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Zet "Update installeren (vX.Y.Z)" in het menu, boven "Afsluiten" (een eerder item voor een oudere versie gaat eruit).
+pub fn toon_update(app: &AppHandle, versie: &str) {
+    let Some(menu) = app.try_state::<Vakmenu>() else { return };
+    if let Some(oud) = menu.0.get("update") {
+        let _ = menu.0.remove(&oud);
+    }
+    let positie = menu.0.items().map(|items| items.len().saturating_sub(1)).unwrap_or(0);
+    match MenuItem::with_id(app, "update", format!("Update installeren (v{versie})"), true, None::<&str>) {
+        Ok(item) => {
+            if let Err(e) = menu.0.insert(&item, positie) {
+                log::warn!("update-item in het systeemvak: {e}");
+            }
+        }
+        Err(e) => log::warn!("update-item in het systeemvak: {e}"),
+    }
 }
 
 /// Venster sluiten = verbergen; afsluiten gaat via het menu in het systeemvak.

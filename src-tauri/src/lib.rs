@@ -4,6 +4,7 @@
 mod bewaking;
 mod instellingen;
 mod systeemvak;
+mod updates;
 mod verkenner;
 mod vinkjes;
 
@@ -469,6 +470,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             instellingen: std::sync::Mutex::new(Instellingen::laad()),
             bezig: tokio::sync::Mutex::new(()),
@@ -476,6 +478,7 @@ pub fn run() {
         .setup(|app| {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
+            updates::start(app.handle().clone());
             werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();
