@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   # Desktop-app: Windows (.exe/.msi, met WebView2-bootstrapper en WebView2Loader.dll) en Linux (.deb/.AppImage).
+  # Op Windows ondertekend met Azure Trusted Signing (geheimen van de organisatie), net als de andere OpenAEC-apps.
   app:
     strategy:
       fail-fast: false
@@ -35,21 +36,105 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: |
+            src-tauri
+            crates/openaec-sync
       - name: Systeembibliotheken (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev patchelf
       - run: npm install
+
+      # De opdrachtregel voor Windows wordt hier gebouwd, zodat de signeeractie hem ondertekent en daarbij signtool
+      # en de Trusted Signing-bibliotheek op de runner zet (die heeft de signCommand hieronder nodig).
+      - name: Opdrachtregel bouwen (Windows)
+        if: runner.os == 'Windows'
+        working-directory: crates/openaec-sync
+        run: cargo build --release --features cli --bin openaec-storage
+      - name: Opdrachtregel ondertekenen en signeergereedschap installeren (Windows)
+        if: runner.os == 'Windows'
+        uses: azure/trusted-signing-action@v1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+          cache-dependencies: false
+          files-folder: ${{ github.workspace }}/crates/openaec-sync/target/release
+          files-folder-filter: exe
+          files-folder-depth: 1
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # Tauri ondertekent zelf elk Windows-bestand zodra bundle.windows.signCommand gezet is: de app (nadat de
+      # bundler hem heeft aangepast), de NSIS-onderdelen, de uninstaller en de installers. Deze config bestaat
+      # alleen in de bouwstraat en wijst naar het gereedschap van de stap hierboven.
+      - name: Signeeropdracht voor Tauri (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_PROFILE: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          # De actie installeert in ArtifactSigning (nieuwere versies) of TrustedSigning (oudere).
+          $mappen = @('ArtifactSigning', 'TrustedSigning') | ForEach-Object { Join-Path $env:LOCALAPPDATA $_ } | Where-Object { Test-Path $_ }
+          $signtool = $mappen | ForEach-Object { Get-ChildItem $_ -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue } |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } | Select-Object -First 1
+          $dlib = $mappen | ForEach-Object { Get-ChildItem $_ -Recurse -Filter '*CodeSigning.Dlib.dll' -ErrorAction SilentlyContinue } |
+            Where-Object { $_.FullName -match '[\\/]x64[\\/]' } | Select-Object -First 1
+          if (-not $signtool -or -not $dlib) { Write-Error "signtool of de Trusted Signing-bibliotheek niet gevonden in: $mappen"; exit 1 }
+          $metadata = Join-Path $env:RUNNER_TEMP 'trusted-signing-metadata.json'
+          @{
+            Endpoint = $env:AZURE_ENDPOINT
+            CodeSigningAccountName = $env:AZURE_ACCOUNT
+            CertificateProfileName = $env:AZURE_PROFILE
+          } | ConvertTo-Json | Set-Content -Path $metadata -Encoding utf8
+          $conf = @{ bundle = @{ windows = @{ signCommand = @{
+            cmd = $signtool.FullName
+            args = @('sign', '/v', '/fd', 'SHA256', '/tr', 'http://timestamp.acs.microsoft.com', '/td', 'SHA256',
+                     '/dlib', $dlib.FullName, '/dmdf', $metadata, '%1')
+          } } } }
+          $conf | ConvertTo-Json -Depth 10 | Set-Content -Path src-tauri/tauri.signing.conf.json -Encoding utf8
+          Write-Output "signtool: $($signtool.FullName)"
+          Write-Output "dlib:     $($dlib.FullName)"
+
       # Bij een v*-tag: conceptrelease met de installers; anders als workflow-artefact.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "OpenAEC Storage ${{ github.ref_name }}"
           releaseDraft: true
+          args: ${{ runner.os == 'Windows' && '--config src-tauri/tauri.signing.conf.json' || '' }}
+
+      # Geen ongetekende Windows-bestanden in een release: elke handtekening moet geldig zijn.
+      - name: Handtekeningen controleren (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # De app zelf heet naar de crate of naar de productnaam, afhankelijk van de Tauri-versie.
+          $app = Get-ChildItem 'src-tauri/target/release/openaec-cloud.exe', 'src-tauri/target/release/OpenAEC Storage.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          $bestanden = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe, src-tauri/target/release/bundle/msi/*.msi,
+            crates/openaec-sync/target/release/openaec-storage.exe -ErrorAction SilentlyContinue) + @($app | Where-Object { $_ })
+          if ($bestanden.Count -lt 4) { Write-Error "niet alle Windows-bestanden gevonden: $($bestanden.Name -join ', ')"; exit 1 }
+          $fout = $false
+          foreach ($b in $bestanden) {
+            $h = Get-AuthenticodeSignature $b.FullName
+            Write-Output ("{0}: {1} ({2})" -f $b.Name, $h.Status, $h.SignerCertificate.Subject)
+            if ($h.Status -ne 'Valid') { $fout = $true }
+          }
+          if ($fout) { Write-Error 'niet elk bestand heeft een geldige handtekening'; exit 1 }
+
       - name: Installers als artefact
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
@@ -57,8 +142,24 @@ jobs:
           name: openaec-storage-${{ matrix.naam }}
           path: ${{ matrix.bundels }}
           if-no-files-found: error
+      - name: Opdrachtregel als artefact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openaec-storage-cli-windows-x86_64
+          path: crates/openaec-sync/target/release/openaec-storage.exe
+          if-no-files-found: error
+      - name: Opdrachtregel aan de release toevoegen (Windows)
+        if: runner.os == 'Windows' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cp crates/openaec-sync/target/release/openaec-storage.exe openaec-storage-windows-x86_64.exe
+          gh release upload "${{ github.ref_name }}" openaec-storage-windows-x86_64.exe --clobber
 
-  # Opdrachtregelprogramma (ook voor Linux-servers zonder scherm).
+  # Tests van de sync-motor op beide platforms, en de opdrachtregel voor Linux (ook voor servers zonder scherm).
+  # De Windows-opdrachtregel komt uit de app-job, ondertekend.
   cli:
     needs: app   # bij een tag bestaat de release dan al
     strategy:
@@ -82,18 +183,20 @@ jobs:
         working-directory: crates/openaec-sync
         run: cargo test
       - name: Bouwen
+        if: runner.os == 'Linux'
         working-directory: crates/openaec-sync
         run: cargo build --release --features cli --bin openaec-storage
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
         with:
           name: openaec-storage-cli-${{ matrix.naam }}
           path: ${{ matrix.bestand }}
           if-no-files-found: error
       - name: Aan de release toevoegen
-        if: github.ref_type == 'tag'
+        if: runner.os == 'Linux' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          cp "${{ matrix.bestand }}" "openaec-storage-${{ matrix.naam }}${{ runner.os == 'Windows' && '.exe' || '' }}"
-          gh release upload "${{ github.ref_name }}" "openaec-storage-${{ matrix.naam }}"* --clobber
+          cp "${{ matrix.bestand }}" "openaec-storage-${{ matrix.naam }}"
+          gh release upload "${{ github.ref_name }}" "openaec-storage-${{ matrix.naam }}" --clobber

@@ -6,3 +6,6 @@ src-tauri/gen/
 .DS_Store
 
 target/
+
+# Alleen in de bouwstraat aangemaakt (signCommand voor Windows).
+src-tauri/tauri.signing.conf.json
