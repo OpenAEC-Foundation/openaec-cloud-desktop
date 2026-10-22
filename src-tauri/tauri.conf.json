@@ -18,6 +18,18 @@
         "minWidth": 760,
         "minHeight": 520,
         "label": "main"
+      },
+      {
+        "title": "OpenAEC Storage – status",
+        "label": "status",
+        "url": "status.html",
+        "width": 380,
+        "height": 520,
+        "visible": false,
+        "decorations": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true
       }
     ],
     "security": {

@@ -35,12 +35,13 @@ pub fn start(app: AppHandle) {
     });
 }
 
-async fn controleer(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
+/// Controleer op een nieuwe versie en download hem; geeft het versienummer van de klaargezette update terug.
+pub(crate) async fn controleer(app: &AppHandle) -> tauri_plugin_updater::Result<Option<String>> {
     let Some(update) = app.updater()?.check().await? else {
-        return Ok(());
+        return Ok(None);
     };
     if KLAAR.lock().unwrap().as_ref().is_some_and(|k| k.update.version == update.version) {
-        return Ok(());
+        return Ok(Some(update.version));
     }
     let bytes = update.download(|_, _| {}, || {}).await?;
     let versie = update.version.clone();
@@ -48,7 +49,7 @@ async fn controleer(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
     log::info!("update naar versie {versie} gedownload");
     systeemvak::toon_update(app, &versie);
     melding(app, &format!("Versie {versie} staat klaar. Kies \"Update installeren\" in het systeemvak; de app start daarna opnieuw."));
-    Ok(())
+    Ok(Some(versie))
 }
 
 /// Na de klik in het systeemvak: wachten tot een lopende sync-ronde klaar is, dan installeren.

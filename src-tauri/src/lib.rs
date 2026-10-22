@@ -1,6 +1,7 @@
 //! OpenAEC Storage (desktop): koppelt lokale mappen aan ruimtes in OpenAEC Storage en houdt ze gelijk
 //! met de sync-motor uit de crate `openaec-sync`.
 
+mod activiteit;
 mod bewaking;
 mod instellingen;
 mod systeemvak;
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use openaec_sync::api::Ruimte;
-use openaec_sync::motor::{bekend_bestand, sync_met_selectie, Rapport};
+use openaec_sync::motor::{aantal_bekend, bekend_bestand, sync_met_voortgang, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
@@ -34,6 +35,8 @@ struct AppState {
     instellingen: std::sync::Mutex<Instellingen>,
     /// Eén sync-ronde tegelijk (achtergrond of handmatig).
     bezig: tokio::sync::Mutex<()>,
+    /// Wat de sync nu doet (statusvenster, statusbalk, systeemvak) en of hij gepauzeerd is.
+    activiteit: activiteit::Activiteit,
 }
 
 fn fout(e: impl std::fmt::Display) -> String {
@@ -157,6 +160,204 @@ async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String) -> Result
     ClientOpslag::new(client(&state).await?, &ruimte).alle_mappen().await.map_err(fout)
 }
 
+#[derive(Serialize)]
+struct MapRegel {
+    id: String,
+    naam: String,
+    gewijzigd: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BestandRegel {
+    id: String,
+    naam: String,
+    grootte: u64,
+    versie: u64,
+    gewijzigd: Option<String>,
+    /// Wie het bestand vergrendeld heeft (e-mailadres), en tot wanneer.
+    vergrendeld_door: Option<String>,
+    vergrendeld_tot: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MapInhoud {
+    mappen: Vec<MapRegel>,
+    bestanden: Vec<BestandRegel>,
+}
+
+/// Hoeveel vergrendelingen tegelijk worden opgevraagd bij het bladeren.
+const GELIJKTIJDIG: usize = 8;
+
+/// Inhoud van een map in een ruimte op de server (`map` None = hoofdniveau), met per bestand de actieve vergrendeling.
+#[tauri::command]
+async fn bladeren(state: tauri::State<'_, AppState>, ruimte: String, map: Option<String>) -> Result<MapInhoud, String> {
+    let client = client(&state).await?;
+    let inhoud = client.bladeren(&ruimte, map.as_deref().filter(|m| !m.is_empty())).await.map_err(fout)?;
+
+    // Vergrendelingen per bestand ophalen, een paar tegelijk; lukt het niet, dan blijft het veld leeg.
+    let rem = std::sync::Arc::new(tokio::sync::Semaphore::new(GELIJKTIJDIG));
+    let mut taken = tokio::task::JoinSet::new();
+    for b in &inhoud.bestanden {
+        let (client, rem, id) = (client.clone(), rem.clone(), b.name.clone());
+        taken.spawn(async move {
+            let _vergunning = rem.acquire_owned().await;
+            let slot = client.info(&id).await.ok().and_then(|i| i.vergrendeling);
+            (id, slot)
+        });
+    }
+    let mut sloten = std::collections::HashMap::new();
+    while let Some(klaar) = taken.join_next().await {
+        if let Ok((id, Some(slot))) = klaar {
+            sloten.insert(id, slot);
+        }
+    }
+
+    Ok(MapInhoud {
+        mappen: inhoud.mappen.into_iter().map(|m| MapRegel { id: m.name, naam: m.naam, gewijzigd: m.modified }).collect(),
+        bestanden: inhoud
+            .bestanden
+            .into_iter()
+            .map(|b| {
+                let slot = sloten.remove(&b.name);
+                BestandRegel {
+                    vergrendeld_door: slot.as_ref().map(|s| s.gebruiker.clone()),
+                    vergrendeld_tot: slot.and_then(|s| s.verloopt),
+                    id: b.name,
+                    naam: b.naam,
+                    grootte: b.grootte,
+                    versie: b.huidige_versie,
+                    gewijzigd: b.modified,
+                }
+            })
+            .collect(),
+    })
+}
+
+#[derive(Serialize)]
+struct KoppelStatus {
+    lokaal: String,
+    /// Aantal bestanden volgens de laatste sync-ronde.
+    aantal: usize,
+    /// Bestaat de lokale map nog?
+    bestaat: bool,
+}
+
+#[derive(Serialize)]
+struct Overzicht {
+    /// Loopt er nu een sync-ronde?
+    bezig: bool,
+    koppelingen: Vec<KoppelStatus>,
+}
+
+/// Toestand per koppeling voor het overzicht; leest alleen lokale gegevens.
+#[tauri::command]
+async fn overzicht(state: tauri::State<'_, AppState>) -> Result<Overzicht, String> {
+    let bezig = state.bezig.try_lock().is_err();
+    let mappen: Vec<String> = state.instellingen.lock().unwrap().koppelingen.iter().map(|k| k.lokaal.clone()).collect();
+    let koppelingen = tauri::async_runtime::spawn_blocking(move || {
+        mappen
+            .into_iter()
+            .map(|lokaal| {
+                let pad = Path::new(&lokaal);
+                KoppelStatus { aantal: aantal_bekend(pad), bestaat: pad.is_dir(), lokaal }
+            })
+            .collect()
+    })
+    .await
+    .map_err(fout)?;
+    Ok(Overzicht { bezig, koppelingen })
+}
+
+/// Een gekoppelde map (of een map daarbinnen) openen in de Verkenner. Is `pad` een bestand, dan opent de map
+/// waarin het staat, met het bestand geselecteerd; bestaat het bestand niet meer, dan de map waarin het stond.
+#[tauri::command]
+fn open_map(app: AppHandle, state: tauri::State<'_, AppState>, pad: String) -> Result<(), String> {
+    let p = Path::new(&pad);
+    let gekoppeld = state.instellingen.lock().unwrap().koppelingen.iter().any(|k| p.starts_with(&k.lokaal));
+    if !gekoppeld {
+        return Err("deze map is niet gekoppeld".into());
+    }
+    // Een verwijderd bestand: dan de map waarin het stond.
+    let p = if p.exists() { p } else { p.parent().filter(|d| d.is_dir()).unwrap_or(p) };
+    let pad = p.to_string_lossy().to_string();
+    if p.is_file() {
+        #[cfg(windows)]
+        {
+            let _ = &app;
+            return std::process::Command::new("explorer").arg(format!("/select,{pad}")).spawn().map(|_| ()).map_err(fout);
+        }
+        #[cfg(not(windows))]
+        {
+            #[allow(deprecated)]
+            return app.shell().open(p.parent().unwrap_or(p).to_string_lossy(), None).map_err(fout);
+        }
+    }
+    if !p.is_dir() {
+        return Err("deze map of dit bestand bestaat niet (meer) op deze computer".into());
+    }
+    #[cfg(windows)]
+    {
+        let _ = &app;
+        std::process::Command::new("explorer").arg(&pad).spawn().map(|_| ()).map_err(fout)
+    }
+    #[cfg(not(windows))]
+    {
+        #[allow(deprecated)]
+        app.shell().open(&pad, None).map_err(fout)
+    }
+}
+
+/// Wat de sync nu doet (voor het statusvenster en de statusbalk bij het openen).
+#[tauri::command]
+fn activiteit_stand(state: tauri::State<'_, AppState>) -> activiteit::Stand {
+    state.activiteit.stand()
+}
+
+/// Pauzeren of hervatten. Na hervatten volgt meteen een ronde voor alle mappen.
+#[tauri::command]
+fn pauzeer(app: AppHandle, aan: bool) {
+    activiteit::zet_pauze(&app, aan);
+    if !aan {
+        tauri::async_runtime::spawn(async move {
+            if let Ok(r) = sync_alles(&app).await {
+                let _ = app.emit("sync", &r);
+            }
+        });
+    }
+}
+
+/// Het hoofdvenster tonen (vanuit het statusvenster).
+#[tauri::command]
+fn toon_hoofdvenster(app: AppHandle) {
+    systeemvak::toon(&app);
+}
+
+/// Opent het beheer van de opslag (ruimtes aanmaken) van de verbonden omgeving in de browser.
+#[tauri::command]
+fn open_beheer(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
+    #[allow(deprecated)]
+    app.shell().open(format!("{basis}/beheer/opslag"), None).map_err(fout)
+}
+
+/// Versienummer van de app.
+#[tauri::command]
+fn versie(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Nu controleren op een nieuwe versie; geeft het versienummer van een klaargezette update terug (of None).
+#[tauri::command]
+async fn controleer_updates(app: AppHandle) -> Result<Option<String>, String> {
+    updates::controleer(&app).await.map_err(fout)
+}
+
+/// Een klaargezette update installeren (na een lopende sync-ronde); de app start daarna opnieuw.
+#[tauri::command]
+fn installeer_update(app: AppHandle) {
+    updates::installeer(&app);
+}
+
 /// Mapselectie van een koppeling instellen; de volgende ronde haalt uitgevinkte mappen lokaal weg.
 #[tauri::command]
 fn zet_selectie(state: tauri::State<'_, AppState>, lokaal: String, uitgesloten: Vec<String>) -> Result<Vec<Koppeling>, String> {
@@ -190,22 +391,36 @@ struct MapRapport {
     fout: Option<String>,
 }
 
-async fn sync_alles(state: &AppState) -> Result<Vec<MapRapport>, String> {
-    sync_mappen(state, None).await
+async fn sync_alles(app: &AppHandle) -> Result<Vec<MapRapport>, String> {
+    sync_mappen(app, None).await
 }
 
-/// Sync-ronde voor de gekoppelde mappen in `alleen` (lokale paden), of voor alle mappen.
-async fn sync_mappen(
+/// Sync-ronde voor de gekoppelde mappen in `alleen` (lokale paden), of voor alle mappen. Doet niets als de sync
+/// gepauzeerd is; de voortgang gaat naar het statusvenster en het systeemvak.
+async fn sync_mappen(app: &AppHandle, alleen: Option<&std::collections::HashSet<String>>) -> Result<Vec<MapRapport>, String> {
+    let state = app.state::<AppState>();
+    let _slot = state.bezig.lock().await;
+    if state.activiteit.gepauzeerd() {
+        return Err("synchroniseren is gepauzeerd".into());
+    }
+    activiteit::begin(app);
+    let r = sync_ronde(app, &state, alleen).await;
+    activiteit::einde(app, r.as_deref().map_err(String::as_str));
+    r
+}
+
+async fn sync_ronde(
+    app: &AppHandle,
     state: &AppState,
     alleen: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<MapRapport>, String> {
-    let _slot = state.bezig.lock().await;
     let client = client(state).await?;
     let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
-        let mut r = sync_met_selectie(&opslag, Path::new(&k.lokaal), &k.uitgesloten).await;
+        let waarnemer = activiteit::Koppelwaarnemer { app: app.clone(), lokaal: k.lokaal.clone() };
+        let mut r = sync_met_voortgang(&opslag, Path::new(&k.lokaal), &k.uitgesloten, &waarnemer).await;
         if let Ok(rapport) = &mut r {
             let lokaal = k.lokaal.clone();
             let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
@@ -223,8 +438,8 @@ async fn sync_mappen(
 }
 
 #[tauri::command]
-async fn sync_nu(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<Vec<MapRapport>, String> {
-    let r = sync_alles(&state).await?;
+async fn sync_nu(app: AppHandle) -> Result<Vec<MapRapport>, String> {
+    let r = sync_alles(&app).await?;
     let _ = app.emit("sync", &r);
     Ok(r)
 }
@@ -474,12 +689,14 @@ pub fn run() {
         .manage(AppState {
             instellingen: std::sync::Mutex::new(Instellingen::laad()),
             bezig: tokio::sync::Mutex::new(()),
+            activiteit: activiteit::Activiteit::default(),
         })
         .setup(|app| {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
             updates::start(app.handle().clone());
             werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
+            activiteit::meld(app.handle());
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();
             if let Some((actie, pad)) = verkenner::actie_uit(&argv) {
@@ -506,7 +723,17 @@ pub fn run() {
             versies,
             open_versie,
             mappen_van,
-            zet_selectie
+            zet_selectie,
+            bladeren,
+            overzicht,
+            open_map,
+            open_beheer,
+            versie,
+            controleer_updates,
+            installeer_update,
+            activiteit_stand,
+            pauzeer,
+            toon_hoofdvenster
         ])
         .run(tauri::generate_context!())
         .expect("fout bij het starten van OpenAEC Storage");

@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Standaardrechten voor het hoofdvenster van OpenAEC Cloud.",
   "windows": [
-    "main"
+    "main",
+    "status"
   ],
   "permissions": [
     "core:default",

@@ -80,7 +80,7 @@ pub fn start(app: AppHandle) {
 
             te_doen.retain(|lokaal| actief.contains(lokaal));
             if !te_doen.is_empty() {
-                if let Ok(r) = sync_mappen(&state, Some(&te_doen)).await {
+                if let Ok(r) = sync_mappen(&app, Some(&te_doen)).await {
                     let _ = app.emit("sync", &r);
                 }
                 te_doen.clear();
