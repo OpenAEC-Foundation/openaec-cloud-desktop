@@ -185,6 +185,17 @@ pub struct Mogelijkheden {
     pub download_klein: Option<Batchgrenzen>,
     #[serde(default)]
     pub boom: bool,
+    #[serde(default)]
+    pub maak_mappen: bool,
+}
+
+/// Antwoord van [`Client::maak_mappen`]: per mappad het map-id, of de reden waarom het niet lukte.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct NieuweMappen {
+    #[serde(default)]
+    pub mappen: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub fouten: std::collections::HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,8 +231,10 @@ pub struct Boom {
 #[derive(Debug, Clone)]
 pub struct KleinBestand {
     pub naam: String,
-    /// Map-id (None = hoofdniveau).
+    /// Map-id (None = hoofdniveau, of de map uit `pad`).
     pub map: Option<String>,
+    /// Mappad met '/' als het map-id nog niet bekend is: de server zoekt de map op of maakt hem aan.
+    pub pad: Option<String>,
     pub basis_versie: Option<u64>,
     pub inhoud: Vec<u8>,
 }
@@ -248,6 +261,8 @@ struct PerBestand {
     versie: Option<u64>,
     #[serde(default)]
     conflict: Option<bool>,
+    #[serde(default)]
+    map: Option<String>,
     #[serde(default)]
     grootte: Option<u64>,
     #[serde(default)]
@@ -324,18 +339,29 @@ impl Client {
         self.roep("mogelijkheden", json!({})).await
     }
 
+    /// Veel mappen (paden met '/') in één verzoek; ontbrekende, ook tussenliggende, worden aangemaakt.
+    pub async fn maak_mappen(&self, ruimte: &str, paden: &[String]) -> Result<NieuweMappen, Fout> {
+        self.roep("maak_mappen", json!({"ruimte": ruimte, "paden": paden})).await
+    }
+
     /// Alle mappen en een pagina bestanden van een ruimte in één verzoek.
     pub async fn boom(&self, ruimte: &str, start: usize, aantal: usize) -> Result<Boom, Fout> {
         self.roep("boom", json!({"ruimte": ruimte, "start": start, "aantal": aantal})).await
     }
 
-    /// Kleine bestanden in één verzoek (multipart); per bestand het resultaat of de weigering, in dezelfde volgorde.
-    pub async fn upload_klein(&self, ruimte: &str, bestanden: &[KleinBestand]) -> Result<Vec<Result<UploadResultaat, Fout>>, Fout> {
+    /// Kleine bestanden in één verzoek (multipart); per bestand het resultaat (met het map-id) of de weigering, in
+    /// dezelfde volgorde.
+    #[allow(clippy::type_complexity)]
+    pub async fn upload_klein(
+        &self,
+        ruimte: &str,
+        bestanden: &[KleinBestand],
+    ) -> Result<Vec<Result<(UploadResultaat, Option<String>), Fout>>, Fout> {
         let lijst: Vec<Value> = bestanden
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                json!({"veld": format!("f{i}"), "naam": b.naam, "map": b.map, "grootte": b.inhoud.len(),
+                json!({"veld": format!("f{i}"), "naam": b.naam, "map": b.map, "pad": b.pad, "grootte": b.inhoud.len(),
                        "basis_versie": b.basis_versie, "blokhash": crate::blokken::hash_bytes(&b.inhoud, crate::blokken::BLOK)[0]})
             })
             .collect();
@@ -369,12 +395,10 @@ impl Client {
         }
         Ok(r.into_iter()
             .map(|b| match (b.ok, &b.bestand, &b.naam, b.versie) {
-                (true, Some(bestand), Some(naam), Some(versie)) => Ok(UploadResultaat {
-                    bestand: bestand.clone(),
-                    naam: naam.clone(),
-                    versie,
-                    conflict: b.conflict.unwrap_or(false),
-                }),
+                (true, Some(bestand), Some(naam), Some(versie)) => Ok((
+                    UploadResultaat { bestand: bestand.clone(), naam: naam.clone(), versie, conflict: b.conflict.unwrap_or(false) },
+                    b.map.clone(),
+                )),
                 _ => Err(b.weigering()),
             })
             .collect())

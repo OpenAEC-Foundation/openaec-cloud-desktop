@@ -816,6 +816,12 @@ pub async fn sync_met_opties<O: Opslag>(
     }
 
     let n = opties.gelijktijdig.clamp(1, MAX_GELIJKTIJDIG);
+    let grenzen = opslag.klein_grenzen().await;
+    let grootte_van = |taak: &Taak| match taak {
+        Taak::Upload { pad, .. } => lokaal.get(pad).map_or(u64::MAX, |(g, _)| *g),
+        Taak::Download { server, .. } => server.grootte,
+        _ => u64::MAX,
+    };
     // Mappen vóór de bestanden erin. Lukt het niet, dan probeert elke upload het zelf nog (en meldt dan de fout).
     let mappen: BTreeSet<String> = overdrachten
         .iter()
@@ -824,16 +830,11 @@ pub async fn sync_met_opties<O: Opslag>(
             _ => None,
         })
         .collect();
+    let werk = verdeel(overdrachten, grenzen, grootte_van);
     if !mappen.is_empty() {
         let _ = opslag.bereid_mappen(&mappen.into_iter().collect::<Vec<_>>()).await;
     }
-    let grenzen = opslag.klein_grenzen().await;
-    let grootte_van = |taak: &Taak| match taak {
-        Taak::Upload { pad, .. } => lokaal.get(pad).map_or(u64::MAX, |(g, _)| *g),
-        Taak::Download { server, .. } => server.grootte,
-        _ => u64::MAX,
-    };
-    ronde.verwerk_alle(&verdeel(overdrachten, grenzen, grootte_van), n).await;
+    ronde.verwerk_alle(&werk, n).await;
     // Verwijderen pas na de uploads en downloads.
     ronde.verwerk_alle(&verwijderingen.into_iter().map(Werk::Los).collect::<Vec<_>>(), n).await;
 

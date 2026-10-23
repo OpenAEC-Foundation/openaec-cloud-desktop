@@ -234,8 +234,27 @@ impl Opslag for ClientOpslag {
     }
 
     async fn bereid_mappen(&self, mappen: &[String]) -> Result<(), Fout> {
+        let mut mappen: Vec<&String> = {
+            let bekend = self.mappen.lock().unwrap();
+            mappen.iter().filter(|m| !m.is_empty() && !bekend.contains_key(m.as_str())).collect()
+        };
+        if mappen.is_empty() {
+            return Ok(());
+        }
+        // Een nieuwere server maakt ze allemaal in één verzoek; wat daar niet lukt, probeert de upload zelf nog.
+        if self.mogelijkheden().await.maak_mappen {
+            let _beurt = self.aanmaken.lock().await;
+            for stuk in mappen.chunks(1000) {
+                let paden: Vec<String> = stuk.iter().map(|m| m.to_string()).collect();
+                let nieuw = self.client.maak_mappen(&self.ruimte, &paden).await?;
+                let mut bekend = self.mappen.lock().unwrap();
+                for (pad, id) in nieuw.mappen {
+                    bekend.insert(pad, id);
+                }
+            }
+            return Ok(());
+        }
         // Ondiep voor diep: een map komt pas als zijn bovenliggende map er is (zorg_voor_map loopt het pad af).
-        let mut mappen: Vec<&String> = mappen.iter().filter(|m| !m.is_empty()).collect();
         mappen.sort_by_key(|m| (m.matches('/').count(), m.as_str()));
         for map in mappen {
             self.zorg_voor_map(map).await?;
@@ -254,12 +273,15 @@ impl Opslag for ClientOpslag {
     }
 
     async fn upload_klein(&self, bestanden: &[KleinUpload<'_>]) -> Result<Vec<Result<Upload, Fout>>, Fout> {
+        // Een map die nog niet bekend is, maakt de server zelf aan (`pad`): dat scheelt een verzoek per map.
         let mut items = Vec::with_capacity(bestanden.len());
         for b in bestanden {
             let (mappad, naam) = splits(b.pad);
+            let map = self.mappen.lock().unwrap().get(mappad).cloned();
             items.push(KleinBestand {
                 naam: naam.to_string(),
-                map: self.zorg_voor_map(mappad).await?,
+                pad: (map.is_none() && !mappad.is_empty()).then(|| mappad.to_string()),
+                map,
                 basis_versie: b.basis_versie,
                 inhoud: tokio::fs::read(b.lokaal).await?,
             });
@@ -270,7 +292,14 @@ impl Opslag for ClientOpslag {
             .into_iter()
             .zip(bestanden)
             .map(|(r, b)| {
-                r.map(|r| Upload { pad: samen(splits(b.pad).0, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict })
+                r.map(|(r, map)| {
+                    // Het map-id uit het antwoord onthouden voor de volgende uploads in die map.
+                    let mappad = splits(b.pad).0;
+                    if let (Some(map), false) = (map, mappad.is_empty()) {
+                        self.mappen.lock().unwrap().entry(mappad.to_string()).or_insert(map);
+                    }
+                    Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict }
+                })
             })
             .collect())
     }

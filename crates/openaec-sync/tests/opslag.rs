@@ -114,7 +114,7 @@ fn mogelijkheden(server: &MockServer) -> Mock {
     let _ = server;
     Mock::given(method("POST"))
         .and(path(format!("{API}mogelijkheden")))
-        .respond_with(antwoord(json!({"upload_klein": grenzen, "download_klein": grenzen, "boom": true})))
+        .respond_with(antwoord(json!({"upload_klein": grenzen, "download_klein": grenzen, "boom": true, "maak_mappen": true})))
 }
 
 #[tokio::test]
@@ -156,11 +156,11 @@ async fn nieuwe_server_geeft_de_hele_ruimte_in_een_verzoek() {
 async fn kleine_bestanden_gaan_in_een_multipartverzoek() {
     let server = MockServer::start().await;
     mogelijkheden(&server).mount(&server).await;
+    // Een map die nog niet bekend is, regelt de server in hetzelfde verzoek (geen maak_map).
     Mock::given(method("POST"))
         .and(path(format!("{API}maak_map")))
-        .and(body_partial_json(json!({"naam": "Notities"})))
         .respond_with(antwoord(json!({"map": "MN", "nieuw": true})))
-        .expect(1)
+        .expect(0)
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -170,7 +170,7 @@ async fn kleine_bestanden_gaan_in_een_multipartverzoek() {
             {"index": 1, "ok": false, "fout": "In de map Notities zijn alleen deze bestandssoorten toegestaan: .txt", "foutcode": "extensie_niet_toegestaan"},
             {"index": 2, "ok": true, "bestand": "B3", "naam": "c (conflict Jan 2026-10-23 1200).txt", "versie": 1, "conflict": true, "map": null}
         ]})))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
     let dir = tempfile::tempdir().unwrap();
@@ -198,7 +198,13 @@ async fn kleine_bestanden_gaan_in_een_multipartverzoek() {
     assert!(verzoek.headers.get("content-type").unwrap().to_str().unwrap().starts_with("multipart/form-data"));
     assert!(body.contains("name=\"f1\"") && body.contains("inhoud b"), "{body}");
     let lijst = body.split("name=\"bestanden\"").nth(1).unwrap();
-    assert!(lijst.contains("\"map\":\"MN\"") && lijst.contains("\"basis_versie\":2") && lijst.contains("\"blokhash\""));
+    assert!(lijst.contains("\"pad\":\"Notities\"") && lijst.contains("\"basis_versie\":2") && lijst.contains("\"blokhash\""));
+    // Het map-id uit het antwoord wordt onthouden: een volgende upload in die map gebruikt het.
+    let tweede = [openaec_sync::motor::KleinUpload { pad: "Notities/a.txt", lokaal: &a, basis_versie: Some(1) }];
+    let _ = opslag.upload_klein(&tweede).await;
+    let verzoeken = server.received_requests().await.unwrap();
+    let laatste = verzoeken.iter().rev().find(|v| v.url.path().ends_with("upload_klein")).unwrap();
+    assert!(String::from_utf8_lossy(&laatste.body).contains("\"map\":\"MN\""));
 }
 
 #[tokio::test]
@@ -230,4 +236,22 @@ async fn kleine_downloads_worden_gecontroleerd_en_weggeschreven() {
     assert!(r[1].as_ref().unwrap_err().to_string().contains("blokhash"));
     assert!(!p2.exists(), "een onjuiste download komt er niet");
     assert!(r[2].is_err());
+}
+
+#[tokio::test]
+async fn nieuwe_server_maakt_alle_mappen_in_een_verzoek() {
+    let server = MockServer::start().await;
+    mogelijkheden(&server).mount(&server).await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API}maak_mappen")))
+        .and(body_partial_json(json!({"ruimte": "R1", "paden": ["A", "A/B", "C"]})))
+        .respond_with(antwoord(json!({"mappen": {"A": "MA", "A/B": "MB", "C": "MC"}, "fouten": {}})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST")).and(path(format!("{API}maak_map"))).respond_with(antwoord(json!({}))).expect(0).mount(&server).await;
+    let opslag = ClientOpslag::new(Client::new(&server.uri(), "token a:b"), "R1");
+    opslag.bereid_mappen(&["A".into(), "A/B".into(), "C".into()]).await.unwrap();
+    // Al bekend: geen nieuw verzoek.
+    opslag.bereid_mappen(&["A/B".into()]).await.unwrap();
 }
