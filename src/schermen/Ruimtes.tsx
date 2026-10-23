@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, on, Show } from "solid-js"
 import { open } from "@tauri-apps/plugin-dialog"
 import { api, type Deeldoel, type Gedeeld, type MapInhoud } from "../lib/api"
-import { gedeeldMeta, rechtenTekst } from "../lib/delen"
+import { datumTekst, gedeeldMeta, rechtenTekst } from "../lib/delen"
 import { grootte, servertijd, soort } from "../lib/opmaak"
 import {
   bezig, doe, gedeeld, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald, setKoppelingen,
@@ -404,7 +404,7 @@ export default function Ruimtes() {
                   </div>
                   <div>
                     <dt>Geldig tot</dt>
-                    <dd>{g().verloopt ? servertijd(g().verloopt) : "geen vervaldatum"}</dd>
+                    <dd>{g().verloopt ? datumTekst(g().verloopt!) : "geen vervaldatum"}</dd>
                   </div>
                 </dl>
                 <Show when={g().rechten === "lezen" && g().doel_doctype === "Opslagmap"}>
