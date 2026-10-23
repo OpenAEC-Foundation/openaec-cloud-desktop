@@ -58,9 +58,6 @@ pub fn registreer(mappen: &[String]) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-/// De sleutelnaam `OpenAECStorage` blijft bewust gelijk (ook na de nieuwe productnaam): zo vervangt elke start de
-/// registratie van een oudere versie in plaats van er een tweede menu naast te zetten.
-#[cfg(windows)]
 pub fn registreer(_mappen: &[String]) -> std::io::Result<()> {
     Ok(())
 }
