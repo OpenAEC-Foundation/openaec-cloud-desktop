@@ -16,8 +16,11 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
   - `upload_bestand` / `download_bestand` — delta: bij een wijziging gaan alleen de gewijzigde blokken
     over de lijn; de server kopieert de rest. Downloads worden gecontroleerd en atomair geplaatst.
   - `motor` — één sync-ronde: vergelijkt lokale map, server en de vorige toestand (`.openaec/staat.json`).
-    De server beslist over conflicten (basisversie); bij een conflict blijven beide versies bestaan.
+    De server beslist over conflicten (basisversie); bij een conflict blijven beide versies bestaan. Uploads en
+    downloads lopen begrensd parallel, kleine bestanden gaan in groepen (zie Snelle sync).
   - `opslag` — de motor over de echte API (mappen worden onderweg aangemaakt).
+  - `namen` — namen die niet overal kunnen (bijv. `nul`), veilige namen, het voorvoegsel `\\?\` en de negeerlijst
+    (zie Lastige namen en negeerlijst).
   - `voortgang` — meldingen van de motor per bestand (start, bytevoortgang, klaar, fout) voor het statusvenster,
     hoogstens vier keer per seconde per bestand; de app kan de sync hiermee ook pauzeren.
 - **`src-tauri`** — de app: verbinden (sleutel in de sleutelbos van het besturingssysteem), ruimtes
@@ -40,6 +43,77 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
   (voortschrijdend gemiddelde over 8 seconden) en de geschatte resterende tijd.
 - **Blokhergebruik:** de motor meldt per bestand eerst hoeveel er echt over de lijn moet; de app toont wat dat scheelt
   ("alleen 16 MB van 1,2 GB verstuurd"), per bestand en opgeteld per ronde.
+
+## Snelle sync
+
+Een ronde gaat in drie stappen: eerst alle mappen op de server die de uploads nodig hebben, dan alle uploads en
+downloads begrensd parallel, en pas daarna het verwijderen (een lokaal verplaatst bestand staat zo eerst op de nieuwe
+plek voordat het oude naar de prullenbak gaat). Conflictregels, de toestand en de foutpaden per bestand zijn gelijk
+aan die van een ronde na elkaar; een fout bij één bestand houdt de rest niet op. Hashen en het aflopen van de map
+gebeuren op een aparte thread. De app gebruikt één HTTP-client met keep-alive (en HTTP/2 als de server het aanbiedt)
+en stuurt de stand hoogstens tien keer per seconde naar de vensters.
+
+- **Overdrachten tegelijk** (Instellingen → Synchroniseren; `sync.gelijktijdig` in `instellingen.json`, 1–32,
+  standaard 8): zoveel bestanden tegelijk, en de delen van een groot bestand (8 MiB per deel) binnen dezelfde limiet.
+- **Kleine bestanden in groepen:** kent de server `openaec_storage.api.mogelijkheden`, dan
+  - haalt de app de hele ruimte in één verzoek op met `openaec_storage.api.boom` (in plaats van `bladeren` per map);
+  - maakt hij alle ontbrekende mappen van een ronde in één verzoek met `openaec_storage.api.maak_mappen`;
+  - gaan bestanden tot de grens van de server (standaard 1 MiB) in groepen van hoogstens 64 bestanden of 16 MiB met
+    `openaec_storage.api.upload_klein` (multipart) en `openaec_storage.api.download_klein`. Per bestand komt het
+    resultaat of de weigering met foutcode terug; mislukt een verzoek als geheel, dan gaat elk bestand apart.
+  Een oudere server kent `mogelijkheden` niet: dan werkt alles zoals voorheen (bladeren per map, `maak_map`,
+  `upload_start`/`upload_klaar`, `blokken`/`download`).
+
+Gemeten tegen een lokale bench (zie `scripts/meetbench` in openaec-storage): zie de tabel onder Testen.
+
+## Lastige namen en negeerlijst
+
+Een naam die op Windows niet kan, is daar met normale paden niet te openen, te verplaatsen of te verwijderen.
+Hulpprogramma's maken zulke bestanden vaak per ongeluk (een shell-omleiding als `2>nul` in een Unix-shell op Windows
+geeft een bestand dat letterlijk `nul` heet). Herkend worden (`namen::naamprobleem`):
+
+- de apparaatnamen `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9` en `LPT0`–`LPT9` (ook met de
+  superscriptcijfers ¹²³), zonder onderscheid tussen hoofd- en kleine letters en ook met een extensie (`nul.txt`,
+  `con.log`);
+- namen die op een punt of spatie eindigen;
+- de tekens `<>:"/\|?*` en controletekens;
+- namen langer dan 255 tekens en paden langer dan 1000 tekens.
+
+De server weigert dezelfde namen (foutcode `ongeldige_naam`), dus zo'n lokaal bestand gaat niet naar de server. Wat de
+app ermee doet, staat onder Instellingen → **Bestanden met een gereserveerde naam** (`sync.gereserveerd`):
+
+| Waarde | Wat er gebeurt |
+|---|---|
+| `overslaan` (standaard) | Niet uploaden; het bestand staat in de lijst **Overgeslagen bestanden** met de reden. Geen fout en geen opnieuw proberen. |
+| `verwijderen` | Opruimen als het leeg is of kleiner dan 64 KB: via `\\?\` onder een veilige naam naar `.openaec/opgeruimd` en vandaar naar de prullenbak (lukt dat niet, dan verwijderd). Een groter bestand wordt overgeslagen. |
+| `veilige_naam` | Toch uploaden onder een veilige naam (`nul` → `nul_`, `con.log` → `con_.log`, `rapport.` → `rapport_`), met een melding. Lokaal blijft de naam gelijk; wijzigingen gaan beide kanten op. |
+
+Het statusvenster en het Overzicht tonen de overgeslagen bestanden met de knop **Opruimen**: na bevestiging gaan de
+opruimbare bestanden veilig weg (via `\\?\`, eerst naar de prullenbak).
+
+Komt zo'n naam van de server (bijv. van een Linux-computer, of van vóór de naamregels), dan zet de app het bestand op
+Windows neer onder de veilige naam (`nul_`). De koppeling staat in `.openaec/staat.json` (`lokale_namen`): een
+wijziging gaat terug naar het bestand met de oorspronkelijke naam, zonder dubbele uploads. Bestaat de veilige naam hier
+al, dan wordt het serverbestand overgeslagen. Op Linux en macOS kan een bestand dat al op de server staat gewoon zijn
+naam houden.
+
+**Negeerlijst:** bestanden die niet gesynchroniseerd worden (niet geüpload, niet gedownload, niet verwijderd). Altijd:
+
+    ~$*
+    *.tmp
+    .DS_Store
+    Thumbs.db
+    desktop.ini
+
+Eigen patronen komen in `.openaecignore` in de hoofdmap van de gekoppelde map (dat bestand zelf wordt wel
+gesynchroniseerd). Eén patroon per regel, `#` voor een opmerking. Zonder `/` geldt een patroon voor elke naam in het
+pad (bestand of map); met `/` voor het hele pad vanaf de hoofdmap (een `/` vooraan mag); een `/` aan het eind alleen
+voor mappen. `*` staat voor een stuk binnen een naam, `**` ook over mappen heen, `?` voor één teken; hoofdletters maken
+niet uit. Voorbeeld:
+
+    *.bak
+    build/
+    /Export/*.pdf
 
 ## Tools
 
@@ -95,6 +169,21 @@ De twee voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` en ruim
 
 Tegen een echte omgeving: `cargo run --example sync -- <basis-url> <ruimte> <map>` met
 `OPENAEC_AUTORISATIE="token <sleutel>:<geheim>"`.
+
+**Meting** (`crates/openaec-sync/examples/meting.rs`): `meting maak <map>` zet een vaste set neer (2000 bestanden van
+1–20 KB in 40 mappen en 5 bestanden van 50 MB), `meting upload|download <basis> <ruimte> <map>` meet één ronde. Het
+script `scripts/meetbench/meet.sh` in openaec-storage zet een lokale bench op (`frappe/erpnext:v16.51.1`, mariadb,
+valkey en moto als S3), meet een oudere en de huidige build en ruimt alles weer op.
+
+Meetresultaten (Windows 11, Docker Desktop, gunicorn met 4 werkers van 4 draden, moto als S3; één ronde, standaard 8
+overdrachten tegelijk). "Oud" is versie 0.5.0 (elk bestand na elkaar), "nieuw" deze versie:
+
+| Set | Richting | Oud | Nieuw | Sneller |
+|---|---|---|---|---|
+| 2000 bestanden van 1–20 KB in 40 mappen | upload | 144,8 s | 19,6 s | 7,4× |
+| 2000 bestanden van 1–20 KB in 40 mappen | download | 97,0 s | 6,9 s | 14× |
+| 5 bestanden van 50 MB | upload | 5,4 s | 3,5 s | 1,5× |
+| 5 bestanden van 50 MB | download | 4,2 s | 2,0 s | 2,1× |
 
 ## Bouwen / draaien
 
