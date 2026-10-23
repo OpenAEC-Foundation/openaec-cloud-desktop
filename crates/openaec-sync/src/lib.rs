@@ -7,6 +7,7 @@ pub mod bewaking;
 pub mod blokken;
 pub mod importeer;
 pub mod motor;
+pub mod namen;
 pub mod oauth;
 pub mod opslag;
 pub mod voortgang;

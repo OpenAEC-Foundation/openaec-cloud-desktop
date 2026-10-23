@@ -28,6 +28,28 @@ export interface Rapport {
   verwijderd: number
   conflicten: number
   fouten: string[]
+  /** Niet gesynchroniseerd, met de reden (bijv. een gereserveerde naam als `nul`); geen fout. */
+  overgeslagen: Overgeslagen[]
+  /** Wat de sync zelf deed met een lastige naam (opgeruimd, onder een veilige naam). */
+  meldingen: string[]
+}
+
+export interface Overgeslagen {
+  pad: string
+  reden: string
+  /** Een lokaal bestand met een lastige naam: kan met "Opruimen" veilig weg. */
+  opruimbaar: boolean
+}
+
+export interface KoppelOvergeslagen {
+  lokaal: string
+  ruimte_naam: string
+  bestanden: Overgeslagen[]
+}
+
+export interface Opgeruimd {
+  verwijderd: number
+  fouten: string[]
 }
 
 export interface Versie {
@@ -113,10 +135,14 @@ export interface RondeStand {
   bespaard: number
 }
 
+/** Wat de sync doet met een bestand met een gereserveerde of ongeldige naam. */
+export type Gereserveerd = "overslaan" | "verwijderen" | "veilige_naam"
+
 /** Instellingen van de sync, voor alle gekoppelde mappen. */
 export interface SyncInstellingen {
   /** Overdrachten tegelijk (1–32). */
   gelijktijdig: number
+  gereserveerd: Gereserveerd
 }
 
 export interface Quotum {
@@ -194,6 +220,9 @@ export const api = {
   opQuotum: (f: (q: Quotum) => void) => listen<Quotum>("quotum", (e) => f(e.payload)),
   syncInstellingen: () => invoke<SyncInstellingen>("sync_instellingen"),
   zetSyncInstellingen: (sync: SyncInstellingen) => invoke<SyncInstellingen>("zet_sync_instellingen", { sync }),
+  overgeslagen: () => invoke<KoppelOvergeslagen[]>("overgeslagen"),
+  ruimOvergeslagenOp: (lokaal: string | null) => invoke<Opgeruimd>("ruim_overgeslagen_op", { lokaal }),
+  opOvergeslagen: (f: (l: KoppelOvergeslagen[]) => void) => listen<KoppelOvergeslagen[]>("overgeslagen", (e) => f(e.payload)),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>

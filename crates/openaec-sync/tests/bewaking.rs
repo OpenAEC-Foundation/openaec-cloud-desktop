@@ -18,6 +18,10 @@ fn interne_en_tijdelijke_bestanden_tellen_niet_mee() {
     assert!(!telt_mee(root, Path::new("/elders/x.txt")));
     // een gewone map die toevallig zo begint telt wel mee
     assert!(telt_mee(root, &root.join(".openaec-oud").join("x.txt")));
+    // tijdelijke bestanden van programma's (standaard negeerlijst) ook niet
+    assert!(!telt_mee(root, &root.join("Tekeningen").join("~$plan.docx")));
+    assert!(!telt_mee(root, &root.join("a.tmp")));
+    assert!(!telt_mee(root, &root.join("Fotos").join("Thumbs.db")));
 }
 
 fn wijzigingen(cursor: u64, meer: bool, aantal: usize) -> ResponseTemplate {

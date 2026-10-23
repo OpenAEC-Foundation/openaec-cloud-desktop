@@ -5,19 +5,26 @@
 use std::path::Path;
 
 use crate::motor::TOESTANDSMAP;
+use crate::namen::Negeerlijst;
 use crate::{Client, Fout};
 
 const TIJDELIJK: [&str; 2] = [".openaec-download", ".json.tmp"];
 
 /// Telt een gebeurtenis op `pad` mee voor de map `root`? Niet voor de eigen toestandsmap en tijdelijke bestanden
-/// van de motor (anders lokt elke ronde een volgende uit).
+/// van de motor (anders lokt elke ronde een volgende uit), en niet voor wat altijd genegeerd wordt (zie
+/// [`Negeerlijst::standaard`]).
 pub fn telt_mee(root: &Path, pad: &Path) -> bool {
     let Ok(rel) = pad.strip_prefix(root) else { return false };
     if rel.components().next().is_some_and(|c| c.as_os_str() == TOESTANDSMAP) {
         return false;
     }
     let naam = pad.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    !TIJDELIJK.iter().any(|ext| naam.ends_with(ext))
+    if TIJDELIJK.iter().any(|ext| naam.ends_with(ext)) {
+        return false;
+    }
+    // Tijdelijke bestanden van programma's (standaard negeerlijst) lokken geen ronde uit.
+    let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/");
+    !Negeerlijst::standaard().negeert(&rel)
 }
 
 /// Zijn er wijzigingen in de ruimte na `sinds`? Geeft ook de nieuwe cursor (loopt alle pagina's af).

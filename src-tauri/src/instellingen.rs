@@ -23,6 +23,10 @@ pub struct SyncInstellingen {
     /// Zoveel overdrachten tegelijk (1–32; standaard 8).
     #[serde(default = "standaard_gelijktijdig")]
     pub gelijktijdig: usize,
+    /// Bestanden met een gereserveerde of ongeldige naam: overslaan (standaard), opruimen als ze klein zijn, of
+    /// onder een veilige naam uploaden.
+    #[serde(default)]
+    pub gereserveerd: openaec_sync::motor::Gereserveerd,
 }
 
 fn standaard_gelijktijdig() -> usize {
@@ -31,7 +35,7 @@ fn standaard_gelijktijdig() -> usize {
 
 impl Default for SyncInstellingen {
     fn default() -> Self {
-        Self { gelijktijdig: standaard_gelijktijdig() }
+        Self { gelijktijdig: standaard_gelijktijdig(), gereserveerd: Default::default() }
     }
 }
 

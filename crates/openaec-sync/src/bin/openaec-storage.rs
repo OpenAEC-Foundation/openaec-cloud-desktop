@@ -202,6 +202,12 @@ fn toon_rapport(k: &Koppeling, r: &Result<Rapport, Fout>) {
             for f in &r.fouten {
                 eprintln!("  fout: {f}");
             }
+            for o in &r.overgeslagen {
+                eprintln!("  overgeslagen: {}: {}", o.pad, o.reden);
+            }
+            for m in &r.meldingen {
+                println!("  {m}");
+            }
         }
         Err(f) => eprintln!("{} ({}): {f}", k.ruimte_naam, k.lokaal.display()),
     }

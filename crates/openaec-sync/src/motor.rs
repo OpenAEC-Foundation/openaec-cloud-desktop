@@ -7,8 +7,14 @@
 //! Een ronde gaat in drie stappen: eerst de mappen op de server die de uploads nodig hebben, dan alle uploads en
 //! downloads (begrensd parallel, zie [`Opties::gelijktijdig`]), en pas daarna het verwijderen. Een verplaatsing
 //! (lokaal hernoemd) is zo eerst als nieuw bestand op de server, voordat het oude naar de prullenbak gaat.
+//!
+//! Lastige namen (zie [`crate::namen`]): een lokaal bestand met een naam die niet kan (bijv. `nul`), gaat niet naar de
+//! server maar volgt [`Opties::gereserveerd`]: overslaan (in [`Rapport::overgeslagen`], zonder fout), opruimen of
+//! onder een veilige naam (`nul_`). Komt zo'n naam van de server (een andere computer), dan staat hij hier onder de
+//! veilige naam; de toestand onthoudt de koppeling, zodat een wijziging terug gaat naar de oorspronkelijke naam.
+//! Bestanden op de negeerlijst ([`Negeerlijst`]) doen niet mee.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
@@ -17,6 +23,7 @@ use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
 pub use crate::api::Batchgrenzen;
+use crate::namen::{self, Negeerlijst};
 use crate::voortgang::{Actie, Gebeurtenis, Richting, Stil, Teller, Waarnemer};
 use crate::{Fout, MAX_GELIJKTIJDIG, STANDAARD_GELIJKTIJDIG};
 
@@ -105,17 +112,57 @@ pub trait Opslag {
     }
 }
 
+/// Wat de motor doet met een lokaal bestand waarvan de naam niet kan (zie [`crate::namen`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Gereserveerd {
+    /// Niet uploaden; in de lijst met overgeslagen bestanden (standaard).
+    #[default]
+    Overslaan,
+    /// Opruimen als het bestand kleiner is dan [`OPRUIMGRENS`] (eerst naar de prullenbak waar dat kan); een groter
+    /// bestand wordt overgeslagen.
+    Verwijderen,
+    /// Toch uploaden, onder een veilige naam (`nul` wordt `nul_`); lokaal blijft de naam gelijk.
+    VeiligeNaam,
+}
+
+/// Bestanden met een lastige naam die kleiner zijn dan dit, mag de motor zelf opruimen ([`Gereserveerd::Verwijderen`]).
+pub const OPRUIMGRENS: u64 = 64 * 1024;
+
 /// Instellingen van een ronde.
 #[derive(Debug, Clone)]
 pub struct Opties {
     /// Zoveel bestanden tegelijk over de lijn (1..=32).
     pub gelijktijdig: usize,
+    /// Wat er gebeurt met een lokaal bestand waarvan de naam niet kan.
+    pub gereserveerd: Gereserveerd,
+    /// Naar de prullenbak (geeft `true` als het lukte); zonder wordt opruimen meteen verwijderen.
+    pub prullenbak: Option<fn(&Path) -> bool>,
+    /// Kunnen namen die niet kunnen hier ook niet (Windows, standaard daar aan)? Dan staat zo'n naam van de server
+    /// hier onder een veilige naam. Elders kan een bestand dat al op de server staat gewoon blijven heten zoals het
+    /// heet.
+    pub lokale_naamregels: bool,
 }
 
 impl Default for Opties {
     fn default() -> Self {
-        Self { gelijktijdig: STANDAARD_GELIJKTIJDIG }
+        Self {
+            gelijktijdig: STANDAARD_GELIJKTIJDIG,
+            gereserveerd: Gereserveerd::default(),
+            prullenbak: None,
+            lokale_naamregels: cfg!(windows),
+        }
     }
+}
+
+/// Een bestand dat niet gesynchroniseerd wordt, met de reden.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Overgeslagen {
+    /// Pad met '/' in de gekoppelde map (of op de server, als het daar vandaan kwam).
+    pub pad: String,
+    pub reden: String,
+    /// Een lokaal bestand met een lastige naam: kan met "Opruimen" veilig weg ([`ruim_op`]).
+    pub opruimbaar: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -133,6 +180,11 @@ pub struct Rapport {
     /// Paden (met '/') waarvoor deze ronde een fout optrad; staan in [`Rapport::fouten`] met de reden erbij.
     #[serde(skip)]
     pub foutpaden: Vec<String>,
+    /// Bestanden die niet gesynchroniseerd zijn (bijv. een gereserveerde naam). Geen fout: ze komen elke ronde
+    /// terug zonder dat er iets opnieuw geprobeerd wordt.
+    pub overgeslagen: Vec<Overgeslagen>,
+    /// Wat de motor zelf deed met een lastige naam (opgeruimd, onder een veilige naam), voor een melding.
+    pub meldingen: Vec<String>,
 }
 
 impl Rapport {
@@ -152,7 +204,26 @@ struct Bekend {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Toestand {
+    /// Per pad op de server: wat er bij de vorige ronde gelijk was.
     bestanden: BTreeMap<String, Bekend>,
+    /// Pad op de server -> pad hier, voor bestanden die hier een andere (veilige) naam hebben.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    lokale_namen: BTreeMap<String, String>,
+    /// Overgeslagen bestanden van de laatste ronde.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    overgeslagen: Vec<Overgeslagen>,
+}
+
+impl Toestand {
+    /// Het pad hier (met '/') voor een pad op de server.
+    fn hier(&self, sleutel: &str) -> String {
+        self.lokale_namen.get(sleutel).cloned().unwrap_or_else(|| sleutel.to_string())
+    }
+
+    /// Het pad op de server voor een pad hier.
+    fn sleutel(&self, hier: &str) -> String {
+        self.lokale_namen.iter().find(|(_, l)| *l == hier).map(|(s, _)| s.clone()).unwrap_or_else(|| hier.to_string())
+    }
 }
 
 fn toestandsbestand(root: &Path) -> PathBuf {
@@ -179,6 +250,13 @@ fn lokaal_pad(root: &Path, pad: &str) -> PathBuf {
     pad.split('/').fold(root.to_path_buf(), |p, deel| p.join(deel))
 }
 
+/// Het bestand `rel` (met '/') in `root`; met een lastige naam letterlijk (`\\?\` op Windows), anders zou Windows
+/// er een apparaat of een andere naam van maken.
+fn lokaal_bestand(root: &Path, rel: &str) -> PathBuf {
+    let pad = lokaal_pad(root, rel);
+    if namen::padprobleem(rel).is_some() { namen::lang_pad(&pad) } else { pad }
+}
+
 fn kenmerk(pad: &Path) -> std::io::Result<(u64, u128)> {
     let meta = std::fs::metadata(pad)?;
     let mtime = meta.modified()?.duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -187,28 +265,23 @@ fn kenmerk(pad: &Path) -> std::io::Result<(u64, u128)> {
 
 fn lokale_bestanden(root: &Path) -> BTreeMap<String, (u64, u128)> {
     let mut uit = BTreeMap::new();
-    let mut te_doen = vec![root.to_path_buf()];
-    while let Some(map) = te_doen.pop() {
+    let mut te_doen = vec![(root.to_path_buf(), String::new())];
+    while let Some((map, rel_map)) = te_doen.pop() {
         let Ok(items) = std::fs::read_dir(&map) else { continue };
         for item in items.flatten() {
-            let pad = item.path();
             let naam = item.file_name().to_string_lossy().to_string();
-            if map == root && naam == TOESTANDSMAP {
+            if rel_map.is_empty() && naam == TOESTANDSMAP {
                 continue;
             }
+            let rel = if rel_map.is_empty() { naam.clone() } else { format!("{rel_map}/{naam}") };
+            // Een lastige naam (ook van een map onderweg) letterlijk openen.
+            let pad = if namen::naamprobleem(&naam).is_some() { namen::lang_pad(&item.path()) } else { item.path() };
             match item.file_type() {
-                Ok(t) if t.is_dir() => te_doen.push(pad),
+                Ok(t) if t.is_dir() => te_doen.push((pad, rel)),
                 Ok(t) if t.is_file() => {
                     if pad.extension().is_some_and(|e| e == TIJDELIJK_EXT) {
                         continue;
                     }
-                    let rel = pad
-                        .strip_prefix(root)
-                        .unwrap()
-                        .components()
-                        .map(|c| c.as_os_str().to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join("/");
                     if let Ok(k) = kenmerk(&pad) {
                         uit.insert(rel, k);
                     }
@@ -223,19 +296,49 @@ fn lokale_bestanden(root: &Path) -> BTreeMap<String, (u64, u128)> {
 /// Bestand-id en versie van een gesynchroniseerd bestand (pad met '/' ten opzichte van `root`), uit de toestand
 /// van de laatste ronde. Voor vergrendelen en delen vanuit de Verkenner.
 pub fn bekend_bestand(root: &Path, pad: &str) -> Option<(String, u64)> {
-    laad(root).bestanden.get(pad).map(|b| (b.bestand.clone(), b.versie))
+    let toestand = laad(root);
+    toestand.bestanden.get(&toestand.sleutel(pad)).map(|b| (b.bestand.clone(), b.versie))
 }
 
 /// Alle paden (met '/') die in sync zijn: in de toestand van de laatste ronde en lokaal ongewijzigd sinds die ronde
 /// (zelfde grootte en wijzigingstijd); leeg als de map nog nooit is gesynchroniseerd. Voor de statusvinkjes in de
 /// Verkenner: een bestand dat gewijzigd is terwijl de app niet draaide, krijgt zo geen vinkje.
 pub fn bekende_paden(root: &Path) -> Vec<String> {
-    laad(root)
+    let toestand = laad(root);
+    toestand
         .bestanden
-        .into_iter()
-        .filter(|(pad, b)| kenmerk(&lokaal_pad(root, pad)).is_ok_and(|k| k == (b.grootte, b.mtime_ns)))
-        .map(|(pad, _)| pad)
+        .iter()
+        .map(|(pad, b)| (toestand.hier(pad), b))
+        .filter(|(hier, b)| kenmerk(&lokaal_bestand(root, hier)).is_ok_and(|k| k == (b.grootte, b.mtime_ns)))
+        .map(|(hier, _)| hier)
         .collect()
+}
+
+/// De overgeslagen bestanden van de laatste ronde (leeg als er geen waren of de map nog nooit is gesynchroniseerd).
+pub fn overgeslagen(root: &Path) -> Vec<Overgeslagen> {
+    laad(root).overgeslagen
+}
+
+/// Overgeslagen bestanden met een lastige naam opruimen (na bevestiging in de app): veilig verwijderd met
+/// [`namen::verwijder_veilig`], dus via de prullenbak waar dat kan. Alleen paden die als opruimbaar in de lijst van
+/// de laatste ronde staan; wat lukt, verdwijnt uit die lijst. Per pad de uitkomst. Niet tegelijk met een ronde.
+pub fn ruim_op(root: &Path, paden: &[String], prullenbak: Option<fn(&Path) -> bool>) -> Vec<(String, Result<(), String>)> {
+    let mut toestand = laad(root);
+    let mut uit = Vec::new();
+    for pad in paden {
+        let mag = toestand.overgeslagen.iter().any(|o| &o.pad == pad && o.opruimbaar);
+        let r = if mag {
+            namen::verwijder_veilig(root, pad, prullenbak).map_err(|e| e.to_string())
+        } else {
+            Err("staat niet (meer) in de lijst met overgeslagen bestanden".into())
+        };
+        if r.is_ok() {
+            toestand.overgeslagen.retain(|o| &o.pad != pad);
+        }
+        uit.push((pad.clone(), r));
+    }
+    let _ = bewaar(root, &toestand);
+    uit
 }
 
 /// Aantal bestanden in de toestand van de laatste ronde (0 als de map nog nooit is gesynchroniseerd). Goedkoop: leest
@@ -316,20 +419,33 @@ struct Ronde<'a, O> {
 }
 
 impl<O: Opslag> Ronde<'_, O> {
+    /// Het pad hier (met '/') voor een pad op de server; meldingen en het rapport gebruiken dat pad.
+    fn rel(&self, sleutel: &str) -> String {
+        self.toestand.lock().unwrap().hier(sleutel)
+    }
+
+    /// Het lokale bestand voor een pad op de server.
+    fn hier(&self, sleutel: &str) -> PathBuf {
+        lokaal_bestand(self.root, &self.rel(sleutel))
+    }
+
     /// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]).
     fn onthoud(&self, pad: &str, bestand: &str, versie: u64) -> Result<(), Fout> {
-        let (grootte, mtime_ns) = kenmerk(&lokaal_pad(self.root, pad))?;
+        let rel = self.rel(pad);
+        let (grootte, mtime_ns) = kenmerk(&lokaal_bestand(self.root, &rel))?;
         self.toestand
             .lock()
             .unwrap()
             .bestanden
             .insert(pad.to_string(), Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns });
-        self.rapport.lock().unwrap().bijgewerkt.push(pad.to_string());
+        self.rapport.lock().unwrap().bijgewerkt.push(rel);
         Ok(())
     }
 
     fn vergeet(&self, pad: &str) {
-        self.toestand.lock().unwrap().bestanden.remove(pad);
+        let mut toestand = self.toestand.lock().unwrap();
+        toestand.bestanden.remove(pad);
+        toestand.lokale_namen.remove(pad);
     }
 
     fn tel(&self, f: impl FnOnce(&mut Rapport)) {
@@ -339,15 +455,18 @@ impl<O: Opslag> Ronde<'_, O> {
     /// Upload met meldingen (start en bytevoortgang).
     async fn upload(&self, pad: &str, lokaal: &Path, basis: Option<u64>) -> Result<Upload, Fout> {
         let totaal = std::fs::metadata(lokaal).map(|m| m.len()).unwrap_or(0);
-        self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Upload, totaal });
-        let teller = Teller::new(self.waarnemer, pad, Richting::Upload);
+        let rel = self.rel(pad);
+        self.waarnemer.melding(Gebeurtenis::Start { pad: rel.clone(), richting: Richting::Upload, totaal });
+        let teller = Teller::new(self.waarnemer, &rel, Richting::Upload);
         self.opslag.upload_met_voortgang(pad, lokaal, basis, &|gedaan, totaal| teller.stand(gedaan, totaal)).await
     }
 
-    /// Download met meldingen (start en bytevoortgang); `pad` is het pad in de map, niet per se dat op de server.
+    /// Download met meldingen (start en bytevoortgang); `pad` is het pad op de server waarop het bestand hier
+    /// bijgehouden wordt (bij een conflict niet per se dat van `server`).
     async fn download(&self, pad: &str, server: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
-        self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Download, totaal: server.grootte });
-        let teller = Teller::new(self.waarnemer, pad, Richting::Download);
+        let rel = self.rel(pad);
+        self.waarnemer.melding(Gebeurtenis::Start { pad: rel.clone(), richting: Richting::Download, totaal: server.grootte });
+        let teller = Teller::new(self.waarnemer, &rel, Richting::Download);
         self.opslag.download_met_voortgang(server, lokaal, &|gedaan, totaal| teller.stand(gedaan, totaal)).await
     }
 
@@ -357,8 +476,8 @@ impl<O: Opslag> Ronde<'_, O> {
             Some(server) if up.conflict => {
                 // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen, en de
                 // serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
-                let lokaal = lokaal_pad(self.root, pad);
-                let kopie = lokaal_pad(self.root, &up.pad);
+                let lokaal = self.hier(pad);
+                let kopie = self.hier(&up.pad);
                 std::fs::rename(&lokaal, &kopie)?;
                 self.onthoud(&up.pad, &up.bestand, up.versie)?;
                 self.download(pad, server, &lokaal).await?;
@@ -384,7 +503,7 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Eén taak uitvoeren; geeft terug wat er gebeurd is.
     async fn voer_uit(&self, taak: &Taak) -> Result<Actie, Fout> {
-        let lokaal = lokaal_pad(self.root, taak.pad());
+        let lokaal = self.hier(taak.pad());
         match taak {
             Taak::Upload { pad, basis, server } => {
                 // Basis: de versie waarop de lokale wijziging gebaseerd is; de server beslist over een conflict.
@@ -415,6 +534,7 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Uitkomst van een taak melden; een fout komt in het rapport.
     fn meld(&self, pad: &str, uitkomst: Result<Actie, Fout>) {
+        let pad = &self.rel(pad);
         match uitkomst {
             Ok(actie) => self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie }),
             Err(fout) => {
@@ -443,7 +563,7 @@ impl<O: Opslag> Ronde<'_, O> {
             .iter()
             .filter_map(|t| match t {
                 Taak::Upload { pad, basis, server } => {
-                    let lokaal = lokaal_pad(self.root, pad);
+                    let lokaal = self.hier(pad);
                     let grootte = std::fs::metadata(&lokaal).map(|m| m.len()).unwrap_or(0);
                     Some((pad.as_str(), lokaal, *basis, server.as_ref(), grootte))
                 }
@@ -451,7 +571,7 @@ impl<O: Opslag> Ronde<'_, O> {
             })
             .collect();
         for (pad, _, _, _, grootte) in &paden {
-            self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Upload, totaal: *grootte });
+            self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Upload, totaal: *grootte });
         }
         let items: Vec<KleinUpload> =
             paden.iter().map(|(pad, lokaal, basis, _, _)| KleinUpload { pad, lokaal, basis_versie: *basis }).collect();
@@ -467,7 +587,7 @@ impl<O: Opslag> Ronde<'_, O> {
         for ((pad, _, _, server, grootte), resultaat) in paden.iter().zip(resultaten) {
             let uitkomst = match resultaat {
                 Ok(up) => {
-                    Teller::new(self.waarnemer, pad, Richting::Upload).stand(*grootte, *grootte);
+                    Teller::new(self.waarnemer, &self.rel(pad), Richting::Upload).stand(*grootte, *grootte);
                     self.na_upload(pad, *server, up).await
                 }
                 Err(fout) => Err(fout),
@@ -484,12 +604,12 @@ impl<O: Opslag> Ronde<'_, O> {
         let paden: Vec<(&str, &OpslagBestand, PathBuf)> = taken
             .iter()
             .filter_map(|t| match t {
-                Taak::Download { pad, server } => Some((pad.as_str(), server, lokaal_pad(self.root, pad))),
+                Taak::Download { pad, server } => Some((pad.as_str(), server, self.hier(pad))),
                 _ => None,
             })
             .collect();
         for (pad, server, _) in &paden {
-            self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Download, totaal: server.grootte });
+            self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Download, totaal: server.grootte });
         }
         let items: Vec<(&OpslagBestand, &Path)> = paden.iter().map(|(_, server, lokaal)| (*server, lokaal.as_path())).collect();
         let resultaten = match self.opslag.download_klein(&items).await {
@@ -503,7 +623,7 @@ impl<O: Opslag> Ronde<'_, O> {
         };
         for ((pad, server, _), resultaat) in paden.iter().zip(resultaten) {
             let uitkomst = resultaat.and_then(|()| {
-                Teller::new(self.waarnemer, pad, Richting::Download).stand(server.grootte, server.grootte);
+                Teller::new(self.waarnemer, &self.rel(pad), Richting::Download).stand(server.grootte, server.grootte);
                 self.onthoud(pad, &server.bestand, server.versie)?;
                 self.tel(|r| r.gedownload += 1);
                 Ok(Actie::Gedownload)
@@ -583,20 +703,26 @@ pub async fn sync_met_opties<O: Opslag>(
     waarnemer: &dyn Waarnemer,
     opties: &Opties,
 ) -> Result<Rapport, Fout> {
-    let toestand = laad(root);
+    let mut toestand = laad(root);
     let server: BTreeMap<String, OpslagBestand> =
         opslag.lijst().await?.into_iter().map(|b| (b.pad.clone(), b)).collect();
     // De map aflopen kost bij duizenden bestanden even: op een aparte thread, zodat de runtime doorloopt.
-    let lokaal = {
+    let ruw = {
         let root = root.to_path_buf();
         tokio::task::spawn_blocking(move || lokale_bestanden(&root)).await.map_err(std::io::Error::other)?
     };
+    let negeer = Negeerlijst::laad(root);
+    let mut rapport = Rapport::default();
+    let buiten = koppel_servernamen(&mut toestand, &server, &ruw, &negeer, opties, &mut rapport);
+    let lokaal = vertaal_lokaal(root, &mut toestand, &ruw, &server, &negeer, opties, &mut rapport);
+    toestand.overgeslagen = rapport.overgeslagen.clone();
 
     let paden: BTreeSet<String> = toestand
         .bestanden
         .keys()
         .chain(server.keys())
         .chain(lokaal.keys())
+        .filter(|p| !buiten.contains(*p) && !negeer.negeert(p))
         .cloned()
         .collect();
 
@@ -635,7 +761,7 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     waarnemer.melding(Gebeurtenis::Ronde { uploaden, downloaden, bytes });
 
-    let ronde = Ronde { opslag, root, waarnemer, toestand: Mutex::new(toestand), rapport: Mutex::new(Rapport::default()) };
+    let ronde = Ronde { opslag, root, waarnemer, toestand: Mutex::new(toestand), rapport: Mutex::new(rapport) };
 
     // Beslissen per pad. Wat geen overdracht is (opnemen, vergeten, uitgesloten), gebeurt meteen.
     let mut overdrachten = Vec::new();
@@ -650,7 +776,7 @@ pub async fn sync_met_opties<O: Opslag>(
         if uitgesloten_pad(&pad, uitgesloten) && !(hier && lokaal_gewijzigd) {
             if hier {
                 // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg, op de server blijft hij staan.
-                if let Err(fout) = std::fs::remove_file(lokaal_pad(root, &pad)) {
+                if let Err(fout) = std::fs::remove_file(ronde.hier(&pad)) {
                     ronde.rapport.lock().unwrap().fout(&pad, fout);
                     continue;
                 }
@@ -716,4 +842,98 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     bewaar(root, &ronde.toestand.lock().unwrap())?;
     Ok(ronde.rapport.into_inner().unwrap())
+}
+
+/// Paden op de server die hier niet onder hun eigen naam kunnen (Windows, zie [`Opties::lokale_naamregels`]) krijgen
+/// een veilige naam hier (`nul` → `nul_`), vastgelegd in de toestand. Staat die veilige naam al ergens, dan doet het
+/// bestand niet mee (overgeslagen). Geeft de paden op de server die buiten de ronde blijven.
+fn koppel_servernamen(
+    toestand: &mut Toestand,
+    server: &BTreeMap<String, OpslagBestand>,
+    ruw: &BTreeMap<String, (u64, u128)>,
+    negeer: &Negeerlijst,
+    opties: &Opties,
+    rapport: &mut Rapport,
+) -> BTreeSet<String> {
+    let mut buiten = BTreeSet::new();
+    if !opties.lokale_naamregels {
+        return buiten;
+    }
+    for sleutel in server.keys() {
+        if toestand.lokale_namen.contains_key(sleutel) || negeer.negeert(sleutel) {
+            continue;
+        }
+        let Some(probleem) = namen::padprobleem(sleutel).filter(namen::Probleem::in_de_naam) else { continue };
+        let veilig = namen::veilig_pad(sleutel);
+        let bezet = server.contains_key(&veilig)
+            || ruw.contains_key(&veilig)
+            || toestand.lokale_namen.values().any(|l| *l == veilig)
+            || toestand.bestanden.contains_key(&veilig);
+        if bezet {
+            let reden = format!("{probleem}; kan hier niet als {veilig}, want die naam bestaat al");
+            rapport.overgeslagen.push(Overgeslagen { pad: sleutel.clone(), reden, opruimbaar: false });
+            buiten.insert(sleutel.clone());
+        } else {
+            rapport.meldingen.push(format!("{sleutel}: {probleem}; staat hier als {veilig}"));
+            toestand.lokale_namen.insert(sleutel.clone(), veilig);
+        }
+    }
+    buiten
+}
+
+/// De lokale bestanden onder hun pad op de server. Genegeerde bestanden vallen weg; een bestand dat hier onder een
+/// veilige naam staat, krijgt zijn pad op de server terug; een naam die niet kan, volgt [`Opties::gereserveerd`].
+fn vertaal_lokaal(
+    root: &Path,
+    toestand: &mut Toestand,
+    ruw: &BTreeMap<String, (u64, u128)>,
+    server: &BTreeMap<String, OpslagBestand>,
+    negeer: &Negeerlijst,
+    opties: &Opties,
+    rapport: &mut Rapport,
+) -> BTreeMap<String, (u64, u128)> {
+    let omgekeerd: HashMap<String, String> = toestand.lokale_namen.iter().map(|(s, l)| (l.clone(), s.clone())).collect();
+    let mut uit = BTreeMap::new();
+    for (rel, kenmerk) in ruw {
+        if negeer.negeert(rel) {
+            continue;
+        }
+        if let Some(sleutel) = omgekeerd.get(rel) {
+            uit.insert(sleutel.clone(), *kenmerk);
+            continue;
+        }
+        let Some(probleem) = namen::padprobleem(rel) else {
+            uit.insert(rel.clone(), *kenmerk);
+            continue;
+        };
+        // Waar de naam hier wel kan, en het bestand al op de server staat (van vóór de naamregels): gewoon bijhouden,
+        // de server neemt nieuwe versies van een bestaand bestand aan.
+        if !opties.lokale_naamregels && (server.contains_key(rel) || toestand.bestanden.contains_key(rel)) {
+            uit.insert(rel.clone(), *kenmerk);
+            continue;
+        }
+        let opruimbaar = probleem.in_de_naam();
+        let sla_over = |rapport: &mut Rapport, reden: String| rapport.overgeslagen.push(Overgeslagen { pad: rel.clone(), reden, opruimbaar });
+        match opties.gereserveerd {
+            Gereserveerd::VeiligeNaam if opruimbaar => {
+                let veilig = namen::veilig_pad(rel);
+                if ruw.contains_key(&veilig) || uit.contains_key(&veilig) || toestand.lokale_namen.contains_key(&veilig) {
+                    sla_over(rapport, format!("{probleem}; {veilig} bestaat al"));
+                } else {
+                    rapport.meldingen.push(format!("{rel}: {probleem}; staat op de server als {veilig}"));
+                    toestand.lokale_namen.insert(veilig.clone(), rel.clone());
+                    uit.insert(veilig, *kenmerk);
+                }
+            }
+            Gereserveerd::Verwijderen if opruimbaar && kenmerk.0 < OPRUIMGRENS => {
+                match namen::verwijder_veilig(root, rel, opties.prullenbak) {
+                    Ok(()) => rapport.meldingen.push(format!("{rel}: {probleem}; opgeruimd")),
+                    Err(fout) => sla_over(rapport, format!("{probleem}; opruimen lukte niet ({fout})")),
+                }
+            }
+            Gereserveerd::Verwijderen if opruimbaar => sla_over(rapport, format!("{probleem}; te groot om vanzelf op te ruimen")),
+            _ => sla_over(rapport, probleem.to_string()),
+        }
+    }
+    uit
 }

@@ -1,5 +1,6 @@
-import { createSignal, For, Show } from "solid-js"
-import { api, type Koppeling, type MapRapport } from "../lib/api"
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { api, type Koppeling, type KoppelOvergeslagen, type MapRapport } from "../lib/api"
+import OvergeslagenLijst from "../OvergeslagenLijst"
 import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
   bezig, doe, koppelingen, koppelStatus, quotum, rapporten, ruimtes, setKoppelingen, setMelding, setScherm, stand,
@@ -39,6 +40,13 @@ export default function Overzicht() {
   const [selectieVoor, setSelectieVoor] = createSignal<Koppeling | null>(null)
   const [alleMappen, setAlleMappen] = createSignal<string[]>([])
   const [uit, setUit] = createSignal<string[]>([])
+  const [overgeslagen, setOvergeslagen] = createSignal<KoppelOvergeslagen[]>([])
+
+  onMount(async () => {
+    api.overgeslagen().then(setOvergeslagen).catch(() => {})
+    const stop = await api.opOvergeslagen(setOvergeslagen)
+    onCleanup(stop)
+  })
 
   const syncNu = () =>
     doe("Synchroniseren", async () => {
@@ -218,6 +226,11 @@ export default function Overzicht() {
             }}
           </For>
         </div>
+        <Show when={overgeslagen().length}>
+          <section class="kaart">
+            <OvergeslagenLijst lijst={overgeslagen()} klaar={setMelding} />
+          </section>
+        </Show>
         <p class="hint">Synchroniseert vanzelf zodra er iets verandert, hier of op de server.</p>
       </Show>
 

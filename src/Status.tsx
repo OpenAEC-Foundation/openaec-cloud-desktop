@@ -1,7 +1,8 @@
 // Statusvenster bij het systeemvak: wat de sync nu doet, wat er net gebeurd is, en snelle knoppen.
 
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { api, type Gebeurd, type Koppeling, type Quotum, type Stand } from "./lib/api"
+import { api, type Gebeurd, type Koppeling, type KoppelOvergeslagen, type Quotum, type Stand } from "./lib/api"
+import OvergeslagenLijst from "./OvergeslagenLijst"
 import { besparingTekst, grootte, lokaalPad, naamVan, procent, quotumTekst, rondeTekst, snelheid, tijdstip } from "./lib/opmaak"
 
 const actieTekst: Record<Gebeurd["actie"], string> = {
@@ -27,6 +28,7 @@ export default function Status() {
   const [koppelingen, setKoppelingen] = createSignal<Koppeling[]>([])
   const [fout, setFout] = createSignal("")
   const [quotum, setQuotum] = createSignal<Quotum | null>(null)
+  const [overgeslagen, setOvergeslagen] = createSignal<KoppelOvergeslagen[]>([])
 
   const laad = async () => {
     const s = await api.status()
@@ -34,6 +36,7 @@ export default function Status() {
     setStand(await api.activiteit())
     setFout("")
     api.quotum().then(setQuotum).catch(() => {})
+    api.overgeslagen().then(setOvergeslagen).catch(() => {})
   }
 
   onMount(async () => {
@@ -42,6 +45,7 @@ export default function Status() {
       await api.opActiviteit(setStand),
       await api.opVensterOpen(() => laad().catch(() => {})),
       await api.opQuotum(setQuotum),
+      await api.opOvergeslagen(setOvergeslagen),
     ]
     onCleanup(() => stoppers.forEach((stop) => stop()))
   })
@@ -140,6 +144,8 @@ export default function Status() {
           )}
         </For>
       </ul>
+
+      <OvergeslagenLijst lijst={overgeslagen()} klaar={setFout} compact />
 
       <Show when={fout()}>
         <p class="status-fout">{fout()}</p>

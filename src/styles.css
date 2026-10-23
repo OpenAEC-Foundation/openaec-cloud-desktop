@@ -59,11 +59,11 @@ button.tekstknop { border: none; background: none; padding: 0; color: var(--ambe
 button.tekstknop:hover:not(:disabled) { color: var(--oranje); }
 
 label { display: block; font-size: 12px; font-weight: 500; color: var(--steen); margin-bottom: 14px; }
-input {
+input, select {
   display: block; width: 100%; margin-top: 5px; padding: 8px 10px; font: inherit; font-size: 14px;
   border: 1px solid var(--lijn-hover); border-radius: 6px; background: var(--wit); color: var(--inkt);
 }
-input:focus { outline: 2px solid var(--amber); outline-offset: -1px; border-color: var(--amber); }
+input:focus, select:focus { outline: 2px solid var(--amber); outline-offset: -1px; border-color: var(--amber); }
 label.smal input, label.smal select { width: auto; min-width: 96px; }
 label.vinkje { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; color: var(--inkt); margin: 0 0 8px; cursor: pointer; }
 label.vinkje input { width: auto; margin: 0; accent-color: var(--amber); }
@@ -341,6 +341,16 @@ body.statusvenster { background: var(--wit); }
 .status-ronde { display: flex; flex-direction: column; gap: 5px; padding: 10px 16px; border-bottom: 1px solid var(--lijn); flex: none; }
 .status-actief .bespaard { font-size: 11px; color: var(--groen-tekst); }
 .status-opslag { display: flex; flex-direction: column; gap: 5px; padding: 8px 16px; border-top: 1px solid var(--lijn); font-size: 12px; color: var(--steen); flex: none; }
+.overgeslagen { display: flex; flex-direction: column; gap: 6px; }
+.overgeslagen.compact { padding: 8px 16px; border-top: 1px solid var(--lijn); flex: none; max-height: 30%; overflow: auto; }
+.overgeslagen-kop { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.overgeslagen.compact .overgeslagen-kop { font-size: 12px; }
+.overgeslagen ul { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.overgeslagen li { display: flex; gap: 8px; font-size: 12px; min-width: 0; }
+.overgeslagen li .naam { font-family: Consolas, "Cascadia Mono", monospace; color: var(--inkt); flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overgeslagen li .reden { color: var(--steen); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overgeslagen li.meer { color: var(--steen-licht); }
+.overgeslagen .hint { margin: 4px 0 0; }
 .status-fout { font-size: 12px; color: var(--rood-tekst); background: var(--rood-vlak); padding: 6px 16px; flex: none; }
 .status-knoppen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 16px; border-top: 1px solid var(--lijn); background: var(--papier); flex: none; }
 .status-knoppen button { padding: 8px 6px; }

@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show } from "solid-js"
-import { api, type SyncInstellingen } from "../lib/api"
+import { api, type Gereserveerd, type SyncInstellingen } from "../lib/api"
 import {
   basis, bezig, doe, koppelingen, setMelding, setRuimtes, setRuimtesOpgehaald, setScherm, setVerbonden, stand,
 } from "../lib/winkel"
@@ -99,6 +99,20 @@ export default function Instellingen() {
             <p class="hint">
               Zoveel bestanden (of delen van een groot bestand) gaan tegelijk over de lijn; standaard 8. Hoger helpt bij veel kleine
               bestanden op een snelle verbinding, lager bij een trage of gedeelde verbinding. Geldt vanaf de volgende ronde.
+            </p>
+            <label class="smal">
+              Bestanden met een gereserveerde naam
+              <select value={s().gereserveerd} onChange={(e) => zetSync({ gereserveerd: e.currentTarget.value as Gereserveerd })}>
+                <option value="overslaan">Overslaan</option>
+                <option value="verwijderen">Automatisch verwijderen als ze klein zijn</option>
+                <option value="veilige_naam">Toch uploaden onder een veilige naam</option>
+              </select>
+            </label>
+            <p class="hint">
+              Een naam als nul, con.log of een naam die op een punt eindigt, kan niet op Windows. Programma's maken zulke bestanden vaak
+              per ongeluk. Overslaan (standaard) zet ze in de lijst Overgeslagen bestanden, waar je ze kunt opruimen. Automatisch
+              verwijderen ruimt ze op als ze leeg zijn of kleiner dan 64 KB (eerst naar de prullenbak). Een veilige naam uploadt ze
+              als bijv. nul_; hier blijft de naam gelijk.
             </p>
           </section>
         )}

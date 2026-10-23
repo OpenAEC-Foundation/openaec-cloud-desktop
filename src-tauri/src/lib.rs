@@ -4,6 +4,7 @@
 mod activiteit;
 mod bewaking;
 mod instellingen;
+mod opruimen;
 mod systeemvak;
 mod tools;
 mod updates;
@@ -416,6 +417,10 @@ async fn sync_mappen(app: &AppHandle, alleen: Option<&std::collections::HashSet<
     activiteit::begin(app);
     let r = sync_ronde(app, &state, alleen).await;
     activiteit::einde(app, r.as_deref().map_err(String::as_str));
+    // De lijst met overgeslagen bestanden voor het statusvenster en het overzicht.
+    if let Ok(lijst) = opruimen::overgeslagen(app.state::<AppState>()).await {
+        let _ = app.emit("overgeslagen", &lijst);
+    }
     // Na elke ronde het opslaggebruik verversen (overzicht en statusvenster luisteren naar "quotum").
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -450,13 +455,28 @@ async fn sync_ronde(
         let inst = state.instellingen.lock().unwrap();
         (inst.koppelingen.clone(), inst.sync.clone().begrensd())
     };
-    let opties = Opties { gelijktijdig: sync.gelijktijdig };
+    let opties = Opties {
+        gelijktijdig: sync.gelijktijdig,
+        gereserveerd: sync.gereserveerd,
+        prullenbak: opruimen::prullenbak(),
+        ..Default::default()
+    };
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
         let opslag = ClientOpslag::new(client.clone(), &k.ruimte).met_gelijktijdig(sync.gelijktijdig);
         let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
         let mut r = sync_met_opties(&opslag, Path::new(&k.lokaal), &k.uitgesloten, &waarnemer, &opties).await;
         if let Ok(rapport) = &mut r {
+            // Wat de motor zelf deed met een lastige naam (opgeruimd, onder een veilige naam): één melding per map.
+            if !rapport.meldingen.is_empty() {
+                let lijst = rapport.meldingen.iter().take(3).cloned().collect::<Vec<_>>().join("
+");
+                let meer = rapport.meldingen.len().saturating_sub(3);
+                let staart = if meer > 0 { format!("
+… en nog {meer}") } else { String::new() };
+                melding(app, &format!("{}: bestanden met een naam die niet kan
+{lijst}{staart}", k.ruimte_naam));
+            }
             let lokaal = k.lokaal.clone();
             let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
             let foutpaden = std::mem::take(&mut rapport.foutpaden);
@@ -792,6 +812,8 @@ pub fn run() {
             quotum,
             sync_instellingen,
             zet_sync_instellingen,
+            opruimen::overgeslagen,
+            opruimen::ruim_overgeslagen_op,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,
