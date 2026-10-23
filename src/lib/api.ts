@@ -174,6 +174,38 @@ export interface DownloadVoortgang {
   done: boolean
 }
 
+/** Wat er gedeeld wordt: een bestand of map op de server. */
+export interface Deeldoel {
+  doctype: "Opslagbestand" | "Opslagmap"
+  id: string
+  naam: string
+  /** Lokaal pad, of de plek in de ruimte ("Ruimte / Map / bestand.pdf"). */
+  pad: string
+  ruimte: string
+  ruimte_naam: string
+}
+
+/** Opdracht aan het deelvenster: een lokaal pad (nog op te zoeken) of een bekend doel. */
+export interface Deelverzoek {
+  pad?: string | null
+  doel?: Deeldoel | null
+}
+
+export interface DelingRegel {
+  deling: string
+  soort: "link" | "gebruiker"
+  gebruiker: string | null
+  rechten: "lezen" | "schrijven" | "uploaden"
+  verloopt: string | null
+  gemaakt: string | null
+  url: string | null
+}
+
+export interface Ruimtelid {
+  gebruiker: string
+  rol: string
+}
+
 export interface ToolVraag {
   id: string
   displayName: string
@@ -223,6 +255,20 @@ export const api = {
   overgeslagen: () => invoke<KoppelOvergeslagen[]>("overgeslagen"),
   ruimOvergeslagenOp: (lokaal: string | null) => invoke<Opgeruimd>("ruim_overgeslagen_op", { lokaal }),
   opOvergeslagen: (f: (l: KoppelOvergeslagen[]) => void) => listen<KoppelOvergeslagen[]>("overgeslagen", (e) => f(e.payload)),
+  // Deelvenster (src-tauri/src/delen.rs); fouten komen als { code, melding } (zie leesFout in lib/delen.ts).
+  openDelen: (verzoek: Deelverzoek) => invoke<void>("open_delen", { verzoek }),
+  sluitDelen: () => invoke<void>("sluit_delen"),
+  delenVerzoek: () => invoke<Deelverzoek | null>("delen_verzoek"),
+  opDelenVerzoek: (f: (v: Deelverzoek) => void) => listen<Deelverzoek>("delen-verzoek", (e) => f(e.payload)),
+  deeldoel: (pad: string) => invoke<Deeldoel>("deeldoel", { pad }),
+  deelMetCollega: (doel: Deeldoel, gebruiker: string, rechten: string, verloopt: string) =>
+    invoke<void>("deel_met_collega", { doctype: doel.doctype, id: doel.id, gebruiker, rechten, verloopt }),
+  maakLink: (doel: Deeldoel, rechten: string, wachtwoord: string, verloopt: string) =>
+    invoke<string>("maak_link", { doctype: doel.doctype, id: doel.id, rechten, wachtwoord, verloopt }),
+  delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { doctype: doel.doctype, id: doel.id }),
+  trekDelingIn: (deling: string) => invoke<void>("trek_deling_in", { deling }),
+  ruimteleden: (ruimte: string) => invoke<Ruimtelid[]>("ruimteleden", { ruimte }),
+  kopieer: (tekst: string) => invoke<void>("kopieer", { tekst }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>

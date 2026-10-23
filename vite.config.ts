@@ -7,10 +7,11 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   envPrefix: ["VITE_", "TAURI_"],
-  // Twee vensters: het hoofdvenster (index.html) en het statusvenster bij het systeemvak (status.html).
+  // Drie vensters: het hoofdvenster (index.html), het statusvenster bij het systeemvak (status.html) en het
+  // deelvenster (delen.html).
   build: {
     target: "esnext",
     minify: true,
-    rollupOptions: { input: { main: "index.html", status: "status.html" } },
+    rollupOptions: { input: { main: "index.html", status: "status.html", delen: "delen.html" } },
   },
 })

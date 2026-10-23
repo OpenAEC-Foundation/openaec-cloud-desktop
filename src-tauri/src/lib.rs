@@ -3,6 +3,7 @@
 
 mod activiteit;
 mod bewaking;
+mod delen;
 mod instellingen;
 mod opruimen;
 mod systeemvak;
@@ -39,6 +40,8 @@ struct AppState {
     bezig: tokio::sync::Mutex<()>,
     /// Wat de sync nu doet (statusvenster, statusbalk, systeemvak) en of hij gepauzeerd is.
     activiteit: activiteit::Activiteit,
+    /// Wat het deelvenster nu deelt (zie `delen`).
+    deelverzoek: std::sync::Mutex<Option<delen::Deelverzoek>>,
 }
 
 /// Naam van de autostart-regel; de productnaam van vóór versie 0.5 (zie `run`).
@@ -573,7 +576,7 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
         ("Opslagbestand", bestand_id(state, pad)?)
     };
     let deling = client.deel(doctype, &id, wachtwoord.as_deref(), verloopt.as_deref()).await.map_err(fout)?;
-    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default())))
 }
 
 /// Uploadlink (bestanden opvragen) voor een lokale map in een gekoppelde map.
@@ -589,7 +592,7 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
         .map_err(fout)?
         .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
     let deling = client.vraag_bestanden(&id, None, None).await.map_err(fout)?;
-    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default())))
 }
 
 #[tauri::command]
@@ -642,12 +645,17 @@ async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) ->
     }
 }
 
-/// Actie uit het rechtermuismenu van de Verkenner.
+/// Actie uit het rechtermuismenu van de Verkenner: "Delen…" opent het deelvenster, "Verzenden…" en "Versies
+/// bekijken" het hoofdvenster; de rest gebeurt op de achtergrond met een melding.
 pub(crate) async fn voer_actie(app: AppHandle, actie: String, pad: String) {
-    if actie == "verzend" || actie == "versies" {
-        systeemvak::toon(&app);
-        let _ = app.emit("actie", serde_json::json!({ "actie": actie, "pad": pad }));
-        return;
+    match verkenner::venster_voor(&actie) {
+        Some(delen::VENSTER) => return delen::toon(&app, delen::Deelverzoek { pad: Some(pad), doel: None }),
+        Some(_) => {
+            systeemvak::toon(&app);
+            let _ = app.emit("actie", serde_json::json!({ "actie": actie, "pad": pad }));
+            return;
+        }
+        None => {}
     }
     let naam = Path::new(&pad).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match actie_uitvoeren(&app, &actie, &pad, &naam).await {
@@ -765,6 +773,7 @@ pub fn run() {
             instellingen: std::sync::Mutex::new(Instellingen::laad()),
             bezig: tokio::sync::Mutex::new(()),
             activiteit: activiteit::Activiteit::default(),
+            deelverzoek: std::sync::Mutex::new(None),
         })
         .setup(|app| {
             systeemvak::maak(app)?;
@@ -814,6 +823,16 @@ pub fn run() {
             zet_sync_instellingen,
             opruimen::overgeslagen,
             opruimen::ruim_overgeslagen_op,
+            delen::open_delen,
+            delen::sluit_delen,
+            delen::delen_verzoek,
+            delen::deeldoel,
+            delen::deel_met_collega,
+            delen::maak_link,
+            delen::delingen_van,
+            delen::trek_deling_in,
+            delen::ruimteleden,
+            delen::kopieer,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,

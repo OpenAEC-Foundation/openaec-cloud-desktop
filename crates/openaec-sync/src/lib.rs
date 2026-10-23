@@ -39,19 +39,6 @@ pub enum Fout {
     Geweigerd { foutcode: Option<String>, melding: String },
 }
 
-impl Fout {
-    /// De vaste reden van een weigering, als de server die meegaf.
-    pub fn foutcode(&self) -> Option<String> {
-        match self {
-            Fout::Geweigerd { foutcode, .. } => foutcode.clone(),
-            Fout::Server { tekst, .. } => serde_json::from_str::<serde_json::Value>(tekst)
-                .ok()
-                .and_then(|v| v["foutcode"].as_str().map(str::to_string)),
-            _ => None,
-        }
-    }
-}
-
 /// Standaard aantal overdrachten tegelijk (bestanden, en delen van grote bestanden samen).
 pub const STANDAARD_GELIJKTIJDIG: usize = 8;
 /// Hoogste instelbare aantal overdrachten tegelijk.
@@ -68,6 +55,50 @@ pub fn rem(n: usize) -> Rem {
 
 async fn plek(rem: &Rem) -> Result<tokio::sync::SemaphorePermit<'_>, Fout> {
     rem.acquire().await.map_err(|_| Fout::Controle("de overdracht is gestopt".into()))
+}
+
+impl Fout {
+    /// HTTP-status van een weigering door de server.
+    pub fn status(&self) -> Option<u16> {
+        match self {
+            Fout::Server { status, .. } => Some(*status),
+            _ => None,
+        }
+    }
+
+    fn antwoord(&self) -> Option<serde_json::Value> {
+        match self {
+            Fout::Server { tekst, .. } => serde_json::from_str(tekst).ok(),
+            _ => None,
+        }
+    }
+
+    /// Vaste foutcode van de server (`foutcode` naast de melding), bijv. `ruimte_gearchiveerd`; bij een bestand uit
+    /// een batch die van dat bestand.
+    pub fn foutcode(&self) -> Option<String> {
+        match self {
+            Fout::Geweigerd { foutcode, .. } => foutcode.clone(),
+            _ => self.antwoord()?.get("foutcode")?.as_str().map(str::to_string),
+        }
+    }
+
+    /// De melding van de server voor mensen: Frappe zet die in `_server_messages` (een JSON-lijst van JSON-teksten),
+    /// anders in `exception` (`frappe.exceptions.X: melding`).
+    pub fn servermelding(&self) -> Option<String> {
+        if let Fout::Geweigerd { melding, .. } = self {
+            return Some(melding.clone());
+        }
+        let antwoord = self.antwoord()?;
+        let berichten = antwoord.get("_server_messages").and_then(|v| v.as_str()).and_then(|t| serde_json::from_str::<Vec<String>>(t).ok());
+        let eerste = berichten.into_iter().flatten().find_map(|b| {
+            let v: serde_json::Value = serde_json::from_str(&b).ok()?;
+            v.get("message").and_then(|m| m.as_str()).map(str::to_string)
+        });
+        eerste.or_else(|| {
+            let e = antwoord.get("exception")?.as_str()?;
+            Some(e.split_once(": ").map_or(e, |(_, m)| m).to_string())
+        })
+    }
 }
 
 async fn lees_stuk(pad: &Path, begin: u64, lengte: u64) -> std::io::Result<Vec<u8>> {
