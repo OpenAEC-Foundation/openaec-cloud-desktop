@@ -165,6 +165,107 @@ pub struct BestandInfo {
     pub vergrendeling: Option<Vergrendeling>,
 }
 
+/// Grenzen voor kleine bestanden in één verzoek (`api.upload_klein` en `api.download_klein`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Batchgrenzen {
+    /// Grootste bestand in bytes.
+    pub max_bestand: u64,
+    /// Hoogste aantal bestanden per verzoek.
+    pub max_aantal: usize,
+    /// Hoogste aantal bytes per verzoek.
+    pub max_bytes: u64,
+}
+
+/// Wat de server kent (`api.mogelijkheden`); een oudere server kent die methode niet.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Mogelijkheden {
+    #[serde(default)]
+    pub upload_klein: Option<Batchgrenzen>,
+    #[serde(default)]
+    pub download_klein: Option<Batchgrenzen>,
+    #[serde(default)]
+    pub boom: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BoomMap {
+    pub name: String,
+    pub naam: String,
+    #[serde(default)]
+    pub bovenliggende: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BoomBestand {
+    pub name: String,
+    pub naam: String,
+    #[serde(default)]
+    pub map: Option<String>,
+    #[serde(default)]
+    pub grootte: u64,
+    #[serde(default)]
+    pub huidige_versie: u64,
+}
+
+/// Alle mappen en (een pagina) bestanden van een ruimte (`api.boom`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Boom {
+    pub mappen: Vec<BoomMap>,
+    pub bestanden: Vec<BoomBestand>,
+    #[serde(default)]
+    pub meer: bool,
+}
+
+/// Eén klein bestand voor [`Client::upload_klein`].
+#[derive(Debug, Clone)]
+pub struct KleinBestand {
+    pub naam: String,
+    /// Map-id (None = hoofdniveau).
+    pub map: Option<String>,
+    pub basis_versie: Option<u64>,
+    pub inhoud: Vec<u8>,
+}
+
+/// Inhoud van een klein bestand uit [`Client::download_klein`].
+#[derive(Debug, Clone)]
+pub struct KleinInhoud {
+    pub bestand: String,
+    pub versie: u64,
+    /// BLAKE3 van de inhoud, als de server die kent.
+    pub blokhash: Option<String>,
+    pub inhoud: Vec<u8>,
+}
+
+/// Antwoord per bestand van een batch.
+#[derive(Debug, Deserialize)]
+struct PerBestand {
+    ok: bool,
+    #[serde(default)]
+    bestand: Option<String>,
+    #[serde(default)]
+    naam: Option<String>,
+    #[serde(default)]
+    versie: Option<u64>,
+    #[serde(default)]
+    conflict: Option<bool>,
+    #[serde(default)]
+    grootte: Option<u64>,
+    #[serde(default)]
+    blokhash: Option<String>,
+    #[serde(default)]
+    inhoud: Option<String>,
+    #[serde(default)]
+    fout: Option<String>,
+    #[serde(default)]
+    foutcode: Option<String>,
+}
+
+impl PerBestand {
+    fn weigering(&self) -> Fout {
+        Fout::Geweigerd { foutcode: self.foutcode.clone(), melding: self.fout.clone().unwrap_or_else(|| "onbekende fout".into()) }
+    }
+}
+
 #[derive(Deserialize)]
 struct Antwoord<T> {
     message: T,
@@ -216,6 +317,100 @@ impl Client {
             return Err(Fout::Server { status: status.as_u16(), tekst });
         }
         Ok(antwoord)
+    }
+
+    /// Wat de server kent; een fout (bijv. een oudere server zonder deze methode) betekent: niets nieuws.
+    pub async fn mogelijkheden(&self) -> Result<Mogelijkheden, Fout> {
+        self.roep("mogelijkheden", json!({})).await
+    }
+
+    /// Alle mappen en een pagina bestanden van een ruimte in één verzoek.
+    pub async fn boom(&self, ruimte: &str, start: usize, aantal: usize) -> Result<Boom, Fout> {
+        self.roep("boom", json!({"ruimte": ruimte, "start": start, "aantal": aantal})).await
+    }
+
+    /// Kleine bestanden in één verzoek (multipart); per bestand het resultaat of de weigering, in dezelfde volgorde.
+    pub async fn upload_klein(&self, ruimte: &str, bestanden: &[KleinBestand]) -> Result<Vec<Result<UploadResultaat, Fout>>, Fout> {
+        let lijst: Vec<Value> = bestanden
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                json!({"veld": format!("f{i}"), "naam": b.naam, "map": b.map, "grootte": b.inhoud.len(),
+                       "basis_versie": b.basis_versie, "blokhash": crate::blokken::hash_bytes(&b.inhoud, crate::blokken::BLOK)[0]})
+            })
+            .collect();
+        let mut formulier = reqwest::multipart::Form::new()
+            .text("ruimte", ruimte.to_string())
+            .text("bron", "sync")
+            .text("bestanden", Value::Array(lijst).to_string());
+        for (i, b) in bestanden.iter().enumerate() {
+            let deel = reqwest::multipart::Part::bytes(b.inhoud.clone()).file_name(b.naam.clone());
+            formulier = formulier.part(format!("f{i}"), deel);
+        }
+        let antwoord = self
+            .http
+            .post(format!("{}{}upload_klein", self.basis, API))
+            .header("Authorization", &self.autorisatie)
+            .multipart(formulier)
+            .send()
+            .await?;
+        let status = antwoord.status();
+        if !status.is_success() {
+            let tekst = antwoord.text().await.unwrap_or_default();
+            return Err(Fout::Server { status: status.as_u16(), tekst });
+        }
+        #[derive(Deserialize)]
+        struct Resultaten {
+            resultaten: Vec<PerBestand>,
+        }
+        let r = antwoord.json::<Antwoord<Resultaten>>().await?.message.resultaten;
+        if r.len() != bestanden.len() {
+            return Err(Fout::Controle(format!("{} resultaten voor {} bestanden", r.len(), bestanden.len())));
+        }
+        Ok(r.into_iter()
+            .map(|b| match (b.ok, &b.bestand, &b.naam, b.versie) {
+                (true, Some(bestand), Some(naam), Some(versie)) => Ok(UploadResultaat {
+                    bestand: bestand.clone(),
+                    naam: naam.clone(),
+                    versie,
+                    conflict: b.conflict.unwrap_or(false),
+                }),
+                _ => Err(b.weigering()),
+            })
+            .collect())
+    }
+
+    /// Kleine bestanden (bestand-id's) in één antwoord; per bestand de inhoud of de weigering, in dezelfde volgorde.
+    pub async fn download_klein(&self, bestanden: &[String]) -> Result<Vec<Result<KleinInhoud, Fout>>, Fout> {
+        use base64::Engine;
+        #[derive(Deserialize)]
+        struct Inhoud {
+            bestanden: Vec<PerBestand>,
+        }
+        let r: Inhoud = self.roep("download_klein", json!({"bestanden": bestanden})).await?;
+        if r.bestanden.len() != bestanden.len() {
+            return Err(Fout::Controle(format!("{} antwoorden voor {} bestanden", r.bestanden.len(), bestanden.len())));
+        }
+        Ok(r.bestanden
+            .into_iter()
+            .map(|b| {
+                let inhoud = match (b.ok, &b.inhoud) {
+                    (true, Some(tekst)) => base64::engine::general_purpose::STANDARD
+                        .decode(tekst)
+                        .map_err(|e| Fout::Controle(format!("inhoud onleesbaar: {e}")))?,
+                    _ => return Err(b.weigering()),
+                };
+                if b.grootte.is_some_and(|g| g != inhoud.len() as u64) {
+                    return Err(Fout::Controle("ontvangen grootte wijkt af".into()));
+                }
+                Ok(KleinInhoud {
+                    bestand: b.bestand.unwrap_or_default(),
+                    versie: b.versie.unwrap_or_default(),
+                    blokhash: b.blokhash,
+                    inhoud,
+                })
+            })
+            .collect())
     }
 
     #[allow(clippy::too_many_arguments)]

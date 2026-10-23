@@ -16,6 +16,7 @@ use std::time::UNIX_EPOCH;
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
+pub use crate::api::Batchgrenzen;
 use crate::voortgang::{Actie, Gebeurtenis, Richting, Stil, Teller, Waarnemer};
 use crate::{Fout, MAX_GELIJKTIJDIG, STANDAARD_GELIJKTIJDIG};
 
@@ -43,6 +44,14 @@ pub struct Upload {
 
 /// Bytevoortgang tijdens een upload of download: (overgezet, totaal over de lijn).
 pub type Voortgang<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
+
+/// Eén klein bestand voor [`Opslag::upload_klein`].
+#[derive(Debug, Clone, Copy)]
+pub struct KleinUpload<'a> {
+    pub pad: &'a str,
+    pub lokaal: &'a Path,
+    pub basis_versie: Option<u64>,
+}
 
 /// Wat de motor van de server nodig heeft. De echte implementatie is [`crate::opslag::ClientOpslag`].
 #[allow(async_fn_in_trait)]
@@ -75,6 +84,24 @@ pub trait Opslag {
     async fn bereid_mappen(&self, mappen: &[String]) -> Result<(), Fout> {
         let _ = mappen;
         Ok(())
+    }
+
+    /// Grenzen voor kleine bestanden in één verzoek, als de opslag dat kent; None (standaard): elk bestand apart.
+    async fn klein_grenzen(&self) -> Option<Batchgrenzen> {
+        None
+    }
+
+    /// Kleine bestanden in één verzoek uploaden (alleen als [`Opslag::klein_grenzen`] iets geeft). Per bestand het
+    /// resultaat, in dezelfde volgorde; een fout voor het hele verzoek laat de motor elk bestand apart proberen.
+    async fn upload_klein(&self, bestanden: &[KleinUpload<'_>]) -> Result<Vec<Result<Upload, Fout>>, Fout> {
+        let _ = bestanden;
+        Err(Fout::Controle("deze opslag kent geen kleine bestanden in één verzoek".into()))
+    }
+
+    /// Kleine bestanden in één verzoek downloaden naar hun lokale pad; als [`Opslag::upload_klein`].
+    async fn download_klein(&self, bestanden: &[(&OpslagBestand, &Path)]) -> Result<Vec<Result<(), Fout>>, Fout> {
+        let _ = bestanden;
+        Err(Fout::Controle("deze opslag kent geen kleine bestanden in één verzoek".into()))
     }
 }
 
@@ -324,37 +351,45 @@ impl<O: Opslag> Ronde<'_, O> {
         self.opslag.download_met_voortgang(server, lokaal, &|gedaan, totaal| teller.stand(gedaan, totaal)).await
     }
 
+    /// Wat er na een geslaagde upload moet gebeuren: opnemen, of bij een conflict de serverversie terughalen.
+    async fn na_upload(&self, pad: &str, server: Option<&OpslagBestand>, up: Upload) -> Result<Actie, Fout> {
+        match server {
+            Some(server) if up.conflict => {
+                // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen, en de
+                // serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
+                let lokaal = lokaal_pad(self.root, pad);
+                let kopie = lokaal_pad(self.root, &up.pad);
+                std::fs::rename(&lokaal, &kopie)?;
+                self.onthoud(&up.pad, &up.bestand, up.versie)?;
+                self.download(pad, server, &lokaal).await?;
+                self.onthoud(pad, &server.bestand, server.versie)?;
+                self.tel(|r| {
+                    r.conflicten += 1;
+                    r.gedownload += 1;
+                });
+                Ok(Actie::Conflict)
+            }
+            Some(_) => {
+                self.onthoud(pad, &up.bestand, up.versie)?;
+                self.tel(|r| r.geupload += 1);
+                Ok(Actie::Geupload)
+            }
+            None => {
+                self.onthoud(&up.pad, &up.bestand, up.versie)?;
+                self.tel(|r| r.geupload += 1);
+                Ok(Actie::Geupload)
+            }
+        }
+    }
+
     /// Eén taak uitvoeren; geeft terug wat er gebeurd is.
     async fn voer_uit(&self, taak: &Taak) -> Result<Actie, Fout> {
         let lokaal = lokaal_pad(self.root, taak.pad());
         match taak {
-            Taak::Upload { pad, basis, server: Some(server) } => {
+            Taak::Upload { pad, basis, server } => {
                 // Basis: de versie waarop de lokale wijziging gebaseerd is; de server beslist over een conflict.
                 let up = self.upload(pad, &lokaal, *basis).await?;
-                if up.conflict {
-                    // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen, en de
-                    // serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
-                    let kopie = lokaal_pad(self.root, &up.pad);
-                    std::fs::rename(&lokaal, &kopie)?;
-                    self.onthoud(&up.pad, &up.bestand, up.versie)?;
-                    self.download(pad, server, &lokaal).await?;
-                    self.onthoud(pad, &server.bestand, server.versie)?;
-                    self.tel(|r| {
-                        r.conflicten += 1;
-                        r.gedownload += 1;
-                    });
-                    Ok(Actie::Conflict)
-                } else {
-                    self.onthoud(pad, &up.bestand, up.versie)?;
-                    self.tel(|r| r.geupload += 1);
-                    Ok(Actie::Geupload)
-                }
-            }
-            Taak::Upload { pad, basis, server: None } => {
-                let up = self.upload(pad, &lokaal, *basis).await?;
-                self.onthoud(&up.pad, &up.bestand, up.versie)?;
-                self.tel(|r| r.geupload += 1);
-                Ok(Actie::Geupload)
+                self.na_upload(pad, server.as_ref(), up).await
             }
             Taak::Download { pad, server } => {
                 self.download(pad, server, &lokaal).await?;
@@ -378,28 +413,166 @@ impl<O: Opslag> Ronde<'_, O> {
         }
     }
 
+    /// Uitkomst van een taak melden; een fout komt in het rapport.
+    fn meld(&self, pad: &str, uitkomst: Result<Actie, Fout>) {
+        match uitkomst {
+            Ok(actie) => self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie }),
+            Err(fout) => {
+                self.waarnemer.melding(Gebeurtenis::Fout { pad: pad.to_string(), fout: fout.to_string() });
+                self.rapport.lock().unwrap().fout(pad, fout);
+            }
+        }
+    }
+
     /// Taak uitvoeren en melden; een fout komt in het rapport en houdt de andere taken niet op. Bij pauzeren
     /// begint de taak niet meer (de rest volgt in een volgende ronde).
     async fn verwerk(&self, taak: &Taak) {
         if self.waarnemer.gepauzeerd() {
             return;
         }
-        let pad = taak.pad().to_string();
-        match self.voer_uit(taak).await {
-            Ok(actie) => self.waarnemer.melding(Gebeurtenis::Klaar { pad, actie }),
-            Err(fout) => {
-                self.waarnemer.melding(Gebeurtenis::Fout { pad: pad.clone(), fout: fout.to_string() });
-                self.rapport.lock().unwrap().fout(&pad, fout);
+        let uitkomst = self.voer_uit(taak).await;
+        self.meld(taak.pad(), uitkomst);
+    }
+
+    /// Een groep kleine uploads in één verzoek. Weigert de opslag het verzoek als geheel, dan gaat elk bestand apart.
+    async fn verwerk_kleine_uploads(&self, taken: &[Taak]) {
+        if self.waarnemer.gepauzeerd() {
+            return;
+        }
+        let paden: Vec<(&str, PathBuf, Option<u64>, Option<&OpslagBestand>, u64)> = taken
+            .iter()
+            .filter_map(|t| match t {
+                Taak::Upload { pad, basis, server } => {
+                    let lokaal = lokaal_pad(self.root, pad);
+                    let grootte = std::fs::metadata(&lokaal).map(|m| m.len()).unwrap_or(0);
+                    Some((pad.as_str(), lokaal, *basis, server.as_ref(), grootte))
+                }
+                _ => None,
+            })
+            .collect();
+        for (pad, _, _, _, grootte) in &paden {
+            self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Upload, totaal: *grootte });
+        }
+        let items: Vec<KleinUpload> =
+            paden.iter().map(|(pad, lokaal, basis, _, _)| KleinUpload { pad, lokaal, basis_versie: *basis }).collect();
+        let resultaten = match self.opslag.upload_klein(&items).await {
+            Ok(r) if r.len() == paden.len() => r,
+            _ => {
+                for taak in taken {
+                    self.verwerk(taak).await;
+                }
+                return;
             }
+        };
+        for ((pad, _, _, server, grootte), resultaat) in paden.iter().zip(resultaten) {
+            let uitkomst = match resultaat {
+                Ok(up) => {
+                    Teller::new(self.waarnemer, pad, Richting::Upload).stand(*grootte, *grootte);
+                    self.na_upload(pad, *server, up).await
+                }
+                Err(fout) => Err(fout),
+            };
+            self.meld(pad, uitkomst);
         }
     }
 
-    /// Taken begrensd parallel uitvoeren (hoogstens `n` tegelijk).
-    async fn verwerk_alle(&self, taken: &[Taak], n: usize) {
-        // De futures eerst in een lijst (geen closure in de stroom): zo blijft de ronde `Send` voor de app.
-        let werk: Vec<_> = taken.iter().map(|taak| self.verwerk(taak)).collect();
-        stream::iter(werk).buffer_unordered(n).collect::<Vec<()>>().await;
+    /// Een groep kleine downloads in één verzoek; als [`Ronde::verwerk_kleine_uploads`].
+    async fn verwerk_kleine_downloads(&self, taken: &[Taak]) {
+        if self.waarnemer.gepauzeerd() {
+            return;
+        }
+        let paden: Vec<(&str, &OpslagBestand, PathBuf)> = taken
+            .iter()
+            .filter_map(|t| match t {
+                Taak::Download { pad, server } => Some((pad.as_str(), server, lokaal_pad(self.root, pad))),
+                _ => None,
+            })
+            .collect();
+        for (pad, server, _) in &paden {
+            self.waarnemer.melding(Gebeurtenis::Start { pad: pad.to_string(), richting: Richting::Download, totaal: server.grootte });
+        }
+        let items: Vec<(&OpslagBestand, &Path)> = paden.iter().map(|(_, server, lokaal)| (*server, lokaal.as_path())).collect();
+        let resultaten = match self.opslag.download_klein(&items).await {
+            Ok(r) if r.len() == paden.len() => r,
+            _ => {
+                for taak in taken {
+                    self.verwerk(taak).await;
+                }
+                return;
+            }
+        };
+        for ((pad, server, _), resultaat) in paden.iter().zip(resultaten) {
+            let uitkomst = resultaat.and_then(|()| {
+                Teller::new(self.waarnemer, pad, Richting::Download).stand(server.grootte, server.grootte);
+                self.onthoud(pad, &server.bestand, server.versie)?;
+                self.tel(|r| r.gedownload += 1);
+                Ok(Actie::Gedownload)
+            });
+            self.meld(pad, uitkomst);
+        }
     }
+
+    async fn verwerk_werk(&self, werk: &Werk) {
+        match werk {
+            Werk::Los(taak) => self.verwerk(taak).await,
+            Werk::KleineUploads(taken) => self.verwerk_kleine_uploads(taken).await,
+            Werk::KleineDownloads(taken) => self.verwerk_kleine_downloads(taken).await,
+        }
+    }
+
+    /// Werk begrensd parallel uitvoeren (hoogstens `n` tegelijk).
+    async fn verwerk_alle(&self, werk: &[Werk], n: usize) {
+        // De futures eerst in een lijst (geen closure in de stroom): zo blijft de ronde `Send` voor de app.
+        let futures: Vec<_> = werk.iter().map(|w| self.verwerk_werk(w)).collect();
+        stream::iter(futures).buffer_unordered(n).collect::<Vec<()>>().await;
+    }
+}
+
+/// Eén eenheid werk voor de parallelle stap: een losse taak, of een groep kleine bestanden in één verzoek.
+#[derive(Debug)]
+enum Werk {
+    Los(Taak),
+    KleineUploads(Vec<Taak>),
+    KleineDownloads(Vec<Taak>),
+}
+
+/// Verdeel de overdrachten in werk: kleine bestanden in groepen binnen de grenzen, de rest los (vooraan, zodat grote
+/// bestanden meteen beginnen). Een groep van één wordt gewoon een losse taak.
+fn verdeel(overdrachten: Vec<Taak>, grenzen: Option<Batchgrenzen>, grootte_van: impl Fn(&Taak) -> u64) -> Vec<Werk> {
+    let Some(g) = grenzen.filter(|g| g.max_aantal > 1) else {
+        return overdrachten.into_iter().map(Werk::Los).collect();
+    };
+    let mut werk = Vec::new();
+    let (mut ups, mut downs) = (Vec::new(), Vec::new());
+    for taak in overdrachten {
+        let grootte = grootte_van(&taak);
+        match &taak {
+            Taak::Upload { .. } if grootte <= g.max_bestand => ups.push((taak, grootte)),
+            Taak::Download { .. } if grootte <= g.max_bestand => downs.push((taak, grootte)),
+            _ => werk.push(Werk::Los(taak)),
+        }
+    }
+    let groepen = |taken: Vec<(Taak, u64)>| {
+        let mut uit: Vec<Vec<Taak>> = Vec::new();
+        let mut bytes = 0u64;
+        for (taak, grootte) in taken {
+            if uit.last().is_none_or(|l| l.len() >= g.max_aantal || bytes + grootte > g.max_bytes) {
+                uit.push(Vec::new());
+                bytes = 0;
+            }
+            bytes += grootte;
+            uit.last_mut().unwrap().push(taak);
+        }
+        uit
+    };
+    for (groep, soort) in groepen(ups).into_iter().map(|g| (g, true)).chain(groepen(downs).into_iter().map(|g| (g, false))) {
+        werk.push(match (groep.len(), soort) {
+            (1, _) => Werk::Los(groep.into_iter().next().unwrap()),
+            (_, true) => Werk::KleineUploads(groep),
+            (_, false) => Werk::KleineDownloads(groep),
+        });
+    }
+    werk
 }
 
 /// Als [`sync_met_voortgang`], met [`Opties`] (aantal overdrachten tegelijk).
@@ -528,9 +701,15 @@ pub async fn sync_met_opties<O: Opslag>(
     if !mappen.is_empty() {
         let _ = opslag.bereid_mappen(&mappen.into_iter().collect::<Vec<_>>()).await;
     }
-    ronde.verwerk_alle(&overdrachten, n).await;
+    let grenzen = opslag.klein_grenzen().await;
+    let grootte_van = |taak: &Taak| match taak {
+        Taak::Upload { pad, .. } => lokaal.get(pad).map_or(u64::MAX, |(g, _)| *g),
+        Taak::Download { server, .. } => server.grootte,
+        _ => u64::MAX,
+    };
+    ronde.verwerk_alle(&verdeel(overdrachten, grenzen, grootte_van), n).await;
     // Verwijderen pas na de uploads en downloads.
-    ronde.verwerk_alle(&verwijderingen, n).await;
+    ronde.verwerk_alle(&verwijderingen.into_iter().map(Werk::Los).collect::<Vec<_>>(), n).await;
 
     for u in uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()) {
         ruim_lege_mappen_op(&lokaal_pad(root, u));

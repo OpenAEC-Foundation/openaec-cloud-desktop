@@ -33,6 +33,22 @@ pub enum Fout {
     Server { status: u16, tekst: String },
     #[error("controle mislukt: {0}")]
     Controle(String),
+    /// De server weigerde één bestand uit een batch; `foutcode` is de vaste reden (zie de README van de server).
+    #[error("geweigerd: {melding}")]
+    Geweigerd { foutcode: Option<String>, melding: String },
+}
+
+impl Fout {
+    /// De vaste reden van een weigering, als de server die meegaf.
+    pub fn foutcode(&self) -> Option<String> {
+        match self {
+            Fout::Geweigerd { foutcode, .. } => foutcode.clone(),
+            Fout::Server { tekst, .. } => serde_json::from_str::<serde_json::Value>(tekst)
+                .ok()
+                .and_then(|v| v["foutcode"].as_str().map(str::to_string)),
+            _ => None,
+        }
+    }
 }
 
 /// Standaard aantal overdrachten tegelijk (bestanden, en delen van grote bestanden samen).
