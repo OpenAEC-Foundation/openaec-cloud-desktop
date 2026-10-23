@@ -80,7 +80,7 @@ async fn upload_en_download_geven_start_en_klaar() {
     let w = Verzamelaar::default();
     sync_met_voortgang(&opslag, dir.path(), &[], &w).await.unwrap();
     let m = w.alle();
-    assert_eq!(m[0], Gebeurtenis::Ronde { uploaden: 1, downloaden: 1 });
+    assert_eq!(m[0], Gebeurtenis::Ronde { uploaden: 1, downloaden: 1, bytes: 11 });
     assert!(m.contains(&Gebeurtenis::Start { pad: "van/hier.txt".into(), richting: Richting::Upload, totaal: 5 }));
     assert!(m.contains(&Gebeurtenis::Klaar { pad: "van/hier.txt".into(), actie: Actie::Geupload }));
     assert!(m.contains(&Gebeurtenis::Start { pad: "van/server.txt".into(), richting: Richting::Download, totaal: 6 }));
@@ -93,7 +93,7 @@ async fn upload_en_download_geven_start_en_klaar() {
     // Tweede ronde: niets te doen, alleen de (lege) ronde.
     let w2 = Verzamelaar::default();
     sync_met_voortgang(&opslag, dir.path(), &[], &w2).await.unwrap();
-    assert_eq!(w2.alle(), vec![Gebeurtenis::Ronde { uploaden: 0, downloaden: 0 }]);
+    assert_eq!(w2.alle(), vec![Gebeurtenis::Ronde { uploaden: 0, downloaden: 0, bytes: 0 }]);
 }
 
 #[tokio::test]
@@ -167,5 +167,5 @@ async fn pauzeren_stopt_na_het_lopende_bestand_en_de_rest_volgt_later() {
     let w2 = Verzamelaar::default();
     let r2 = sync_met_voortgang(&opslag, dir.path(), &[], &w2).await.unwrap();
     assert_eq!(r2.geupload, 2);
-    assert_eq!(w2.alle()[0], Gebeurtenis::Ronde { uploaden: 2, downloaden: 0 });
+    assert_eq!(w2.alle()[0], Gebeurtenis::Ronde { uploaden: 2, downloaden: 0, bytes: 10 });
 }

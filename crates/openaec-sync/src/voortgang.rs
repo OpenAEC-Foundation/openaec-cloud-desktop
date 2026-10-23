@@ -34,11 +34,13 @@ pub enum Actie {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "soort", rename_all = "lowercase")]
 pub enum Gebeurtenis {
-    /// Begin van een ronde: zoveel bestanden gaan naar de server en zoveel komen ervan af.
-    Ronde { uploaden: u32, downloaden: u32 },
+    /// Begin van een ronde: zoveel bestanden gaan naar de server en zoveel komen ervan af; `bytes` is hun grootte
+    /// samen (wat er echt over de lijn gaat kan door blokhergebruik minder zijn).
+    Ronde { uploaden: u32, downloaden: u32, bytes: u64 },
     /// Een bestand gaat over de lijn; `totaal` is de grootte van het bestand.
     Start { pad: String, richting: Richting, totaal: u64 },
-    /// Bytes die al zijn overgezet van `totaal` (alleen de blokken die echt over de lijn gaan).
+    /// Bytes die al zijn overgezet van `totaal` (alleen de blokken die echt over de lijn gaan). De eerste melding
+    /// is (0, totaal), zodra bekend is hoeveel er over de lijn moet.
     Voortgang { pad: String, richting: Richting, gedaan: u64, totaal: u64 },
     Klaar { pad: String, actie: Actie },
     Fout { pad: String, fout: String },

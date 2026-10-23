@@ -23,6 +23,14 @@ pub struct Deel {
     pub url: String,
 }
 
+/// Opslaggebruik volgens de server.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Quotum {
+    pub gebruikt_bytes: u64,
+    #[serde(default)]
+    pub limiet_bytes: Option<u64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UploadStart {
     pub upload: String,
@@ -258,7 +266,8 @@ impl Client {
         self.roep_leeg("verwijder", json!({"bestand": bestand})).await
     }
 
-    pub async fn quotum(&self) -> Result<Value, Fout> {
+    /// Gebruikte opslag van de omgeving en de limiet (None = geen limiet).
+    pub async fn quotum(&self) -> Result<Quotum, Fout> {
         self.roep("quotum", json!({})).await
     }
 

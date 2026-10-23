@@ -410,7 +410,28 @@ async fn sync_mappen(app: &AppHandle, alleen: Option<&std::collections::HashSet<
     activiteit::begin(app);
     let r = sync_ronde(app, &state, alleen).await;
     activiteit::einde(app, r.as_deref().map_err(String::as_str));
+    // Na elke ronde het opslaggebruik verversen (overzicht en statusvenster luisteren naar "quotum").
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app2.state::<AppState>();
+        match haal_quotum(&state).await {
+            Ok(q) => {
+                let _ = app2.emit("quotum", &q);
+            }
+            Err(e) => log::debug!("quotum ophalen mislukt: {e}"),
+        }
+    });
     r
+}
+
+async fn haal_quotum(state: &AppState) -> Result<openaec_sync::api::Quotum, String> {
+    client(state).await?.quotum().await.map_err(fout)
+}
+
+/// Opslaggebruik van de omgeving: gebruikt en limiet (None = geen limiet).
+#[tauri::command]
+async fn quotum(state: tauri::State<'_, AppState>) -> Result<openaec_sync::api::Quotum, String> {
+    haal_quotum(&state).await
 }
 
 async fn sync_ronde(
@@ -743,6 +764,7 @@ pub fn run() {
             activiteit_stand,
             pauzeer,
             toon_hoofdvenster,
+            quotum,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,

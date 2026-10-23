@@ -54,8 +54,9 @@ pub async fn upload_bestand(
     upload_met_voortgang(client, ruimte, map, naam, pad, basis_versie, &|_, _| {}).await
 }
 
-/// Als [`upload_bestand`]; `voortgang` krijgt na elk deel (overgezet, totaal) in bytes, voor de delen die echt
-/// over de lijn gaan.
+/// Als [`upload_bestand`]; `voortgang` krijgt (overgezet, totaal) in bytes, voor de delen die echt over de lijn
+/// gaan: eerst (0, totaal) zodra bekend is welke blokken de server hergebruikt, daarna na elk deel. Het verschil
+/// tussen de bestandsgrootte en `totaal` is wat blokhergebruik bespaart.
 pub async fn upload_met_voortgang(
     client: &Client,
     ruimte: &str,
@@ -78,6 +79,7 @@ pub async fn upload_met_voortgang(
     };
     let totaal: u64 = start.delen.iter().map(|d| lengte_van(d.nummer).1).sum();
     let mut gedaan = 0u64;
+    voortgang(0, totaal);
     let mut etags = Vec::with_capacity(start.delen.len());
     for deel in &start.delen {
         let (begin, lengte) = lengte_van(deel.nummer);
@@ -107,8 +109,8 @@ pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Res
     download_met_voortgang(client, bestand, pad, &|_, _| {}).await
 }
 
-/// Als [`download_bestand`]; `voortgang` krijgt tijdens het ophalen (overgezet, totaal) in bytes, voor de blokken
-/// die echt over de lijn gaan.
+/// Als [`download_bestand`]; `voortgang` krijgt (overgezet, totaal) in bytes, voor de blokken die echt over de lijn
+/// gaan: eerst (0, totaal) zodra bekend is welke blokken lokaal al kloppen, daarna tijdens het ophalen.
 pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
     let info = client.blokken(bestand).await?;
     let link = client.download(bestand).await?;
@@ -127,6 +129,7 @@ pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, 
 
     let totaal: u64 = ophalen.iter().map(|&i| blok.min(info.grootte.saturating_sub(i as u64 * blok))).sum();
     let mut gedaan = 0u64;
+    voortgang(0, totaal);
     let tijdelijk = pad.with_extension("openaec-download");
     let mut uit = tokio::fs::File::create(&tijdelijk).await?;
     for index in 0..aantal {

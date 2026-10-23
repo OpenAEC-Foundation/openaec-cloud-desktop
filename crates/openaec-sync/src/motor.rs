@@ -281,18 +281,20 @@ pub async fn sync_met_voortgang<O: Opslag>(
         .collect();
 
     // Vooraf melden hoeveel er over de lijn gaat (een verwijdering op de server telt niet mee).
-    let (mut uploaden, mut downloaden) = (0u32, 0u32);
+    let (mut uploaden, mut downloaden, mut bytes) = (0u32, 0u32, 0u64);
     for (pad, lokaal_gewijzigd, server_gewijzigd) in &wijzigingen {
         if uitgesloten_pad(pad, uitgesloten) && !lokaal_gewijzigd {
             continue;
         }
         if *lokaal_gewijzigd {
             uploaden += 1;
-        } else if *server_gewijzigd && server.contains_key(pad) {
+            bytes += lokaal.get(pad).map_or(0, |(g, _)| *g);
+        } else if let Some(s) = server.get(pad).filter(|_| *server_gewijzigd) {
             downloaden += 1;
+            bytes += s.grootte;
         }
     }
-    waarnemer.melding(Gebeurtenis::Ronde { uploaden, downloaden });
+    waarnemer.melding(Gebeurtenis::Ronde { uploaden, downloaden, bytes });
 
     for (pad, lokaal_gewijzigd, server_gewijzigd) in wijzigingen {
         if waarnemer.gepauzeerd() {

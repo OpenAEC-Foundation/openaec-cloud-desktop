@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use openaec_sync::blokken::{blokgrootte, gewijzigde_blokken, hash_bytes, BLOK};
-use openaec_sync::{download_bestand, upload_bestand, Client};
+use openaec_sync::{download_bestand, download_met_voortgang, upload_met_voortgang, Client};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -84,7 +84,12 @@ async fn upload_stuurt_alleen_gevraagde_blokken() {
         .await;
 
     let client = Client::new(&server.uri(), "token sleutel:geheim");
-    let resultaat = upload_bestand(&client, "r1", None, "wolk.e57", &pad, Some(1)).await.unwrap();
+    let standen = Mutex::new(Vec::new());
+    let resultaat = upload_met_voortgang(&client, "r1", None, "wolk.e57", &pad, Some(1), &|g, t| standen.lock().unwrap().push((g, t)))
+        .await
+        .unwrap();
+    // Eerst meteen hoeveel er over de lijn gaat: alleen blok 2; blok 1 en de staart hergebruikt de server.
+    assert_eq!(standen.lock().unwrap().clone(), vec![(0, BLOK), (BLOK, BLOK)]);
     assert_eq!(resultaat.versie, 2);
     assert!(!resultaat.conflict);
 
@@ -131,7 +136,12 @@ async fn download_haalt_alleen_gewijzigde_blokken() {
         .await;
 
     let client = Client::new(&server.uri(), "token sleutel:geheim");
-    download_bestand(&client, "b1", &pad).await.unwrap();
+    let standen = Mutex::new(Vec::new());
+    download_met_voortgang(&client, "b1", &pad, &|g, t| standen.lock().unwrap().push((g, t))).await.unwrap();
+    // Over de lijn: blok 2 en de staart, niet het ongewijzigde blok 1.
+    let over_de_lijn = BLOK + b"nieuwe staart!".len() as u64;
+    assert_eq!(standen.lock().unwrap().first(), Some(&(0, over_de_lijn)));
+    assert_eq!(standen.lock().unwrap().last(), Some(&(over_de_lijn, over_de_lijn)));
 
     assert_eq!(std::fs::read(&pad).unwrap(), nieuw);
     let opgehaald = bereiken.lock().unwrap().clone();
@@ -169,4 +179,25 @@ async fn download_zonder_lokaal_bestand_haalt_alles() {
     let client = Client::new(&server.uri(), "token sleutel:geheim");
     download_bestand(&client, "b1", &pad).await.unwrap();
     assert_eq!(std::fs::read(&pad).unwrap(), nieuw);
+}
+
+#[tokio::test]
+async fn quotum_met_en_zonder_limiet() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.quotum"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {"gebruikt_bytes": 5 * MIB, "limiet_bytes": 10 * MIB}})))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.quotum"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {"gebruikt_bytes": 7, "limiet_bytes": null}})))
+        .mount(&server)
+        .await;
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    let q = client.quotum().await.unwrap();
+    assert_eq!((q.gebruikt_bytes, q.limiet_bytes), (5 * MIB, Some(10 * MIB)));
+    let q = client.quotum().await.unwrap();
+    assert_eq!((q.gebruikt_bytes, q.limiet_bytes), (7, None));
 }
