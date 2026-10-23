@@ -4,7 +4,8 @@
   "description": "Standaardrechten voor de vensters van OpenAEC Desktop App.",
   "windows": [
     "main",
-    "status"
+    "status",
+    "delen"
   ],
   "permissions": [
     "core:default",

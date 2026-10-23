@@ -30,6 +30,17 @@
         "resizable": false,
         "skipTaskbar": true,
         "alwaysOnTop": true
+      },
+      {
+        "title": "Delen – OpenAEC Desktop App",
+        "label": "delen",
+        "url": "delen.html",
+        "width": 520,
+        "height": 720,
+        "minWidth": 440,
+        "minHeight": 520,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

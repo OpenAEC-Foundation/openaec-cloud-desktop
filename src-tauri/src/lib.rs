@@ -775,6 +775,7 @@ pub fn run() {
             toon_hoofdvenster,
             quotum,
             delen::open_delen,
+            delen::sluit_delen,
             delen::delen_verzoek,
             delen::deeldoel,
             delen::deel_met_collega,

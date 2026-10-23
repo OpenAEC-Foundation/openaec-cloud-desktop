@@ -145,6 +145,14 @@ pub fn open_delen(app: AppHandle, verzoek: Deelverzoek) {
     toon(&app, verzoek);
 }
 
+/// Het deelvenster sluiten (verbergen, zoals elk venster van de app).
+#[tauri::command]
+pub fn sluit_delen(app: AppHandle) {
+    if let Some(venster) = app.get_webview_window(VENSTER) {
+        let _ = venster.hide();
+    }
+}
+
 /// Het laatste verzoek aan het deelvenster.
 #[tauri::command]
 pub fn delen_verzoek(state: tauri::State<'_, AppState>) -> Option<Deelverzoek> {
