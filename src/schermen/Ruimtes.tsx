@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, on, Show } from "solid-js"
 import { open } from "@tauri-apps/plugin-dialog"
-import { api, type MapInhoud, type Ruimte } from "../lib/api"
+import { api, type Deeldoel, type MapInhoud, type Ruimte } from "../lib/api"
 import { grootte, servertijd, soort } from "../lib/opmaak"
 import {
   bezig, doe, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald, setKoppelingen,
@@ -52,6 +52,15 @@ function Bestandsweergave(props: { ruimte: Ruimte }) {
 
   const leeg = () => inhoud() && !inhoud()!.mappen.length && !inhoud()!.bestanden.length
 
+  /** Het deelvenster openen voor een map of bestand op deze plek (de klik opent de map niet). */
+  const deel = (e: MouseEvent, doctype: Deeldoel["doctype"], id: string, naam: string) => {
+    e.stopPropagation()
+    const plek = [props.ruimte.naam, ...pad().map((s) => s.naam), naam].join(" / ")
+    api
+      .openDelen({ doel: { doctype, id, naam, pad: plek, ruimte: props.ruimte.name, ruimte_naam: props.ruimte.naam } })
+      .catch((fout) => setMelding(String(fout)))
+  }
+
   return (
     <div class="bestanden">
       <div class="bestanden-kop">
@@ -101,12 +110,13 @@ function Bestandsweergave(props: { ruimte: Ruimte }) {
                 <th class="getal">Grootte</th>
                 <th>Gewijzigd</th>
                 <th>Vergrendeld door</th>
+                <th class="acties" aria-label="Acties" />
               </tr>
             </thead>
             <tbody classList={{ vaag: laden() }}>
               <Show when={pad().length}>
                 <tr class="map" onClick={() => naarMap(pad().slice(0, -1))}>
-                  <td colSpan={4}>
+                  <td colSpan={5}>
                     <span class="icoon">↰</span> Omhoog
                   </td>
                 </tr>
@@ -121,6 +131,11 @@ function Bestandsweergave(props: { ruimte: Ruimte }) {
                     <td class="getal">–</td>
                     <td>{servertijd(m.gewijzigd)}</td>
                     <td />
+                    <td class="acties">
+                      <button class="klein" title={`${m.naam} delen`} onClick={(e) => deel(e, "Opslagmap", m.id, m.naam)}>
+                        Delen…
+                      </button>
+                    </td>
                   </tr>
                 )}
               </For>
@@ -142,6 +157,11 @@ function Bestandsweergave(props: { ruimte: Ruimte }) {
                           {b.vergrendeld_door!.split("@")[0]}
                         </span>
                       </Show>
+                    </td>
+                    <td class="acties">
+                      <button class="klein" title={`${b.naam} delen`} onClick={(e) => deel(e, "Opslagbestand", b.id, b.naam)}>
+                        Delen…
+                      </button>
                     </td>
                   </tr>
                 )}

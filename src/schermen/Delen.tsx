@@ -43,8 +43,8 @@ export default function Delen() {
         <div>
           <h1>Delen</h1>
           <p class="uitleg">
-            Deel een bestand of map met een link, vergrendel een bestand terwijl je eraan werkt, of haal een oudere versie terug. Dit kan ook
-            via de rechtermuisknop in de Verkenner.
+            Deel een bestand of map met een collega of een link, vergrendel een bestand terwijl je eraan werkt, of haal een oudere versie
+            terug. Dit kan ook via de rechtermuisknop in de Verkenner (Delen…).
           </p>
         </div>
       </div>
@@ -61,6 +61,10 @@ export default function Delen() {
           <div class="knoppen">
             <button onClick={() => kies(false)}>Bestand kiezen…</button>
             <button onClick={() => kies(true)}>Map kiezen…</button>
+            {/* Delen met een collega, links en wie er toegang heeft: in het deelvenster. */}
+            <button class="primair" disabled={!bestand()} onClick={() => api.openDelen({ pad: bestand() }).catch((e) => setMelding(String(e)))}>
+              Delen…
+            </button>
           </div>
         </div>
       </section>

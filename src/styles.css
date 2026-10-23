@@ -240,6 +240,9 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 .tabel th:nth-child(4) { width: 20%; }
 .tabel td { padding: 7px 10px; border-bottom: 1px solid var(--beton); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tabel .getal { text-align: right; }
+.tabel .acties { width: 84px; padding-top: 4px; padding-bottom: 4px; text-align: right; }
+.tabel td.acties button { visibility: hidden; }
+.tabel tr:hover td.acties button, .tabel td.acties button:focus-visible { visibility: visible; }
 .tabel tr.map { cursor: pointer; }
 .tabel tr.map td:first-child { font-weight: 500; }
 .tabel tbody tr:hover { background: var(--papier); }
