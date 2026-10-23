@@ -196,9 +196,9 @@ async fn kleine_bestanden_gaan_in_een_multipartverzoek() {
     let verzoek = server.received_requests().await.unwrap().into_iter().find(|v| v.url.path().ends_with("upload_klein")).unwrap();
     let body = String::from_utf8_lossy(&verzoek.body);
     assert!(verzoek.headers.get("content-type").unwrap().to_str().unwrap().starts_with("multipart/form-data"));
-    assert!(body.contains("name=\"f1\"") && body.contains("inhoud b"), "{body}");
+    assert!(body.contains("name=\"inhoud\"") && body.contains("inhoud ainhoud binhoud c"), "{body}");
     let lijst = body.split("name=\"bestanden\"").nth(1).unwrap();
-    assert!(lijst.contains("\"pad\":\"Notities\"") && lijst.contains("\"basis_versie\":2") && lijst.contains("\"blokhash\""));
+    assert!(lijst.contains("\"pad\":\"Notities\"") && lijst.contains("\"basis_versie\":2") && lijst.contains("\"blokhash\"") && lijst.contains("\"sha256\""));
     // Het map-id uit het antwoord wordt onthouden: een volgende upload in die map gebruikt het.
     let tweede = [openaec_sync::motor::KleinUpload { pad: "Notities/a.txt", lokaal: &a, basis_versie: Some(1) }];
     let _ = opslag.upload_klein(&tweede).await;

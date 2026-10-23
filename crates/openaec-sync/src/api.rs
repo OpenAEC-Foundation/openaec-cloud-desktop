@@ -4,6 +4,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use sha2::{Digest, Sha256};
+
 use crate::Fout;
 
 const API: &str = "/api/method/openaec_storage.api.";
@@ -361,18 +363,20 @@ impl Client {
             .iter()
             .enumerate()
             .map(|(i, b)| {
+                let sha256: String = Sha256::digest(&b.inhoud).iter().map(|x| format!("{x:02x}")).collect();
                 json!({"veld": format!("f{i}"), "naam": b.naam, "map": b.map, "pad": b.pad, "grootte": b.inhoud.len(),
-                       "basis_versie": b.basis_versie, "blokhash": crate::blokken::hash_bytes(&b.inhoud, crate::blokken::BLOK)[0]})
+                       "basis_versie": b.basis_versie, "sha256": sha256,
+                       "blokhash": crate::blokken::hash_bytes(&b.inhoud, crate::blokken::BLOK)[0]})
             })
             .collect();
-        let mut formulier = reqwest::multipart::Form::new()
+        // Alle inhoud achter elkaar in één deel: de server snijdt op `grootte` en controleert met `sha256`. Losse
+        // delen per bestand kunnen bij het ontleden een regeleinde aan het eind houden.
+        let alles: Vec<u8> = bestanden.iter().flat_map(|b| b.inhoud.iter().copied()).collect();
+        let formulier = reqwest::multipart::Form::new()
             .text("ruimte", ruimte.to_string())
             .text("bron", "sync")
-            .text("bestanden", Value::Array(lijst).to_string());
-        for (i, b) in bestanden.iter().enumerate() {
-            let deel = reqwest::multipart::Part::bytes(b.inhoud.clone()).file_name(b.naam.clone());
-            formulier = formulier.part(format!("f{i}"), deel);
-        }
+            .text("bestanden", Value::Array(lijst).to_string())
+            .part("inhoud", reqwest::multipart::Part::bytes(alles).file_name("inhoud"));
         let antwoord = self
             .http
             .post(format!("{}{}upload_klein", self.basis, API))
