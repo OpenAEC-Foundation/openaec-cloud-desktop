@@ -237,6 +237,44 @@ pub struct Mogelijkheden {
     pub boom: bool,
     #[serde(default)]
     pub maak_mappen: bool,
+    /// De parameter `deling` (een gedeelde map als bovenste map) bij `boom`, `maak_mappen`, `upload_klein` enz.
+    #[serde(default)]
+    pub deling: bool,
+}
+
+/// Iets dat een ander met mij deelde (`gedeeld_met_mij`): een map (te koppelen) of een bestand (te openen).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Gedeeld {
+    /// Id van de deling: de wortel voor de sync bij een map.
+    pub deling: String,
+    /// `Opslagmap` of `Opslagbestand`.
+    pub doel_doctype: String,
+    /// Id van de gedeelde map of het gedeelde bestand.
+    pub doel: String,
+    pub naam: String,
+    pub ruimte: String,
+    #[serde(default)]
+    pub ruimte_naam: Option<String>,
+    /// `lezen` of `schrijven`.
+    pub rechten: String,
+    #[serde(default)]
+    pub gedeeld_door: Option<String>,
+    #[serde(default)]
+    pub gedeeld_door_naam: Option<String>,
+    #[serde(default)]
+    pub sinds: Option<String>,
+    #[serde(default)]
+    pub verloopt: Option<String>,
+    /// Ook lid van de ruimte (met `rol`).
+    #[serde(default)]
+    pub al_lid: bool,
+    #[serde(default)]
+    pub rol: Option<String>,
+    /// Alleen bij een bestand: grootte en huidige versie.
+    #[serde(default)]
+    pub grootte: Option<u64>,
+    #[serde(default)]
+    pub versie: Option<u64>,
 }
 
 /// Antwoord van [`Client::maak_mappen`]: per mappad het map-id, of de reden waarom het niet lukte.
@@ -336,6 +374,14 @@ struct Antwoord<T> {
     message: T,
 }
 
+/// Voeg `deling` toe aan de gegevens van een verzoek (alleen als er een is: een oudere server kent hem niet).
+fn met_deling(mut gegevens: Value, deling: Option<&str>) -> Value {
+    if let Some(deling) = deling {
+        gegevens["deling"] = json!(deling);
+    }
+    gegevens
+}
+
 /// HTTP-client voor de opslag: verbindingen blijven open (keep-alive, genoeg per host voor parallelle overdrachten)
 /// en HTTP/2 wordt gebruikt als de server het aanbiedt. Eén client delen tussen [`Client`]s scheelt een nieuwe
 /// TLS-verbinding per ronde.
@@ -391,12 +437,27 @@ impl Client {
 
     /// Veel mappen (paden met '/') in één verzoek; ontbrekende, ook tussenliggende, worden aangemaakt.
     pub async fn maak_mappen(&self, ruimte: &str, paden: &[String]) -> Result<NieuweMappen, Fout> {
-        self.roep("maak_mappen", json!({"ruimte": ruimte, "paden": paden})).await
+        self.maak_mappen_in(ruimte, None, paden).await
+    }
+
+    /// Als [`Client::maak_mappen`]; met `deling` zijn de paden binnen de gedeelde map.
+    pub async fn maak_mappen_in(&self, ruimte: &str, deling: Option<&str>, paden: &[String]) -> Result<NieuweMappen, Fout> {
+        self.roep("maak_mappen", met_deling(json!({"ruimte": ruimte, "paden": paden}), deling)).await
     }
 
     /// Alle mappen en een pagina bestanden van een ruimte in één verzoek.
     pub async fn boom(&self, ruimte: &str, start: usize, aantal: usize) -> Result<Boom, Fout> {
-        self.roep("boom", json!({"ruimte": ruimte, "start": start, "aantal": aantal})).await
+        self.boom_in(ruimte, None, start, aantal).await
+    }
+
+    /// Als [`Client::boom`]; met `deling` alles onder de gedeelde map (die zelf niet in `mappen` staat).
+    pub async fn boom_in(&self, ruimte: &str, deling: Option<&str>, start: usize, aantal: usize) -> Result<Boom, Fout> {
+        self.roep("boom", met_deling(json!({"ruimte": ruimte, "start": start, "aantal": aantal}), deling)).await
+    }
+
+    /// Wat anderen met mij deelden (mappen en bestanden), nieuwste eerst; alleen delingen die nu gelden.
+    pub async fn gedeeld_met_mij(&self) -> Result<Vec<Gedeeld>, Fout> {
+        self.roep("gedeeld_met_mij", json!({})).await
     }
 
     /// Kleine bestanden in één verzoek (multipart); per bestand het resultaat (met het map-id) of de weigering, in
@@ -405,6 +466,17 @@ impl Client {
     pub async fn upload_klein(
         &self,
         ruimte: &str,
+        bestanden: &[KleinBestand],
+    ) -> Result<Vec<Result<(UploadResultaat, Option<String>), Fout>>, Fout> {
+        self.upload_klein_in(ruimte, None, bestanden).await
+    }
+
+    /// Als [`Client::upload_klein`]; met `deling` zijn `pad` en `map` binnen de gedeelde map.
+    #[allow(clippy::type_complexity)]
+    pub async fn upload_klein_in(
+        &self,
+        ruimte: &str,
+        deling: Option<&str>,
         bestanden: &[KleinBestand],
     ) -> Result<Vec<Result<(UploadResultaat, Option<String>), Fout>>, Fout> {
         let lijst: Vec<Value> = bestanden
@@ -420,8 +492,11 @@ impl Client {
         // Alle inhoud achter elkaar in één deel: de server snijdt op `grootte` en controleert met `sha256`. Losse
         // delen per bestand kunnen bij het ontleden een regeleinde aan het eind houden.
         let alles: Vec<u8> = bestanden.iter().flat_map(|b| b.inhoud.iter().copied()).collect();
-        let formulier = reqwest::multipart::Form::new()
-            .text("ruimte", ruimte.to_string())
+        let mut formulier = reqwest::multipart::Form::new().text("ruimte", ruimte.to_string());
+        if let Some(deling) = deling {
+            formulier = formulier.text("deling", deling.to_string());
+        }
+        let formulier = formulier
             .text("bron", "sync")
             .text("bestanden", Value::Array(lijst).to_string())
             .part("inhoud", reqwest::multipart::Part::bytes(alles).file_name("inhoud"));
@@ -521,7 +596,12 @@ impl Client {
     }
 
     pub async fn wijzigingen(&self, ruimte: &str, sinds: u64) -> Result<Wijzigingen, Fout> {
-        self.roep("wijzigingen", json!({"ruimte": ruimte, "sinds": sinds})).await
+        self.wijzigingen_in(ruimte, None, sinds).await
+    }
+
+    /// Als [`Client::wijzigingen`]; met `deling` alleen die binnen de gedeelde map.
+    pub async fn wijzigingen_in(&self, ruimte: &str, deling: Option<&str>, sinds: u64) -> Result<Wijzigingen, Fout> {
+        self.roep("wijzigingen", met_deling(json!({"ruimte": ruimte, "sinds": sinds}), deling)).await
     }
 
     pub async fn vergrendel(&self, bestand: &str, apparaat: &str, automatisch: bool) -> Result<Value, Fout> {
@@ -534,7 +614,12 @@ impl Client {
     }
 
     pub async fn bladeren(&self, ruimte: &str, map: Option<&str>) -> Result<Inhoud, Fout> {
-        self.roep("bladeren", json!({"ruimte": ruimte, "map": map})).await
+        self.bladeren_in(ruimte, None, map).await
+    }
+
+    /// Als [`Client::bladeren`]; met `deling` is de gedeelde map het hoofdniveau (`map` None).
+    pub async fn bladeren_in(&self, ruimte: &str, deling: Option<&str>, map: Option<&str>) -> Result<Inhoud, Fout> {
+        self.roep("bladeren", met_deling(json!({"ruimte": ruimte, "map": map}), deling)).await
     }
 
     /// Gegevens van één bestand, met de actieve vergrendeling (of None).

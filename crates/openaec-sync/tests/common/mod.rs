@@ -17,6 +17,8 @@ pub struct NepOpslag {
     pub teller: Mutex<u64>,
     /// Paden waarvoor uploaden en downloaden mislukt (om fouten per bestand na te bootsen).
     pub weigeren: Mutex<BTreeSet<String>>,
+    /// Alleen te lezen (een map die met mij gedeeld is om te bekijken); uploaden en verwijderen falen dan in de test.
+    pub alleen_lezen: bool,
 }
 
 impl NepOpslag {
@@ -63,7 +65,12 @@ impl Opslag for NepOpslag {
             .collect())
     }
 
+    fn alleen_lezen(&self) -> bool {
+        self.alleen_lezen
+    }
+
     async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout> {
+        assert!(!self.alleen_lezen, "upload bij alleen lezen: {pad}");
         self.geweigerd(pad)?;
         let inhoud = std::fs::read(lokaal)?;
         let huidig = self.bestanden.lock().unwrap().get(pad).map(|x| x.1);
@@ -91,6 +98,7 @@ impl Opslag for NepOpslag {
     }
 
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
+        assert!(!self.alleen_lezen, "verwijderen bij alleen lezen: {}", bestand.pad);
         self.bestanden.lock().unwrap().remove(&bestand.pad);
         Ok(())
     }

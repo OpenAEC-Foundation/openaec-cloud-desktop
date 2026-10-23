@@ -39,6 +39,9 @@ pub enum Fout {
     Geweigerd { foutcode: Option<String>, melding: String },
 }
 
+/// Foutcodes van de server waarna een gedeelde map niet meer te syncen is (zie [`Fout::deling_gestopt`]).
+pub const DELING_GESTOPT: [&str; 4] = ["deling_ingetrokken", "deling_verlopen", "deling_weg", "deling_onbekend"];
+
 /// Standaard aantal overdrachten tegelijk (bestanden, en delen van grote bestanden samen).
 pub const STANDAARD_GELIJKTIJDIG: usize = 8;
 /// Hoogste instelbare aantal overdrachten tegelijk.
@@ -80,6 +83,12 @@ impl Fout {
             Fout::Geweigerd { foutcode, .. } => foutcode.clone(),
             _ => self.antwoord()?.get("foutcode")?.as_str().map(str::to_string),
         }
+    }
+
+    /// Waarom een gedeelde map niet meer te syncen is: de deling is ingetrokken, verlopen, weg (de map is verwijderd)
+    /// of onbekend. Geeft de foutcode van de server, of None bij elke andere fout (bijv. geen verbinding).
+    pub fn deling_gestopt(&self) -> Option<String> {
+        self.foutcode().filter(|c| DELING_GESTOPT.contains(&c.as_str()))
     }
 
     /// De melding van de server voor mensen: Frappe zet die in `_server_messages` (een JSON-lijst van JSON-teksten),
