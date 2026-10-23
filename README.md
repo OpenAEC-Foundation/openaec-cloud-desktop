@@ -66,6 +66,43 @@ en stuurt de stand hoogstens tien keer per seconde naar de vensters.
 
 Gemeten tegen een lokale bench (zie `scripts/meetbench` in openaec-storage): zie de tabel onder Testen.
 
+## Gedeeld met mij
+
+Een map of bestand die een collega met je deelde, staat in **Ruimtes** onder **Gedeeld met mij**, met wie het deelde,
+je rol ("Kan bekijken", "Kan bewerken" of "Kan beheren") en de vervaldatum (server: `openaec_storage.api.gedeeld_met_mij`).
+
+- **Een gedeelde map** bekijk je zoals een ruimte (`bladeren` met `deling`) en koppel je aan een lokale map met
+  **Koppelen aan map…**. De koppeling (`instellingen.json`) heeft dan ook `deling`, `wortel` (de gedeelde map),
+  `rechten` en `gedeeld_door`; `ruimte_naam` is de naam van de map. De sync gebruikt de gedeelde map als bovenste map
+  (`ClientOpslag::gedeeld`): `boom`, `maak_mappen`, `upload_klein` en `wijzigingen` krijgen de deling mee, uploads en
+  mappen komen onder de gedeelde map. Een oudere server zonder `deling` in `mogelijkheden`: dan per map bladeren en
+  elk bestand apart. Bij elke ronde volgt de app de rechten van de server (bijv. van bewerken naar bekijken).
+- **Verkenner:** het rechtermuismenu, de statusvinkjes en **Cloud-map…** (placeholders die bij openen worden opgehaald,
+  met de rechten van de deling) werken zoals bij een ruimte. Delen vanuit het menu lukt alleen als je de map mag
+  beheren; de gekoppelde map zelf delen deelt de gedeelde map.
+- **Kan bekijken (`lezen`):** er gaat niets naar de server. Een lokaal nieuw of gewijzigd bestand blijft staan en komt
+  bij de overgeslagen bestanden met de reden "alleen lezen gedeeld" (elke ronde, zonder fout en zonder opnieuw te
+  proberen). Een lokaal verwijderd bestand komt terug van de server; nieuwe versies op de server komen binnen, behalve
+  over een bestand dat je hier wijzigde (verwijder of herstel dat om de serverversie weer te krijgen).
+- **Ingetrokken, verlopen of verwijderd:** geeft de server `deling_ingetrokken`, `deling_verlopen`, `deling_weg` of
+  `deling_onbekend` (bij de lijst van een ronde of bij de controle op wijzigingen), dan stopt de koppeling: hij gaat
+  uit de instellingen, de statusvinkjes gaan eraf en er komt een melding ("Tekeningen: de deling is ingetrokken. De
+  koppeling is gestopt; de bestanden op deze computer blijven staan."). Geen foutlus: de map wordt niet meer
+  geprobeerd. Een bestand dat midden in een ronde wordt geweigerd, staat met de reden bij de fouten van die ronde.
+- **Een gedeeld bestand** synct niet mee: **Openen in de browser** opent `/opslag?deling=<deling>` op de server, waar
+  je het downloadt en (bij bewerken) een nieuwe versie uploadt.
+
+### Delen met een rol
+
+In het deelvenster kies je bij **Met een collega** "Kan bekijken", "Kan bewerken" of "Kan beheren (mag ook delen)"
+(`lezen`, `schrijven`, `beheren`). Beheren is bewerken plus verder delen en de toegang op die map regelen. Wat je zelf
+mag, vraagt het venster aan de server (`openaec_storage.api.toegang`): je ziet alleen de rollen die je mag geven (nooit
+meer dan je zelf hebt), en de knoppen om te delen, een rol te wijzigen (`wijzig_deling`, per collega een keuzelijst bij
+**Wie heeft toegang**) en in te trekken staan er alleen als je hier mag delen. Wie via een deling alleen bekijkt of
+bewerkt, ziet zijn eigen rol en de uitleg dat verder delen mag wie het beheert. Foutcodes in het venster:
+`geen_beheerrecht`, `meer_dan_eigen_recht` en `buiten_deling`, naast de bestaande. Een oudere server zonder
+`toegang`: zoals vroeger, delen tot en met bewerken.
+
 ## Lastige namen en negeerlijst
 
 Een naam die op Windows niet kan, is daar met normale paden niet te openen, te verplaatsen of te verwijderen.
@@ -255,3 +292,5 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 
 - Bij het verwijderen van de app de registratie van gekoppelde mappen opruimen (nu: eerst ontkoppelen).
 - Statusvinkjes in de bestandsbeheerder op Linux.
+- Gedeelde mappen in het opdrachtregelprogramma `openaec-storage` (nu alleen ruimtes).
+- Een gedeeld bestand openen of een nieuwe versie uploaden vanuit de app zelf (nu via de browser).
