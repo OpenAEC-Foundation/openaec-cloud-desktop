@@ -832,6 +832,7 @@ pub fn run() {
             delen::delingen_van,
             delen::trek_deling_in,
             delen::ruimteleden,
+            delen::collegas,
             delen::kopieer,
             tools::tools_geinstalleerd,
             tools::tools_releases,

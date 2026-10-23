@@ -166,6 +166,26 @@ pub struct DelingInfo {
     pub token: Option<String>,
     #[serde(default)]
     pub creation: Option<String>,
+    /// Zit er een wachtwoord op? (nieuwere servers; anders None)
+    #[serde(default)]
+    pub beveiligd: Option<bool>,
+    /// Is de vervaldatum voorbij? (nieuwere servers; anders None)
+    #[serde(default)]
+    pub verlopen: Option<bool>,
+    /// Wie de deling maakte (nieuwere servers).
+    #[serde(default)]
+    pub gemaakt_door: Option<String>,
+    #[serde(default)]
+    pub gemaakt_door_naam: Option<String>,
+}
+
+/// Een collega om mee te delen (`collegas`): een gebruiker van de omgeving, met zijn rol in de ruimte of None.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collega {
+    pub gebruiker: String,
+    pub naam: String,
+    #[serde(default)]
+    pub lid_als: Option<String>,
 }
 
 /// Lid van een ruimte met zijn rol (beheerder, schrijver, lezer of gast).
@@ -602,6 +622,12 @@ impl Client {
 
     /// De leden van een ruimte, via het documentadres van Frappe (`/api/resource/Ruimte/<id>`): elk lid mag de
     /// ruimte lezen. Er is (nog) geen eigen methode voor in `openaec_storage.api`.
+    /// Collega's om mee te delen: gebruikers van de omgeving gezocht op e-mailadres en naam (hoogstens 20), met hun
+    /// rol in `ruimte`. Een oudere server kent deze methode niet; gebruik dan [`Client::ruimteleden`].
+    pub async fn collegas(&self, tekst: &str, ruimte: Option<&str>) -> Result<Vec<Collega>, Fout> {
+        self.roep("collegas", json!({"tekst": tekst, "ruimte": ruimte})).await
+    }
+
     pub async fn ruimteleden(&self, ruimte: &str) -> Result<Vec<Ruimtelid>, Fout> {
         #[derive(Deserialize)]
         struct Document {

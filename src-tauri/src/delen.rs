@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use openaec_sync::api::Ruimtelid;
+use openaec_sync::api::{Collega, Ruimtelid};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Fout;
 use serde::{Deserialize, Serialize};
@@ -76,7 +76,8 @@ pub fn deelfout(f: &Fout) -> DeelFout {
         );
     }
     let server = f.servermelding();
-    if server.as_deref().is_some_and(|m| m.contains("bestaande gebruiker")) {
+    // Nieuwere servers geven een foutcode; een oudere alleen de melding.
+    if f.foutcode().as_deref() == Some("gebruiker_onbekend") || server.as_deref().is_some_and(|m| m.contains("bestaande gebruiker")) {
         return melding("onbekende_gebruiker", "Er is geen gebruiker met dit e-mailadres in deze omgeving.");
     }
     match f.status() {
@@ -230,6 +231,11 @@ pub struct DelingRegel {
     pub gemaakt: Option<String>,
     /// Alleen bij een link.
     pub url: Option<String>,
+    /// Van de server (nieuwere versies); None: het venster rekent of kijkt zelf.
+    pub beveiligd: Option<bool>,
+    pub verlopen: Option<bool>,
+    pub gemaakt_door: Option<String>,
+    pub gemaakt_door_naam: Option<String>,
 }
 
 /// Wie heeft toegang via een deling: de actieve delingen van dit bestand of deze map, nieuwste eerst.
@@ -248,6 +254,10 @@ pub async fn delingen_van(state: tauri::State<'_, AppState>, doctype: String, id
             rechten: d.rechten,
             verloopt: d.verloopt,
             gemaakt: d.creation,
+            beveiligd: d.beveiligd,
+            verlopen: d.verlopen,
+            gemaakt_door: d.gemaakt_door,
+            gemaakt_door_naam: d.gemaakt_door_naam,
         })
         .collect())
 }
@@ -264,6 +274,28 @@ pub async fn ruimteleden(state: tauri::State<'_, AppState>, ruimte: String) -> R
     let mut leden = client(&state).await?.ruimteleden(&ruimte).await?;
     leden.sort_by(|a, b| a.gebruiker.cmp(&b.gebruiker));
     Ok(leden)
+}
+
+/// Collega's om mee te delen, gezocht op e-mailadres en naam, met hun rol in de ruimte. Kent de server
+/// `collegas` niet (een oudere versie), dan de leden van de ruimte die op de zoektekst passen.
+#[tauri::command]
+pub async fn collegas(state: tauri::State<'_, AppState>, ruimte: String, tekst: String) -> Result<Vec<Collega>, DeelFout> {
+    let client = client(&state).await?;
+    match client.collegas(tekst.trim(), Some(&ruimte)).await {
+        Ok(lijst) => Ok(lijst),
+        Err(Fout::Netwerk(e)) => Err(Fout::Netwerk(e).into()),
+        Err(_) => {
+            let zoek = tekst.trim().to_lowercase();
+            let mut leden = client.ruimteleden(&ruimte).await?;
+            leden.sort_by(|a, b| a.gebruiker.cmp(&b.gebruiker));
+            Ok(leden
+                .into_iter()
+                .filter(|l| l.gebruiker.to_lowercase().contains(&zoek))
+                .take(20)
+                .map(|l| Collega { naam: l.gebruiker.clone(), gebruiker: l.gebruiker, lid_als: Some(l.rol) })
+                .collect())
+        }
+    }
 }
 
 /// Tekst op het klembord (een link uit de lijst van delingen).
@@ -289,6 +321,9 @@ mod tests {
         assert_eq!(deelfout(&server(403, json!({"exc_type": "PermissionError"}))).code, "geen_rechten");
         let onbekend = json!({"_server_messages": json!([json!({"message": "Kies een bestaande gebruiker om mee te delen"}).to_string()]).to_string()});
         assert_eq!(deelfout(&server(417, onbekend)).code, "onbekende_gebruiker");
+        // Nieuwere server: de foutcode, ook als de melding anders luidt.
+        let met_code = json!({"foutcode": "gebruiker_onbekend", "exception": "frappe.exceptions.ValidationError: Onbekend"});
+        assert_eq!(deelfout(&server(417, met_code)).code, "onbekende_gebruiker");
         assert_eq!(deelfout(&server(404, json!({}))).code, "niet_gevonden");
         assert_eq!(deelfout(&server(401, json!({}))).code, "niet_ingelogd");
         assert_eq!(deelfout(&server(503, json!({}))).code, "geen_verbinding");

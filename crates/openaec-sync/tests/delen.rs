@@ -131,3 +131,40 @@ fn melding_uit_exception_en_geen_json() {
     assert_eq!((f.status(), f.foutcode(), f.servermelding()), (Some(502), None, None));
     assert_eq!(Fout::Controle("x".into()).status(), None);
 }
+
+#[tokio::test]
+async fn collegas_en_de_extra_velden_van_delingen() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API}collegas")))
+        .and(body_partial_json(json!({"tekst": "jan", "ruimte": "R1"})))
+        .respond_with(antwoord(json!([
+            {"gebruiker": "p.jansen@voorbeeld.nl", "naam": "Piet Jansen", "lid_als": "lezer"},
+            {"gebruiker": "j.de.vries@voorbeeld.nl", "naam": "Jan de Vries", "lid_als": null}
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API}delingen")))
+        .respond_with(antwoord(json!([
+            {"name": "D1", "soort": "link", "rechten": "lezen", "token": "t", "beveiligd": true, "verlopen": false,
+             "gemaakt_door": "a@voorbeeld.nl", "gemaakt_door_naam": "Anna"},
+            {"name": "D2", "soort": "gebruiker", "gebruiker": "b@voorbeeld.nl", "rechten": "schrijven"}
+        ])))
+        .mount(&server)
+        .await;
+    let client = Client::new(&server.uri(), "token a:b");
+    let c = client.collegas("jan", Some("R1")).await.unwrap();
+    assert_eq!(c[0].lid_als.as_deref(), Some("lezer"));
+    assert_eq!((c[1].naam.as_str(), c[1].lid_als.as_deref()), ("Jan de Vries", None));
+    let d = client.delingen("Opslagbestand", "B1").await.unwrap();
+    assert_eq!((d[0].beveiligd, d[0].verlopen, d[0].gemaakt_door_naam.as_deref()), (Some(true), Some(false), Some("Anna")));
+    // Een oudere server geeft die velden niet: dan None (de app rekent zelf).
+    assert_eq!((d[1].beveiligd, d[1].verlopen, d[1].gemaakt_door.as_deref()), (None, None, None));
+}
+
+#[test]
+fn foutcode_gebruiker_onbekend() {
+    let f = Fout::Server { status: 417, tekst: json!({"foutcode": "gebruiker_onbekend", "exc_type": "ValidationError"}).to_string() };
+    assert_eq!(f.foutcode().as_deref(), Some("gebruiker_onbekend"));
+}

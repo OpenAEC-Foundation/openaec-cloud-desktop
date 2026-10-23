@@ -2,9 +2,10 @@
 // "Delen…" in het rechtermuismenu van de Verkenner (met een lokaal pad) of vanuit de bestandsweergave van Ruimtes.
 
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js"
-import { api, type Deeldoel, type Deelverzoek, type DelingRegel, type Ruimtelid } from "./lib/api"
+import { api, type Collega, type Deeldoel, type Deelverzoek, type DelingRegel, type Ruimtelid } from "./lib/api"
 import {
-  collegaRechten, controleerVervaldatum, datumWaarde, geldigEmail, isVerlopen, leesFout, linkRechten, rechtenTekst, rolTekst,
+  collegaRechten, collegaTekst, controleerVervaldatum, datumWaarde, delingDetails, delingVerlopen, geldigEmail, leesFout,
+  linkRechten, rechtenTekst, rolTekst,
   vervaldatumTekst, type Deelfout,
 } from "./lib/delen"
 import { naamVan, servertijd } from "./lib/opmaak"
@@ -40,6 +41,8 @@ export default function Deelvenster() {
   // Wie heeft toegang
   const [delingen, setDelingen] = createSignal<DelingRegel[] | null>(null)
   const [leden, setLeden] = createSignal<Ruimtelid[]>([])
+  // Suggesties bij het e-mailadres: collega's van de omgeving (of, op een oudere server, de leden van de ruimte).
+  const [suggesties, setSuggesties] = createSignal<Collega[]>([])
   const [lijstFout, setLijstFout] = createSignal<Deelfout | null>(null)
   const [intrekken, setIntrekken] = createSignal("")
 
@@ -47,7 +50,29 @@ export default function Deelvenster() {
   const [melding, setMelding] = createSignal("")
 
   const isMap = () => doel()?.doctype === "Opslagmap"
-  const lid = () => leden().find((l) => l.gebruiker === collega().trim().toLowerCase())
+  const lid = () => {
+    const wie = collega().trim().toLowerCase()
+    const uitLeden = leden().find((l) => l.gebruiker === wie)
+    if (uitLeden) return uitLeden
+    const s = suggesties().find((c) => c.gebruiker.toLowerCase() === wie && c.lid_als)
+    return s ? { gebruiker: s.gebruiker, rol: s.lid_als! } : undefined
+  }
+
+  // Zoeken terwijl je typt, met een korte pauze; het laatste antwoord telt.
+  let zoekTimer: ReturnType<typeof setTimeout> | undefined
+  let zoekNummer = 0
+  const zoekCollegas = (tekst: string) => {
+    clearTimeout(zoekTimer)
+    const d = doel()
+    if (!d) return
+    zoekTimer = setTimeout(() => {
+      const nummer = ++zoekNummer
+      api
+        .collegas(d.ruimte, tekst.trim())
+        .then((lijst) => nummer === zoekNummer && setSuggesties(lijst))
+        .catch(() => nummer === zoekNummer && setSuggesties([]))
+    }, 200)
+  }
   const datumFout = () => controleerVervaldatum(verloopt())
 
   const opzoeken = async (p: string) => {
@@ -106,6 +131,7 @@ export default function Deelvenster() {
       if (!d) return
       laadDelingen()
       api.ruimteleden(d.ruimte).then(setLeden).catch(() => setLeden([]))
+      zoekCollegas("")
     }),
   )
 
@@ -225,6 +251,7 @@ export default function Deelvenster() {
                   value={collega()}
                   onInput={(e) => {
                     setCollega(e.currentTarget.value)
+                    zoekCollegas(e.currentTarget.value)
                     setExtern("")
                     setCollegaFout(null)
                   }}
@@ -242,7 +269,7 @@ export default function Deelvenster() {
               </button>
             </div>
             <datalist id="ruimteleden">
-              <For each={leden()}>{(l) => <option value={l.gebruiker}>{rolTekst(l.rol)}</option>}</For>
+              <For each={suggesties()}>{(c) => <option value={c.gebruiker}>{collegaTekst(c)}</option>}</For>
             </datalist>
             <Show when={lid()}>
               {(l) => (
@@ -338,7 +365,7 @@ export default function Deelvenster() {
                 <ul class="toegang">
                   <For each={lijst()} fallback={<li class="toegang-leeg">Nog niet gedeeld: alleen de leden van de ruimte hebben toegang.</li>}>
                     {(d) => (
-                      <li classList={{ verlopen: isVerlopen(d.verloopt) }}>
+                      <li classList={{ verlopen: delingVerlopen(d) }}>
                         <span class={`avatar ${d.soort}`} aria-hidden="true">
                           {d.soort === "link" ? "🔗" : (d.gebruiker ?? "?").slice(0, 1).toUpperCase()}
                         </span>
@@ -347,7 +374,12 @@ export default function Deelvenster() {
                             {d.soort === "link" ? (d.rechten === "uploaden" ? "Uploadlink" : "Iedereen met de link") : d.gebruiker}
                           </span>
                           <span class="meta">
-                            {[rechtenTekst(d.soort, d.rechten), vervaldatumTekst(d.verloopt), d.gemaakt ? `gemaakt ${servertijd(d.gemaakt)}` : ""]
+                            {[
+                              rechtenTekst(d.soort, d.rechten),
+                              d.verlopen === true && !d.verloopt ? "Verlopen" : vervaldatumTekst(d.verloopt),
+                              d.gemaakt ? `gemaakt ${servertijd(d.gemaakt)}` : "",
+                              delingDetails(d),
+                            ]
                               .filter(Boolean)
                               .join(" · ")}
                           </span>

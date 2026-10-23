@@ -49,6 +49,20 @@ export const datumTekst = (waarde: string) => {
 export const isVerlopen = (verloopt: string | null | undefined, nu = new Date()) =>
   !!verloopt && verloopt.slice(0, 10) < datumWaarde(nu)
 
+/** Is deze deling verlopen? Het oordeel van de server als die het geeft, anders zelf gerekend. */
+export const delingVerlopen = (d: { verlopen?: boolean | null; verloopt: string | null }, nu = new Date()) =>
+  typeof d.verlopen === "boolean" ? d.verlopen : isVerlopen(d.verloopt, nu)
+
+/** Extra regel bij een deling: met wachtwoord en wie hem maakte (alleen wat de server weet). */
+export const delingDetails = (d: { beveiligd?: boolean | null; gemaakt_door?: string | null; gemaakt_door_naam?: string | null }) =>
+  [d.beveiligd ? "met wachtwoord" : "", d.gemaakt_door_naam || d.gemaakt_door ? `door ${d.gemaakt_door_naam || d.gemaakt_door}` : ""]
+    .filter(Boolean)
+    .join(" · ")
+
+/** Tekst bij een suggestie: naam en, voor een lid, zijn rol in de ruimte. */
+export const collegaTekst = (c: { gebruiker: string; naam: string; lid_als: string | null }) =>
+  [c.naam !== c.gebruiker ? c.naam : "", c.lid_als ? `lid: ${rolTekst(c.lid_als).toLowerCase()}` : ""].filter(Boolean).join(" · ")
+
 /** Vervaldatum van een deling: "Geen vervaldatum", "Geldig tot 31 dec 2026", "Verloopt vandaag" of "Verlopen op …". */
 export const vervaldatumTekst = (verloopt: string | null | undefined, nu = new Date()) => {
   if (!verloopt) return "Geen vervaldatum"

@@ -199,6 +199,18 @@ export interface DelingRegel {
   verloopt: string | null
   gemaakt: string | null
   url: string | null
+  /** Van de server (nieuwere versies); null: het venster rekent of kijkt zelf. */
+  beveiligd?: boolean | null
+  verlopen?: boolean | null
+  gemaakt_door?: string | null
+  gemaakt_door_naam?: string | null
+}
+
+/** Een collega om mee te delen, met zijn rol in de ruimte (null: geen lid). */
+export interface Collega {
+  gebruiker: string
+  naam: string
+  lid_als: string | null
 }
 
 export interface Ruimtelid {
@@ -268,6 +280,7 @@ export const api = {
   delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { doctype: doel.doctype, id: doel.id }),
   trekDelingIn: (deling: string) => invoke<void>("trek_deling_in", { deling }),
   ruimteleden: (ruimte: string) => invoke<Ruimtelid[]>("ruimteleden", { ruimte }),
+  collegas: (ruimte: string, tekst: string) => invoke<Collega[]>("collegas", { ruimte, tekst }),
   kopieer: (tekst: string) => invoke<void>("kopieer", { tekst }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),

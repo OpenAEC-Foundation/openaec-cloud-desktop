@@ -3,8 +3,8 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
-  controleerVervaldatum, datumTekst, datumWaarde, geldigEmail, isVerlopen, leesFout, linkRechten, rechtenTekst, rolTekst,
-  vervaldatumTekst,
+  collegaTekst, controleerVervaldatum, datumTekst, datumWaarde, delingDetails, delingVerlopen, geldigEmail, isVerlopen, leesFout,
+  linkRechten, rechtenTekst, rolTekst, vervaldatumTekst,
 } from "./delen.ts"
 
 const nu = new Date(2026, 9, 23, 14, 30)
@@ -61,5 +61,23 @@ describe("invoer en fouten", () => {
   it("leest de fout van een deelcommand en van een gewone tekst", () => {
     assert.deepEqual(leesFout({ code: "ruimte_gearchiveerd", melding: "Gearchiveerd" }), { code: "ruimte_gearchiveerd", melding: "Gearchiveerd" })
     assert.deepEqual(leesFout("niet verbonden"), { code: "fout", melding: "niet verbonden" })
+  })
+})
+
+describe("velden van de server", () => {
+  it("gebruikt verlopen van de server, en rekent zelf zonder", () => {
+    assert.equal(delingVerlopen({ verlopen: true, verloopt: null }, nu), true)
+    assert.equal(delingVerlopen({ verlopen: false, verloopt: "2026-01-01" }, nu), false)
+    assert.equal(delingVerlopen({ verloopt: "2026-10-22 23:59:59" }, nu), true)
+    assert.equal(delingVerlopen({ verlopen: null, verloopt: "2026-10-23" }, nu), false)
+  })
+  it("noemt wachtwoord en maker als de server ze geeft", () => {
+    assert.equal(delingDetails({ beveiligd: true, gemaakt_door: "a@x.nl", gemaakt_door_naam: "Anna" }), "met wachtwoord · door Anna")
+    assert.equal(delingDetails({ beveiligd: false, gemaakt_door: "a@x.nl" }), "door a@x.nl")
+    assert.equal(delingDetails({}), "")
+  })
+  it("beschrijft een suggestie met naam en rol", () => {
+    assert.equal(collegaTekst({ gebruiker: "p@x.nl", naam: "Piet", lid_als: "lezer" }), "Piet · lid: kan bekijken")
+    assert.equal(collegaTekst({ gebruiker: "p@x.nl", naam: "p@x.nl", lid_als: null }), "")
   })
 })
