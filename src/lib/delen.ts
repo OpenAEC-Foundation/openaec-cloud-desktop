@@ -2,7 +2,7 @@
 // deelcommands uitlezen. Zonder Tauri, zodat `npm test` ze kan testen.
 
 export type Soort = "link" | "gebruiker"
-export type Rechten = "lezen" | "schrijven" | "uploaden"
+export type Rechten = "lezen" | "schrijven" | "beheren" | "uploaden"
 
 export interface Keuze {
   waarde: Rechten
@@ -12,14 +12,38 @@ export interface Keuze {
 /** Rechten van een deling zoals het venster ze noemt. */
 export const rechtenTekst = (soort: string, rechten: string) => {
   if (soort === "link") return rechten === "uploaden" ? "Bestanden opvragen" : "Kan bekijken"
+  if (rechten === "beheren") return "Kan beheren"
   return rechten === "schrijven" ? "Kan bewerken" : "Kan bekijken"
 }
+
+/** Volgorde van de rechten van een collega: lezen < schrijven < beheren. */
+export const rang = (rechten: string | null | undefined) => ({ lezen: 1, schrijven: 2, beheren: 3 })[rechten ?? ""] ?? 0
 
 /** Keuzes bij delen met een collega. */
 export const collegaRechten: Keuze[] = [
   { waarde: "lezen", tekst: "Kan bekijken" },
   { waarde: "schrijven", tekst: "Kan bewerken" },
+  { waarde: "beheren", tekst: "Kan beheren (mag ook delen)" },
 ]
+
+/** De keuzes die iemand met `eigen` rechten mag geven: nooit meer dan hij zelf heeft. `eigen` null = beheerder van de
+ * ruimte of de omgeving (alles). */
+export const toegestaneRechten = (eigen: string | null | undefined): Keuze[] =>
+  eigen == null ? collegaRechten : collegaRechten.filter((k) => rang(k.waarde) <= rang(eigen))
+
+/** Regel onder een item in "Gedeeld met mij": wie het deelde, wat je kunt en tot wanneer (en of je ook lid bent). */
+export const gedeeldMeta = (
+  g: { gedeeld_door?: string | null; gedeeld_door_naam?: string | null; rechten: string; verloopt?: string | null; al_lid?: boolean; rol?: string | null },
+  nu = new Date(),
+) =>
+  [
+    g.gedeeld_door_naam || g.gedeeld_door ? `door ${g.gedeeld_door_naam || g.gedeeld_door}` : "",
+    rechtenTekst("gebruiker", g.rechten),
+    g.verloopt ? vervaldatumTekst(g.verloopt, nu) : "",
+    g.al_lid && g.rol ? `ook lid: ${rolTekst(g.rol).toLowerCase()}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
 
 /** Keuzes voor een link: bij een map ook bestanden opvragen (uploadlink). */
 export const linkRechten = (isMap: boolean): Keuze[] => [

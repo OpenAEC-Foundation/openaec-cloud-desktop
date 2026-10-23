@@ -15,6 +15,46 @@ pub struct Koppeling {
     /// Mappen (paden met '/') die niet op deze computer komen (mapselectie).
     #[serde(default)]
     pub uitgesloten: Vec<String>,
+    /// Een map die met mij gedeeld is (geen hele ruimte): de deling, de gedeelde map (de wortel), de rechten
+    /// (`lezen`, `schrijven` of `beheren`) en wie hem deelde. `ruimte_naam` is dan de naam van de map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deling: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wortel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rechten: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gedeeld_door: Option<String>,
+}
+
+impl Koppeling {
+    /// Een koppeling aan een hele ruimte.
+    pub fn ruimte(ruimte: String, ruimte_naam: String, lokaal: String) -> Self {
+        Self { ruimte, ruimte_naam, lokaal, uitgesloten: Vec::new(), deling: None, wortel: None, rechten: None, gedeeld_door: None }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn een_oude_koppeling_is_een_hele_ruimte() {
+        let k: Koppeling = serde_json::from_str(r#"{"ruimte":"R1","ruimte_naam":"Project","lokaal":"C:\\P"}"#).unwrap();
+        assert!(k.deling.is_none() && k.rechten.is_none());
+        // En zo blijft hij ook bewaard: zonder de velden van een deling.
+        assert!(!serde_json::to_string(&k).unwrap().contains("deling"));
+    }
+
+    #[test]
+    fn gedeelde_koppeling_met_rechten() {
+        let mut k = Koppeling::ruimte("R1".into(), "Tekeningen".into(), "C:\\T".into());
+        k.deling = Some("D1".into());
+        k.wortel = Some("M1".into());
+        k.rechten = Some("beheren".into());
+        let terug: Koppeling = serde_json::from_str(&serde_json::to_string(&k).unwrap()).unwrap();
+        assert_eq!((terug.deling.as_deref(), terug.wortel.as_deref()), (Some("D1"), Some("M1")));
+    }
 }
 
 /// Hoe de sync werkt (voor alle gekoppelde mappen).

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use openaec_sync::bewaking::{nieuwe_wijzigingen, telt_mee};
+use openaec_sync::bewaking::{nieuwe_wijzigingen_in, telt_mee};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
@@ -104,11 +104,19 @@ pub fn start(app: AppHandle) {
                     } else if let Ok(client) = client(&state).await {
                         for k in &koppelingen {
                             let sinds = cursors.get(&k.lokaal).copied().unwrap_or(0);
-                            if let Ok((iets, cursor)) = nieuwe_wijzigingen(&client, &k.ruimte, sinds).await {
-                                if iets {
+                            match nieuwe_wijzigingen_in(&client, &k.ruimte, k.deling.as_deref(), sinds).await {
+                                Ok((iets, cursor)) => {
+                                    if iets {
+                                        te_doen.insert(k.lokaal.clone());
+                                    }
+                                    cursors.insert(k.lokaal.clone(), cursor);
+                                }
+                                // Een gedeelde map die ingetrokken of verlopen is: meteen een ronde, die stopt de
+                                // koppeling netjes (met een melding).
+                                Err(f) if k.deling.is_some() && f.deling_gestopt().is_some() => {
                                     te_doen.insert(k.lokaal.clone());
                                 }
-                                cursors.insert(k.lokaal.clone(), cursor);
+                                Err(_) => {}
                             }
                         }
                     }

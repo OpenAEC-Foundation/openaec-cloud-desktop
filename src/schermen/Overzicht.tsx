@@ -1,6 +1,7 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { api, type Koppeling, type KoppelOvergeslagen, type MapRapport } from "../lib/api"
 import OvergeslagenLijst from "../OvergeslagenLijst"
+import { rechtenTekst } from "../lib/delen"
 import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
   bezig, doe, koppelingen, koppelStatus, quotum, rapporten, ruimtes, setKoppelingen, setMelding, setScherm, stand,
@@ -63,7 +64,7 @@ export default function Overzicht() {
 
   const kiesMappen = (k: Koppeling) =>
     doe("Mappen ophalen", async () => {
-      setAlleMappen(await api.mappenVan(k.ruimte))
+      setAlleMappen(await api.mappenVan(k.ruimte, k.lokaal))
       setUit(k.uitgesloten ?? [])
       setSelectieVoor(k)
       setMelding("")
@@ -85,7 +86,13 @@ export default function Overzicht() {
       setMelding(uit().length ? `${uit().length} map(pen) niet meer op deze computer; ze blijven op de server` : "Alle mappen staan op deze computer")
     })
 
-  const soortVan = (k: Koppeling) => soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
+  // Een gedeelde map: wie hem deelde en wat je kunt, in plaats van de soort ruimte.
+  const soortVan = (k: Koppeling) =>
+    k.deling
+      ? ["gedeeld", k.gedeeld_door ? `door ${k.gedeeld_door}` : "", rechtenTekst("gebruiker", k.rechten ?? "lezen").toLowerCase()]
+          .filter(Boolean)
+          .join(" · ")
+      : soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
 
   return (
     <div class="scherm">

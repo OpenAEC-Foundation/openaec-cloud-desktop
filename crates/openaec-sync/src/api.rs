@@ -179,6 +179,20 @@ pub struct DelingInfo {
     pub gemaakt_door_naam: Option<String>,
 }
 
+/// Wat de ingelogde gebruiker met een map of bestand mag (`toegang`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Toegang {
+    /// Hoogste recht hier: `lezen`, `schrijven` of `beheren` (uit de rol in de ruimte of een deling).
+    #[serde(default)]
+    pub rechten: Option<String>,
+    /// Mag hier delen, en de delingen hier wijzigen en intrekken.
+    #[serde(default)]
+    pub mag_delen: bool,
+    /// Het hoogste recht dat aan een ander gegeven mag worden (None: niet delen).
+    #[serde(default)]
+    pub max_rechten: Option<String>,
+}
+
 /// Een collega om mee te delen (`collegas`): een gebruiker van de omgeving, met zijn rol in de ruimte of None.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Collega {
@@ -703,6 +717,17 @@ impl Client {
     /// Een deling intrekken: de link werkt niet meer, of de gebruiker verliest de extra rechten.
     pub async fn trek_in(&self, deling: &str) -> Result<(), Fout> {
         self.roep_leeg("trek_in", json!({"deling": deling})).await
+    }
+
+    /// De rechten van een deling met een collega wijzigen (`lezen`, `schrijven` of `beheren`); nooit meer dan je zelf
+    /// hebt (de server weigert met `meer_dan_eigen_recht`).
+    pub async fn wijzig_deling(&self, deling: &str, rechten: &str) -> Result<(), Fout> {
+        self.roep::<Value>("wijzig_deling", json!({"deling": deling, "rechten": rechten})).await.map(|_| ())
+    }
+
+    /// Wat ik met een map of bestand mag: mijn recht, of ik mag delen en het hoogste recht dat ik mag geven.
+    pub async fn toegang(&self, doctype: &str, doel: &str) -> Result<Toegang, Fout> {
+        self.roep("toegang", json!({"doel_doctype": doctype, "doel": doel})).await
     }
 
     /// De leden van een ruimte, via het documentadres van Frappe (`/api/resource/Ruimte/<id>`): elk lid mag de

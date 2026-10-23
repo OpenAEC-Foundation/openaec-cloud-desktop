@@ -4,7 +4,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   collegaTekst, controleerVervaldatum, datumTekst, datumWaarde, delingDetails, delingVerlopen, geldigEmail, isVerlopen, leesFout,
-  linkRechten, rechtenTekst, rolTekst, vervaldatumTekst,
+  gedeeldMeta, linkRechten, rang, rechtenTekst, rolTekst, toegestaneRechten, vervaldatumTekst,
 } from "./delen.ts"
 
 const nu = new Date(2026, 9, 23, 14, 30)
@@ -79,5 +79,27 @@ describe("velden van de server", () => {
   it("beschrijft een suggestie met naam en rol", () => {
     assert.equal(collegaTekst({ gebruiker: "p@x.nl", naam: "Piet", lid_als: "lezer" }), "Piet · lid: kan bekijken")
     assert.equal(collegaTekst({ gebruiker: "p@x.nl", naam: "p@x.nl", lid_als: null }), "")
+  })
+})
+
+describe("beheren en gedeeld met mij", () => {
+  it("noemt beheren en houdt de volgorde lezen < schrijven < beheren", () => {
+    assert.equal(rechtenTekst("gebruiker", "beheren"), "Kan beheren")
+    assert.ok(rang("lezen") < rang("schrijven") && rang("schrijven") < rang("beheren"))
+    assert.equal(rang(null), 0)
+  })
+  it("biedt nooit meer dan je zelf mag geven", () => {
+    assert.deepEqual(toegestaneRechten("schrijven").map((k) => k.waarde), ["lezen", "schrijven"])
+    assert.deepEqual(toegestaneRechten("beheren").map((k) => k.waarde), ["lezen", "schrijven", "beheren"])
+    assert.deepEqual(toegestaneRechten("lezen").map((k) => k.waarde), ["lezen"])
+    assert.equal(toegestaneRechten("beheren")[2].tekst, "Kan beheren (mag ook delen)")
+  })
+  it("vat een gedeeld item samen: wie, rol, vervaldatum en lidmaatschap", () => {
+    assert.equal(
+      gedeeldMeta({ gedeeld_door: "anna@x.nl", gedeeld_door_naam: "Anna Bakker", rechten: "schrijven", verloopt: "2026-11-22 23:59:59" }, nu),
+      "door Anna Bakker · Kan bewerken · Geldig tot 22 nov 2026",
+    )
+    assert.equal(gedeeldMeta({ gedeeld_door: "anna@x.nl", rechten: "beheren", al_lid: true, rol: "lezer" }, nu), "door anna@x.nl · Kan beheren · ook lid: kan bekijken")
+    assert.equal(gedeeldMeta({ rechten: "lezen" }, nu), "Kan bekijken")
   })
 })

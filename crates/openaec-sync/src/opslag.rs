@@ -66,10 +66,10 @@ impl ClientOpslag {
     }
 
     /// Een map die met mij gedeeld is, als bovenste map: `deling` (het id van de deling), `map` (het id van de
-    /// gedeelde map) en of de deling alleen om te bekijken is (`rechten` = `lezen`).
+    /// gedeelde map) en de rechten: alleen bij `schrijven` of `beheren` gaat er iets naar de server.
     pub fn gedeeld(client: Client, ruimte: &str, deling: &str, map: &str, rechten: &str) -> Self {
         let mut opslag = Self::new(client, ruimte);
-        opslag.gedeeld = Some(Wortel { deling: deling.to_string(), map: map.to_string(), alleen_lezen: rechten != "schrijven" });
+        opslag.gedeeld = Some(Wortel { deling: deling.to_string(), map: map.to_string(), alleen_lezen: !matches!(rechten, "schrijven" | "beheren") });
         opslag
     }
 
