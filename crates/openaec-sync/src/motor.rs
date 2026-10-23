@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::api::Batchgrenzen;
 use crate::namen::{self, Negeerlijst};
+// Mapselectie: één filter voor uploaden en downloaden (zie `selectie`).
+use crate::selectie::uitgesloten as uitgesloten_pad;
 use crate::voortgang::{Actie, Gebeurtenis, Richting, Stil, Teller, Waarnemer};
 use crate::{Fout, MAX_GELIJKTIJDIG, STANDAARD_GELIJKTIJDIG};
 
@@ -314,6 +316,35 @@ pub fn bekende_paden(root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Een bestand in de toestand van de laatste ronde: het pad hier (met '/'), het bestand-id en de versie op de server,
+/// en grootte en wijzigingstijd zoals ze hier waren.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BekendBestand {
+    pub pad: String,
+    pub bestand: String,
+    pub versie: u64,
+    pub grootte: u64,
+    pub mtime_ns: u128,
+}
+
+/// Alle bestanden in de toestand van de laatste ronde (leeg als de map nog nooit is gesynchroniseerd). Leest alleen
+/// het toestandsbestand; voor de Verkenner (vergrendelingen bij een bestand-id zoeken, en zien of een gebeurtenis van
+/// de bestandswachter een echte wijziging is).
+pub fn bekende_bestanden(root: &Path) -> Vec<BekendBestand> {
+    let toestand = laad(root);
+    toestand
+        .bestanden
+        .iter()
+        .map(|(sleutel, b)| BekendBestand {
+            pad: toestand.hier(sleutel),
+            bestand: b.bestand.clone(),
+            versie: b.versie,
+            grootte: b.grootte,
+            mtime_ns: b.mtime_ns,
+        })
+        .collect()
+}
+
 /// De overgeslagen bestanden van de laatste ronde (leeg als er geen waren of de map nog nooit is gesynchroniseerd).
 pub fn overgeslagen(root: &Path) -> Vec<Overgeslagen> {
     laad(root).overgeslagen
@@ -352,12 +383,6 @@ pub async fn sync_eenmalig<O: Opslag>(opslag: &O, root: &Path) -> Result<Rapport
     sync_met_selectie(opslag, root, &[]).await
 }
 
-/// Ligt `pad` in een van de uitgesloten mappen (hele mapnamen, met '/')?
-fn uitgesloten_pad(pad: &str, uitgesloten: &[String]) -> bool {
-    uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()).any(|u| {
-        pad == u || pad.strip_prefix(u).is_some_and(|rest| rest.starts_with('/'))
-    })
-}
 
 /// Lege mappen opruimen onder `map` (van diep naar ondiep); niet-lege blijven staan.
 fn ruim_lege_mappen_op(map: &Path) {
