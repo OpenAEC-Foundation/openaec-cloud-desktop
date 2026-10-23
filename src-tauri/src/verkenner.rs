@@ -1,16 +1,19 @@
 //! Rechtermuismenu in de Verkenner (Windows): een submenu "OpenAEC Desktop App" op bestanden en mappen, alleen binnen
 //! de gekoppelde mappen (AppliesTo). Staat in HKCU, dus zonder beheerdersrechten; wordt bij het starten en na elke
 //! (ont)koppeling opnieuw geschreven. Een keuze start de app met `--actie <naam> "<pad>"`; draait de app al, dan
-//! stuurt de single-instance-plugin de opdracht door.
+//! stuurt de single-instance-plugin de opdracht door. "Delen…" staat bovenaan en opent het deelvenster; "Deellink
+//! kopiëren" blijft als snelle optie (leeslink meteen op het klembord).
 
-pub const BESTANDSACTIES: [(&str, &str); 5] = [
+pub const BESTANDSACTIES: [(&str, &str); 6] = [
+    ("delen", "Delen…"),
     ("deel", "Deellink kopiëren"),
     ("verzend", "Verzenden…"),
     ("vergrendel", "Vergrendelen (ik bewerk dit)"),
     ("ontgrendel", "Ontgrendelen"),
     ("versies", "Versies bekijken"),
 ];
-pub const MAPACTIES: [(&str, &str); 3] = [
+pub const MAPACTIES: [(&str, &str); 4] = [
+    ("delen", "Delen…"),
     ("deel", "Deellink kopiëren"),
     ("opvragen", "Bestanden opvragen (uploadlink)"),
     ("verzend", "Verzenden…"),
@@ -62,6 +65,16 @@ pub fn registreer(_mappen: &[String]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Welk venster een actie opent: "delen" het deelvenster, "verzend" en "versies" het hoofdvenster (deelscherm);
+/// de rest (deellink, uploadlink, vergrendelen) gebeurt op de achtergrond met een melding.
+pub fn venster_voor(actie: &str) -> Option<&'static str> {
+    match actie {
+        "delen" => Some("delen"),
+        "verzend" | "versies" => Some("main"),
+        _ => None,
+    }
+}
+
 /// `--actie <naam> <pad>` uit de opdrachtregel.
 pub fn actie_uit(argv: &[String]) -> Option<(String, String)> {
     let i = argv.iter().position(|a| a == "--actie")?;
@@ -79,5 +92,31 @@ mod tests {
         let argv: Vec<String> = ["app.exe", "--actie", "deel", "C:\\Werk\\a.pdf"].iter().map(|s| s.to_string()).collect();
         assert_eq!(actie_uit(&argv), Some(("deel".into(), "C:\\Werk\\a.pdf".into())));
         assert_eq!(actie_uit(&["app.exe".to_string()]), None);
+    }
+
+    #[test]
+    fn delen_staat_bovenaan_en_deellink_blijft() {
+        for acties in [&BESTANDSACTIES[..], &MAPACTIES[..]] {
+            assert_eq!(acties[0], ("delen", "Delen…"));
+            assert!(acties.contains(&("deel", "Deellink kopiëren")));
+            // Elke actie maar één keer: de sleutelnamen in het register (`1delen`, `2deel`, …) blijven uniek.
+            let mut namen: Vec<_> = acties.iter().map(|(a, _)| *a).collect();
+            namen.sort();
+            namen.dedup();
+            assert_eq!(namen.len(), acties.len());
+        }
+        assert!(MAPACTIES.iter().any(|(a, _)| *a == "opvragen"));
+        assert!(!BESTANDSACTIES.iter().any(|(a, _)| *a == "opvragen"));
+    }
+
+    #[test]
+    fn actie_delen_opent_het_deelvenster() {
+        let argv: Vec<String> = ["app.exe", "--actie", "delen", "C:\\Werk\\Tekeningen"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(actie_uit(&argv), Some(("delen".into(), "C:\\Werk\\Tekeningen".into())));
+        assert_eq!(venster_voor("delen"), Some("delen"));
+        assert_eq!(venster_voor("verzend"), Some("main"));
+        assert_eq!(venster_voor("versies"), Some("main"));
+        assert_eq!(venster_voor("deel"), None);
+        assert_eq!(venster_voor("opvragen"), None);
     }
 }
