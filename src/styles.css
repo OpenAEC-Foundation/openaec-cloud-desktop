@@ -64,6 +64,7 @@ input {
   border: 1px solid var(--lijn-hover); border-radius: 6px; background: var(--wit); color: var(--inkt);
 }
 input:focus { outline: 2px solid var(--amber); outline-offset: -1px; border-color: var(--amber); }
+label.smal input, label.smal select { width: auto; min-width: 96px; }
 label.vinkje { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; color: var(--inkt); margin: 0 0 8px; cursor: pointer; }
 label.vinkje input { width: auto; margin: 0; accent-color: var(--amber); }
 

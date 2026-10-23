@@ -1,8 +1,7 @@
 //! Blokken en blokhashes (ontwerp §5): vaste blokgrootte per bestand, BLAKE3 per blok.
 
+use std::io::Read;
 use std::path::Path;
-
-use tokio::io::AsyncReadExt;
 
 /// Standaard blokgrootte: 8 MiB (ook de partgrootte van multipart-uploads).
 pub const BLOK: u64 = 8 * 1024 * 1024;
@@ -34,15 +33,22 @@ pub fn hash_bytes(data: &[u8], blok: u64) -> Vec<String> {
     data.chunks(blok as usize).map(hash).collect()
 }
 
-/// Hashes per blok van een bestand, zonder het hele bestand in het geheugen te laden.
+/// Hashes per blok van een bestand, zonder het hele bestand in het geheugen te laden. Het lezen en rekenen gebeurt op
+/// een aparte thread (`spawn_blocking`), zodat parallelle overdrachten de async-runtime niet ophouden.
 pub async fn hash_bestand(pad: &Path, blok: u64) -> std::io::Result<Vec<String>> {
-    let mut bestand = tokio::fs::File::open(pad).await?;
+    let pad = pad.to_path_buf();
+    tokio::task::spawn_blocking(move || hash_bestand_nu(&pad, blok)).await.map_err(std::io::Error::other)?
+}
+
+/// Als [`hash_bestand`], maar op de huidige thread.
+pub fn hash_bestand_nu(pad: &Path, blok: u64) -> std::io::Result<Vec<String>> {
+    let mut bestand = std::fs::File::open(pad)?;
     let mut buffer = vec![0u8; blok as usize];
     let mut hashes = Vec::new();
     loop {
         let mut gevuld = 0;
         while gevuld < buffer.len() {
-            let gelezen = bestand.read(&mut buffer[gevuld..]).await?;
+            let gelezen = bestand.read(&mut buffer[gevuld..])?;
             if gelezen == 0 {
                 break;
             }

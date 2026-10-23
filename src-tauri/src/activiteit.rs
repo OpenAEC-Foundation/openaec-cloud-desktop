@@ -364,15 +364,36 @@ pub fn zet_pauze(app: &AppHandle, aan: bool) {
     meld(app);
 }
 
-/// Waarnemer voor één gekoppelde map tijdens een ronde.
+/// Hoogstens zo vaak de stand naar de vensters tijdens een ronde: met veel kleine bestanden tegelijk komen er
+/// honderden meldingen per seconde binnen. Het einde van de ronde komt altijd door (zie `einde`).
+const MELDINTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Waarnemer voor één gekoppelde map tijdens een ronde. Meldingen van parallelle overdrachten komen hier door elkaar
+/// binnen; de tellers in [`Activiteit`] staan achter een slot en worden per bestand opgeteld.
 pub struct Koppelwaarnemer {
-    pub app: AppHandle,
-    pub lokaal: String,
+    app: AppHandle,
+    lokaal: String,
+    vorige: Mutex<Option<Instant>>,
+}
+
+impl Koppelwaarnemer {
+    pub fn new(app: AppHandle, lokaal: String) -> Self {
+        Self { app, lokaal, vorige: Mutex::new(None) }
+    }
 }
 
 impl Waarnemer for Koppelwaarnemer {
     fn melding(&self, g: Gebeurtenis) {
+        let altijd = matches!(g, Gebeurtenis::Ronde { .. });
         self.app.state::<AppState>().activiteit.verwerk(&self.lokaal, g);
+        let nu = Instant::now();
+        {
+            let mut vorige = self.vorige.lock().unwrap();
+            if !altijd && vorige.is_some_and(|v| nu.duration_since(v) < MELDINTERVAL) {
+                return;
+            }
+            *vorige = Some(nu);
+        }
         meld(&self.app);
     }
 

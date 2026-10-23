@@ -97,3 +97,14 @@ async fn verwijderen_accepteert_een_leeg_antwoord() {
     let b = openaec_sync::motor::OpslagBestand { pad: "a".into(), bestand: "B1".into(), versie: 1, grootte: 1 };
     opslag.verwijder(&b).await.unwrap();
 }
+
+/// De app draait een ronde als losse taak (`tokio::spawn`): de future van een ronde met de echte opslag moet `Send`
+/// zijn, ook nu de overdrachten parallel lopen.
+#[test]
+fn een_ronde_met_de_echte_opslag_is_send() {
+    fn moet_send<T: Send>(_: &T) {}
+    let opslag = ClientOpslag::new(Client::new("http://localhost", "token a:b"), "R1");
+    let (w, opties) = (openaec_sync::voortgang::Stil, openaec_sync::motor::Opties::default());
+    let ronde = openaec_sync::motor::sync_met_opties(&opslag, std::path::Path::new("."), &[], &w, &opties);
+    moet_send(&ronde);
+}

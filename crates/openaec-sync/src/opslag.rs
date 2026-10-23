@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::motor::{Opslag, OpslagBestand, Upload, Voortgang};
-use crate::{download_met_voortgang, upload_met_voortgang, Client, Fout};
+use crate::{download_met_rem, rem, upload_met_rem, Client, Fout, Rem, STANDAARD_GELIJKTIJDIG};
 
 pub struct ClientOpslag {
     client: Client,
@@ -15,6 +15,8 @@ pub struct ClientOpslag {
     /// Mappen één voor één aanmaken: parallelle uploads (importeren) die dezelfde ontbrekende map nodig hebben,
     /// maken hem anders allemaal tegelijk aan.
     aanmaken: tokio::sync::Mutex<()>,
+    /// Gedeeld door alle overdrachten van deze opslag: zoveel verzoeken met bestandsinhoud tegelijk.
+    rem: Arc<Rem>,
 }
 
 fn splits(pad: &str) -> (&str, &str) {
@@ -27,7 +29,19 @@ fn samen(map: &str, naam: &str) -> String {
 
 impl ClientOpslag {
     pub fn new(client: Client, ruimte: &str) -> Self {
-        Self { client, ruimte: ruimte.to_string(), mappen: Mutex::new(HashMap::new()), aanmaken: tokio::sync::Mutex::new(()) }
+        Self {
+            client,
+            ruimte: ruimte.to_string(),
+            mappen: Mutex::new(HashMap::new()),
+            aanmaken: tokio::sync::Mutex::new(()),
+            rem: Arc::new(rem(STANDAARD_GELIJKTIJDIG)),
+        }
+    }
+
+    /// Zoveel delen en blokken tegelijk over de lijn, over alle bestanden samen (1..=32; standaard 8).
+    pub fn met_gelijktijdig(mut self, n: usize) -> Self {
+        self.rem = Arc::new(rem(n));
+        self
     }
 
     pub fn client(&self) -> &Client {
@@ -125,7 +139,7 @@ impl Opslag for ClientOpslag {
     ) -> Result<Upload, Fout> {
         let (mappad, naam) = splits(pad);
         let map = self.zorg_voor_map(mappad).await?;
-        let r = upload_met_voortgang(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis_versie, voortgang).await?;
+        let r = upload_met_rem(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis_versie, voortgang, &self.rem).await?;
         Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict })
     }
 
@@ -133,10 +147,20 @@ impl Opslag for ClientOpslag {
         if let Some(map) = lokaal.parent() {
             tokio::fs::create_dir_all(map).await?;
         }
-        download_met_voortgang(&self.client, &bestand.bestand, lokaal, voortgang).await
+        download_met_rem(&self.client, &bestand.bestand, lokaal, voortgang, &self.rem).await
     }
 
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
         self.client.verwijder(&bestand.bestand).await
+    }
+
+    async fn bereid_mappen(&self, mappen: &[String]) -> Result<(), Fout> {
+        // Ondiep voor diep: een map komt pas als zijn bovenliggende map er is (zorg_voor_map loopt het pad af).
+        let mut mappen: Vec<&String> = mappen.iter().filter(|m| !m.is_empty()).collect();
+        mappen.sort_by_key(|m| (m.matches('/').count(), m.as_str()));
+        for map in mappen {
+            self.zorg_voor_map(map).await?;
+        }
+        Ok(())
     }
 }

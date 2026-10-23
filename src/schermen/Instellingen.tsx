@@ -1,5 +1,5 @@
 import { createSignal, onMount, Show } from "solid-js"
-import { api } from "../lib/api"
+import { api, type SyncInstellingen } from "../lib/api"
 import {
   basis, bezig, doe, koppelingen, setMelding, setRuimtes, setRuimtesOpgehaald, setScherm, setVerbonden, stand,
 } from "../lib/winkel"
@@ -9,11 +9,22 @@ export default function Instellingen() {
   const [versie, setVersie] = createSignal("")
   const [update, setUpdate] = createSignal<"" | "zoeken" | "actueel" | string>("")
   const [updateFout, setUpdateFout] = createSignal("")
+  const [sync, setSync] = createSignal<SyncInstellingen | null>(null)
 
   onMount(() => {
     api.autostart().then(setAutostart).catch(() => {})
     api.versie().then(setVersie).catch(() => {})
+    api.syncInstellingen().then(setSync).catch(() => {})
   })
+
+  const zetSync = (wijziging: Partial<SyncInstellingen>) => {
+    const huidig = sync()
+    if (!huidig) return
+    api
+      .zetSyncInstellingen({ ...huidig, ...wijziging })
+      .then(setSync)
+      .catch((f) => setMelding("Instellingen opslaan: " + f))
+  }
 
   const controleer = async () => {
     setUpdate("zoeken")
@@ -70,6 +81,28 @@ export default function Instellingen() {
         </div>
         <p class="hint">Na verbreken blijven je gekoppelde mappen en bestanden op deze computer staan; ze synchroniseren weer als je opnieuw inlogt.</p>
       </section>
+
+      <Show when={sync()}>
+        {(s) => (
+          <section class="kaart">
+            <h2>Synchroniseren</h2>
+            <label class="smal">
+              Overdrachten tegelijk
+              <input
+                type="number"
+                min="1"
+                max="32"
+                value={s().gelijktijdig}
+                onChange={(e) => zetSync({ gelijktijdig: Math.min(32, Math.max(1, Math.round(Number(e.currentTarget.value) || 8))) })}
+              />
+            </label>
+            <p class="hint">
+              Zoveel bestanden (of delen van een groot bestand) gaan tegelijk over de lijn; standaard 8. Hoger helpt bij veel kleine
+              bestanden op een snelle verbinding, lager bij een trage of gedeelde verbinding. Geldt vanaf de volgende ronde.
+            </p>
+          </section>
+        )}
+      </Show>
 
       <section class="kaart">
         <h2>Opstarten</h2>

@@ -113,6 +113,12 @@ export interface RondeStand {
   bespaard: number
 }
 
+/** Instellingen van de sync, voor alle gekoppelde mappen. */
+export interface SyncInstellingen {
+  /** Overdrachten tegelijk (1–32). */
+  gelijktijdig: number
+}
+
 export interface Quotum {
   gebruikt_bytes: number
   limiet_bytes: number | null
@@ -186,6 +192,8 @@ export const api = {
   opVensterOpen: (f: () => void) => listen("venster-open", () => f()),
   quotum: () => invoke<Quotum>("quotum"),
   opQuotum: (f: (q: Quotum) => void) => listen<Quotum>("quotum", (e) => f(e.payload)),
+  syncInstellingen: () => invoke<SyncInstellingen>("sync_instellingen"),
+  zetSyncInstellingen: (sync: SyncInstellingen) => invoke<SyncInstellingen>("zet_sync_instellingen", { sync }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>

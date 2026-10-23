@@ -13,7 +13,9 @@ pub mod voortgang;
 
 use std::io::SeekFrom;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures_util::stream::{self, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub use api::{Client, UploadResultaat};
@@ -31,6 +33,24 @@ pub enum Fout {
     Server { status: u16, tekst: String },
     #[error("controle mislukt: {0}")]
     Controle(String),
+}
+
+/// Standaard aantal overdrachten tegelijk (bestanden, en delen van grote bestanden samen).
+pub const STANDAARD_GELIJKTIJDIG: usize = 8;
+/// Hoogste instelbare aantal overdrachten tegelijk.
+pub const MAX_GELIJKTIJDIG: usize = 32;
+
+/// Begrensd aantal verzoeken tegelijk naar de opslag: elk deel van een upload en elk blok van een download neemt
+/// één plek, zodat de delen van een groot bestand binnen dezelfde limiet blijven als de kleine bestanden.
+pub type Rem = tokio::sync::Semaphore;
+
+/// Een rem met `n` plekken (begrensd op 1..=[`MAX_GELIJKTIJDIG`]).
+pub fn rem(n: usize) -> Rem {
+    Rem::new(n.clamp(1, MAX_GELIJKTIJDIG))
+}
+
+async fn plek(rem: &Rem) -> Result<tokio::sync::SemaphorePermit<'_>, Fout> {
+    rem.acquire().await.map_err(|_| Fout::Controle("de overdracht is gestopt".into()))
 }
 
 async fn lees_stuk(pad: &Path, begin: u64, lengte: u64) -> std::io::Result<Vec<u8>> {
@@ -56,7 +76,8 @@ pub async fn upload_bestand(
 
 /// Als [`upload_bestand`]; `voortgang` krijgt (overgezet, totaal) in bytes, voor de delen die echt over de lijn
 /// gaan: eerst (0, totaal) zodra bekend is welke blokken de server hergebruikt, daarna na elk deel. Het verschil
-/// tussen de bestandsgrootte en `totaal` is wat blokhergebruik bespaart.
+/// tussen de bestandsgrootte en `totaal` is wat blokhergebruik bespaart. De delen gaan parallel
+/// ([`STANDAARD_GELIJKTIJDIG`] tegelijk).
 pub async fn upload_met_voortgang(
     client: &Client,
     ruimte: &str,
@@ -65,6 +86,22 @@ pub async fn upload_met_voortgang(
     pad: &Path,
     basis_versie: Option<u64>,
     voortgang: Voortgang<'_>,
+) -> Result<UploadResultaat, Fout> {
+    let rem = rem(STANDAARD_GELIJKTIJDIG);
+    upload_met_rem(client, ruimte, map, naam, pad, basis_versie, voortgang, &rem).await
+}
+
+/// Als [`upload_met_voortgang`], met een gedeelde [`Rem`]: elk deel wacht op een vrije plek.
+#[allow(clippy::too_many_arguments)]
+pub async fn upload_met_rem(
+    client: &Client,
+    ruimte: &str,
+    map: Option<&str>,
+    naam: &str,
+    pad: &Path,
+    basis_versie: Option<u64>,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
 ) -> Result<UploadResultaat, Fout> {
     let grootte = tokio::fs::metadata(pad).await?.len();
     let blok = blokgrootte(grootte);
@@ -78,28 +115,51 @@ pub async fn upload_met_voortgang(
         (begin, start.deelgrootte.min(grootte.saturating_sub(begin)))
     };
     let totaal: u64 = start.delen.iter().map(|d| lengte_van(d.nummer).1).sum();
-    let mut gedaan = 0u64;
     voortgang(0, totaal);
-    let mut etags = Vec::with_capacity(start.delen.len());
-    for deel in &start.delen {
-        let (begin, lengte) = lengte_van(deel.nummer);
-        let stuk = lees_stuk(pad, begin, lengte).await?;
-        let antwoord = client.http.put(&deel.url).body(stuk).send().await?;
-        if !antwoord.status().is_success() {
-            let status = antwoord.status().as_u16();
-            return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
-        }
-        let etag = antwoord
-            .headers()
-            .get("etag")
-            .and_then(|w| w.to_str().ok())
-            .ok_or_else(|| Fout::Controle(format!("geen ETag voor deel {}", deel.nummer)))?
-            .to_string();
-        etags.push(Etag { nummer: deel.nummer, etag });
+    // De futures eerst in een lijst (in plaats van een closure in de stroom): zo blijft de hele upload `Send`.
+    let delen: Vec<_> = start
+        .delen
+        .iter()
+        .map(|deel| {
+            let (begin, lengte) = lengte_van(deel.nummer);
+            upload_deel(client, &deel.url, deel.nummer, pad, begin, lengte, rem)
+        })
+        .collect();
+    let mut stroom = stream::iter(delen).buffer_unordered(MAX_GELIJKTIJDIG);
+    let (mut gedaan, mut etags) = (0u64, Vec::with_capacity(start.delen.len()));
+    while let Some(deel) = stroom.next().await {
+        let (etag, lengte) = deel?;
         gedaan += lengte;
         voortgang(gedaan, totaal);
+        etags.push(etag);
     }
     client.upload_klaar(&start.upload, &etags).await
+}
+
+/// Eén deel van een upload naar zijn ondertekende URL; geeft de ETag en het aantal bytes.
+async fn upload_deel(
+    client: &Client,
+    url: &str,
+    nummer: u64,
+    pad: &Path,
+    begin: u64,
+    lengte: u64,
+    rem: &Rem,
+) -> Result<(Etag, u64), Fout> {
+    let _plek = plek(rem).await?;
+    let stuk = lees_stuk(pad, begin, lengte).await?;
+    let antwoord = client.http.put(url).body(stuk).send().await?;
+    if !antwoord.status().is_success() {
+        let status = antwoord.status().as_u16();
+        return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
+    }
+    let etag = antwoord
+        .headers()
+        .get("etag")
+        .and_then(|w| w.to_str().ok())
+        .ok_or_else(|| Fout::Controle(format!("geen ETag voor deel {nummer}")))?
+        .to_string();
+    Ok((Etag { nummer, etag }, lengte))
 }
 
 /// Download de huidige versie naar `pad`. Bestaat het bestand al, dan worden alleen de blokken opgehaald die
@@ -110,8 +170,15 @@ pub async fn download_bestand(client: &Client, bestand: &str, pad: &Path) -> Res
 }
 
 /// Als [`download_bestand`]; `voortgang` krijgt (overgezet, totaal) in bytes, voor de blokken die echt over de lijn
-/// gaan: eerst (0, totaal) zodra bekend is welke blokken lokaal al kloppen, daarna tijdens het ophalen.
+/// gaan: eerst (0, totaal) zodra bekend is welke blokken lokaal al kloppen, daarna tijdens het ophalen. Blokken
+/// komen parallel binnen ([`STANDAARD_GELIJKTIJDIG`] tegelijk) en worden op volgorde weggeschreven.
 pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
+    let rem = rem(STANDAARD_GELIJKTIJDIG);
+    download_met_rem(client, bestand, pad, voortgang, &rem).await
+}
+
+/// Als [`download_met_voortgang`], met een gedeelde [`Rem`]: elk blok dat over de lijn moet, wacht op een vrije plek.
+pub async fn download_met_rem(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>, rem: &Rem) -> Result<(), Fout> {
     let info = client.blokken(bestand).await?;
     let link = client.download(bestand).await?;
     let blok = info.blokgrootte;
@@ -128,20 +195,67 @@ pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, 
     };
 
     let totaal: u64 = ophalen.iter().map(|&i| blok.min(info.grootte.saturating_sub(i as u64 * blok))).sum();
-    let mut gedaan = 0u64;
+    let gedaan = AtomicU64::new(0);
     voortgang(0, totaal);
+    let blokken: Vec<_> = (0..aantal)
+        .map(|index| {
+            let begin = index as u64 * blok;
+            let lengte = blok.min(info.grootte.saturating_sub(begin));
+            let bron = if ophalen.contains(&index) { Some(link.url.as_str()) } else { None };
+            download_blok(client, bron, pad, index, begin, lengte, rem, &gedaan, totaal, voortgang)
+        })
+        .collect();
+    // Op volgorde: zo kan elk blok direct achter het vorige in het tijdelijke bestand.
+    let mut blokken = stream::iter(blokken).buffered(MAX_GELIJKTIJDIG);
+
     let tijdelijk = pad.with_extension("openaec-download");
-    let mut uit = tokio::fs::File::create(&tijdelijk).await?;
-    for index in 0..aantal {
-        let begin = index as u64 * blok;
-        let lengte = blok.min(info.grootte.saturating_sub(begin));
-        if lengte == 0 {
-            continue;
+    let geschreven = async {
+        let mut uit = tokio::fs::File::create(&tijdelijk).await?;
+        while let Some(stuk) = blokken.next().await {
+            uit.write_all(&stuk?).await?;
         }
-        let stuk = if ophalen.contains(&index) {
+        uit.flush().await?;
+        Ok::<_, Fout>(())
+    }
+    .await;
+    if let Err(fout) = geschreven {
+        tokio::fs::remove_file(&tijdelijk).await.ok();
+        return Err(fout);
+    }
+
+    if let Some(verwacht) = &info.hashes {
+        if &hash_bestand(&tijdelijk, blok).await? != verwacht {
+            tokio::fs::remove_file(&tijdelijk).await.ok();
+            return Err(Fout::Controle("blokhashes van de download kloppen niet".into()));
+        }
+    }
+    tokio::fs::rename(&tijdelijk, pad).await?;
+    Ok(())
+}
+
+/// Eén blok van een download: met `bron` (de downloadlink) over de lijn, anders uit het lokale bestand `pad`.
+#[allow(clippy::too_many_arguments)]
+async fn download_blok(
+    client: &Client,
+    bron: Option<&str>,
+    pad: &Path,
+    index: usize,
+    begin: u64,
+    lengte: u64,
+    rem: &Rem,
+    gedaan: &AtomicU64,
+    totaal: u64,
+    voortgang: Voortgang<'_>,
+) -> Result<Vec<u8>, Fout> {
+    if lengte == 0 {
+        return Ok(Vec::new());
+    }
+    let stuk = match bron {
+        Some(url) => {
+            let _plek = plek(rem).await?;
             let mut antwoord = client
                 .http
-                .get(&link.url)
+                .get(url)
                 .header("Range", format!("bytes={}-{}", begin, begin + lengte - 1))
                 .send()
                 .await?;
@@ -152,28 +266,16 @@ pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, 
             // In stukjes binnenhalen, zodat de voortgang ook binnen een blok doorloopt.
             let mut stuk = Vec::with_capacity(lengte as usize);
             while let Some(brok) = antwoord.chunk().await? {
-                gedaan += brok.len() as u64;
+                let nu = gedaan.fetch_add(brok.len() as u64, Ordering::SeqCst) + brok.len() as u64;
                 stuk.extend_from_slice(&brok);
-                voortgang(gedaan.min(totaal), totaal);
+                voortgang(nu.min(totaal), totaal);
             }
             stuk
-        } else {
-            lees_stuk(pad, begin, lengte).await?
-        };
-        if stuk.len() as u64 != lengte {
-            return Err(Fout::Controle(format!("blok {index} heeft {} bytes, verwacht {lengte}", stuk.len())));
         }
-        uit.write_all(&stuk).await?;
+        None => lees_stuk(pad, begin, lengte).await?,
+    };
+    if stuk.len() as u64 != lengte {
+        return Err(Fout::Controle(format!("blok {index} heeft {} bytes, verwacht {lengte}", stuk.len())));
     }
-    uit.flush().await?;
-    drop(uit);
-
-    if let Some(verwacht) = &info.hashes {
-        if &hash_bestand(&tijdelijk, blok).await? != verwacht {
-            tokio::fs::remove_file(&tijdelijk).await.ok();
-            return Err(Fout::Controle("blokhashes van de download kloppen niet".into()));
-        }
-    }
-    tokio::fs::rename(&tijdelijk, pad).await?;
-    Ok(())
+    Ok(stuk)
 }

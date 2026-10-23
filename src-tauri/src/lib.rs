@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use openaec_sync::api::Ruimte;
-use openaec_sync::motor::{aantal_bekend, bekend_bestand, sync_met_voortgang, Rapport};
+use openaec_sync::motor::{aantal_bekend, bekend_bestand, sync_met_opties, Opties, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
 use openaec_sync::Client;
@@ -30,7 +30,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
-use instellingen::{Instellingen, Koppeling};
+use instellingen::{Instellingen, Koppeling, SyncInstellingen};
 
 struct AppState {
     instellingen: std::sync::Mutex<Instellingen>,
@@ -66,9 +66,15 @@ async fn autorisatie(basis: &str) -> Result<String, String> {
     Ok(nieuw.autorisatie())
 }
 
+/// Eén HTTP-client voor de hele app: verbindingen (en TLS) blijven tussen rondes en verzoeken open.
+fn http() -> reqwest::Client {
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    HTTP.get_or_init(openaec_sync::api::nieuwe_http).clone()
+}
+
 async fn client(state: &AppState) -> Result<Client, String> {
     let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
-    Ok(Client::new(&basis, &autorisatie(&basis).await?))
+    Ok(Client::met_http(&basis, &autorisatie(&basis).await?, http()))
 }
 
 fn onthoud_basis(state: &AppState, basis: String) -> Result<(), String> {
@@ -440,12 +446,16 @@ async fn sync_ronde(
     alleen: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<MapRapport>, String> {
     let client = client(state).await?;
-    let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
+    let (koppelingen, sync) = {
+        let inst = state.instellingen.lock().unwrap();
+        (inst.koppelingen.clone(), inst.sync.clone().begrensd())
+    };
+    let opties = Opties { gelijktijdig: sync.gelijktijdig };
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
-        let opslag = ClientOpslag::new(client.clone(), &k.ruimte);
-        let waarnemer = activiteit::Koppelwaarnemer { app: app.clone(), lokaal: k.lokaal.clone() };
-        let mut r = sync_met_voortgang(&opslag, Path::new(&k.lokaal), &k.uitgesloten, &waarnemer).await;
+        let opslag = ClientOpslag::new(client.clone(), &k.ruimte).met_gelijktijdig(sync.gelijktijdig);
+        let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
+        let mut r = sync_met_opties(&opslag, Path::new(&k.lokaal), &k.uitgesloten, &waarnemer, &opties).await;
         if let Ok(rapport) = &mut r {
             let lokaal = k.lokaal.clone();
             let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
@@ -460,6 +470,21 @@ async fn sync_ronde(
         });
     }
     Ok(uit)
+}
+
+/// Instellingen van de sync (aantal overdrachten tegelijk).
+#[tauri::command]
+fn sync_instellingen(state: tauri::State<'_, AppState>) -> SyncInstellingen {
+    state.instellingen.lock().unwrap().sync.clone().begrensd()
+}
+
+/// Instellingen van de sync wijzigen; gelden vanaf de volgende ronde.
+#[tauri::command]
+fn zet_sync_instellingen(state: tauri::State<'_, AppState>, sync: SyncInstellingen) -> Result<SyncInstellingen, String> {
+    let mut inst = state.instellingen.lock().unwrap();
+    inst.sync = sync.begrensd();
+    inst.bewaar().map_err(fout)?;
+    Ok(inst.sync.clone())
 }
 
 #[tauri::command]
@@ -765,6 +790,8 @@ pub fn run() {
             pauzeer,
             toon_hoofdvenster,
             quotum,
+            sync_instellingen,
+            zet_sync_instellingen,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,

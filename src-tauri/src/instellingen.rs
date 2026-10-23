@@ -17,11 +17,39 @@ pub struct Koppeling {
     pub uitgesloten: Vec<String>,
 }
 
+/// Hoe de sync werkt (voor alle gekoppelde mappen).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncInstellingen {
+    /// Zoveel overdrachten tegelijk (1–32; standaard 8).
+    #[serde(default = "standaard_gelijktijdig")]
+    pub gelijktijdig: usize,
+}
+
+fn standaard_gelijktijdig() -> usize {
+    openaec_sync::STANDAARD_GELIJKTIJDIG
+}
+
+impl Default for SyncInstellingen {
+    fn default() -> Self {
+        Self { gelijktijdig: standaard_gelijktijdig() }
+    }
+}
+
+impl SyncInstellingen {
+    /// Binnen de grenzen gebracht (een met de hand aangepast bestand kan er buiten liggen).
+    pub fn begrensd(mut self) -> Self {
+        self.gelijktijdig = self.gelijktijdig.clamp(1, openaec_sync::MAX_GELIJKTIJDIG);
+        self
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Instellingen {
     pub basis: Option<String>,
     #[serde(default)]
     pub koppelingen: Vec<Koppeling>,
+    #[serde(default)]
+    pub sync: SyncInstellingen,
 }
 
 fn bestand() -> PathBuf {

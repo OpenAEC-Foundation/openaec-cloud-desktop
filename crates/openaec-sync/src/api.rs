@@ -170,13 +170,27 @@ struct Antwoord<T> {
     message: T,
 }
 
+/// HTTP-client voor de opslag: verbindingen blijven open (keep-alive, genoeg per host voor parallelle overdrachten)
+/// en HTTP/2 wordt gebruikt als de server het aanbiedt. Eén client delen tussen [`Client`]s scheelt een nieuwe
+/// TLS-verbinding per ronde.
+pub fn nieuwe_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .pool_max_idle_per_host(crate::MAX_GELIJKTIJDIG * 2)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .tcp_nodelay(true)
+        .build()
+        .unwrap_or_default()
+}
+
 impl Client {
     pub fn new(basis_url: &str, autorisatie: &str) -> Self {
-        Self {
-            basis: basis_url.trim_end_matches('/').to_string(),
-            autorisatie: autorisatie.to_string(),
-            http: reqwest::Client::new(),
-        }
+        Self::met_http(basis_url, autorisatie, nieuwe_http())
+    }
+
+    /// Als [`Client::new`], met een bestaande (gedeelde) HTTP-client; zie [`nieuwe_http`].
+    pub fn met_http(basis_url: &str, autorisatie: &str, http: reqwest::Client) -> Self {
+        Self { basis: basis_url.trim_end_matches('/').to_string(), autorisatie: autorisatie.to_string(), http }
     }
 
     async fn roep<T: DeserializeOwned>(&self, methode: &str, gegevens: Value) -> Result<T, Fout> {

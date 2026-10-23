@@ -201,3 +201,57 @@ async fn quotum_met_en_zonder_limiet() {
     let q = client.quotum().await.unwrap();
     assert_eq!((q.gebruikt_bytes, q.limiet_bytes), (7, None));
 }
+
+/// Upload van een bestand van drie delen waarbij S3 elk deel 300 ms laat duren: de delen gaan tegelijk, maar nooit
+/// meer dan de rem toelaat.
+async fn upload_drie_delen(plekken: usize) -> std::time::Duration {
+    let server = MockServer::start().await;
+    let inhoud: Vec<u8> = [vec![b'A'; BLOK as usize], vec![b'B'; BLOK as usize], b"staart".to_vec()].concat();
+    let dir = tempfile::tempdir().unwrap();
+    let pad = dir.path().join("groot.bin");
+    std::fs::write(&pad, &inhoud).unwrap();
+    let delen: Vec<_> = (1..=3).map(|n| json!({"nummer": n, "url": format!("{}/s3/deel{n}", server.uri())})).collect();
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.upload_start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "upload": "tok", "deelgrootte": BLOK, "hergebruik": [], "delen": delen
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"e\"").set_delay(std::time::Duration::from_millis(300)))
+        .expect(3)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/method/openaec_storage.api.upload_klaar"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "bestand": "b1", "naam": "groot.bin", "versie": 1, "conflict": false
+        }})))
+        .mount(&server)
+        .await;
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    let rem = openaec_sync::rem(plekken);
+    let standen = Mutex::new(Vec::new());
+    let begin = std::time::Instant::now();
+    openaec_sync::upload_met_rem(&client, "r1", None, "groot.bin", &pad, None, &|g, t| standen.lock().unwrap().push((g, t)), &rem)
+        .await
+        .unwrap();
+    let duur = begin.elapsed();
+    let standen = standen.lock().unwrap().clone();
+    let totaal = inhoud.len() as u64;
+    assert_eq!(standen.first(), Some(&(0, totaal)));
+    assert_eq!(standen.last(), Some(&(totaal, totaal)), "alle delen samen: {standen:?}");
+    let klaar = server.received_requests().await.unwrap().into_iter().find(|r| r.url.path().ends_with("upload_klaar")).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&klaar.body).unwrap();
+    let mut nummers: Vec<u64> = body["delen"].as_array().unwrap().iter().map(|d| d["nummer"].as_u64().unwrap()).collect();
+    nummers.sort();
+    assert_eq!(nummers, vec![1, 2, 3]);
+    duur
+}
+
+#[tokio::test]
+async fn delen_van_een_groot_bestand_gaan_parallel_binnen_de_rem() {
+    assert!(upload_drie_delen(3).await < std::time::Duration::from_millis(800), "drie delen tegelijk");
+    assert!(upload_drie_delen(1).await >= std::time::Duration::from_millis(900), "één plek: na elkaar");
+}
