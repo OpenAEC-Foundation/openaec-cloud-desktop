@@ -528,7 +528,7 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
         ("Opslagbestand", bestand_id(state, pad)?)
     };
     let deling = client.deel(doctype, &id, wachtwoord.as_deref(), verloopt.as_deref()).await.map_err(fout)?;
-    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default())))
 }
 
 /// Uploadlink (bestanden opvragen) voor een lokale map in een gekoppelde map.
@@ -544,7 +544,7 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
         .map_err(fout)?
         .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
     let deling = client.vraag_bestanden(&id, None, None).await.map_err(fout)?;
-    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token)))
+    Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default())))
 }
 
 #[tauri::command]

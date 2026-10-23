@@ -138,11 +138,39 @@ pub struct Versie {
 #[derive(Debug, Deserialize)]
 pub struct Deling {
     pub deling: String,
-    pub token: String,
+    /// Alleen bij een link; een deling met een gebruiker heeft geen token.
+    #[serde(default)]
+    pub token: Option<String>,
     pub rechten: String,
     /// Volledig publiek adres van de deelpagina (nieuwere servers); anders zelf bouwen met `basis`.
     #[serde(default)]
     pub url: Option<String>,
+}
+
+/// Een bestaande deling van een map of bestand (`delingen`): een link of een gebruiker, met de rechten.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelingInfo {
+    /// Id van de deling (om in te trekken).
+    pub name: String,
+    /// `link` of `gebruiker`.
+    pub soort: String,
+    #[serde(default)]
+    pub gebruiker: Option<String>,
+    /// `lezen`, `schrijven` (alleen gebruiker) of `uploaden` (alleen link naar een map).
+    pub rechten: String,
+    #[serde(default)]
+    pub verloopt: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub creation: Option<String>,
+}
+
+/// Lid van een ruimte met zijn rol (beheerder, schrijver, lezer of gast).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ruimtelid {
+    pub gebruiker: String,
+    pub rol: String,
 }
 
 /// Actieve vergrendeling van een bestand (wie eraan werkt, tot wanneer).
@@ -288,7 +316,8 @@ impl Client {
         self.deel_link("Opslagmap", map, "uploaden", wachtwoord, verloopt).await
     }
 
-    async fn deel_link(
+    /// Link zonder account met de gegeven rechten (`lezen`, of `uploaden` bij een map); `verloopt` als `JJJJ-MM-DD`.
+    pub async fn deel_link(
         &self,
         doctype: &str,
         doel: &str,
@@ -303,6 +332,61 @@ impl Client {
                 "wachtwoord": wachtwoord, "verloopt": verloopt}),
         )
         .await
+    }
+
+    /// Delen met een bestaande gebruiker (e-mailadres) van de omgeving: `lezen` of `schrijven`, op deze map (en
+    /// alles eronder) of dit bestand. De server weigert een onbekende gebruiker.
+    pub async fn deel_met_gebruiker(
+        &self,
+        doctype: &str,
+        doel: &str,
+        gebruiker: &str,
+        rechten: &str,
+        verloopt: Option<&str>,
+    ) -> Result<Deling, Fout> {
+        let verloopt = verloopt.map(|d| format!("{d} 23:59:59"));
+        self.roep(
+            "deel",
+            json!({"doel_doctype": doctype, "doel": doel, "soort": "gebruiker", "gebruiker": gebruiker,
+                "rechten": rechten, "verloopt": verloopt}),
+        )
+        .await
+    }
+
+    /// De actieve (niet ingetrokken) delingen van een map of bestand; verlopen delingen staan er nog in.
+    pub async fn delingen(&self, doctype: &str, doel: &str) -> Result<Vec<DelingInfo>, Fout> {
+        self.roep("delingen", json!({"doel_doctype": doctype, "doel": doel})).await
+    }
+
+    /// Een deling intrekken: de link werkt niet meer, of de gebruiker verliest de extra rechten.
+    pub async fn trek_in(&self, deling: &str) -> Result<(), Fout> {
+        self.roep_leeg("trek_in", json!({"deling": deling})).await
+    }
+
+    /// De leden van een ruimte, via het documentadres van Frappe (`/api/resource/Ruimte/<id>`): elk lid mag de
+    /// ruimte lezen. Er is (nog) geen eigen methode voor in `openaec_storage.api`.
+    pub async fn ruimteleden(&self, ruimte: &str) -> Result<Vec<Ruimtelid>, Fout> {
+        #[derive(Deserialize)]
+        struct Document {
+            #[serde(default)]
+            leden: Vec<Ruimtelid>,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            data: Document,
+        }
+        let mut url = reqwest::Url::parse(&self.basis).map_err(|e| Fout::Controle(format!("ongeldig adres: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|_| Fout::Controle("ongeldig adres".into()))?
+            .pop_if_empty()
+            .extend(["api", "resource", "Ruimte", ruimte]);
+        let antwoord = self.http.get(url).header("Authorization", &self.autorisatie).send().await?;
+        let status = antwoord.status();
+        if !status.is_success() {
+            let tekst = antwoord.text().await.unwrap_or_default();
+            return Err(Fout::Server { status: status.as_u16(), tekst });
+        }
+        Ok(antwoord.json::<Data>().await?.data.leden)
     }
 
     /// Alle versies van een bestand, nieuwste eerst.
