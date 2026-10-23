@@ -2,10 +2,10 @@ import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "soli
 import { api } from "./lib/api"
 import {
   basis, bezig, doe, koppelingen, melding, ruimtes, scherm, setBasis, setBestand, setKoppelingen, setMelding,
-  setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setVerbonden, stand, verbonden, verwerkSync, ververs,
+  setQuotum, setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setVerbonden, stand, verbonden, verwerkSync, ververs,
   type Scherm,
 } from "./lib/winkel"
-import { naamVan, procent } from "./lib/opmaak"
+import { naamVan, procent, rondeTekst } from "./lib/opmaak"
 import Overzicht from "./schermen/Overzicht"
 import Ruimtes from "./schermen/Ruimtes"
 import Delen, { toonVersies, wisDeelresultaat } from "./schermen/Delen"
@@ -77,7 +77,10 @@ function Statusbalk() {
     <footer class="statusbalk">
       <span class={`stip ${verbonden() ? stand()?.toestand ?? "bijgewerkt" : "gepauzeerd"}`} />
       <span class="samenvatting">{verbonden() ? stand()?.samenvatting ?? "Alles bijgewerkt" : "Niet verbonden"}</span>
-      <Show when={eerste()}>
+      <Show when={stand()?.ronde}>
+        {(r) => <span class="lopend">{rondeTekst(r())}</span>}
+      </Show>
+      <Show when={!stand()?.ronde && eerste()}>
         {(o) => (
           <span class="lopend">
             {o().richting === "upload" ? "↑" : "↓"} {naamVan(o().pad)} · {procent(o().gedaan, o().totaal)}%
@@ -112,6 +115,7 @@ export default function App() {
       }),
       await api.opSync(verwerkSync),
       await api.opActiviteit(setStand),
+      await api.opQuotum(setQuotum),
       // Het venster komt (weer) in beeld vanuit het systeemvak: ruimtes en overzicht verversen.
       await api.opVensterOpen(() => verbonden() && ververs()),
     ]

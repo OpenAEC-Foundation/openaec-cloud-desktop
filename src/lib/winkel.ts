@@ -2,7 +2,7 @@
 // de sync. De schermen lezen hieruit en roepen de acties hieronder aan.
 
 import { createSignal } from "solid-js"
-import { api, type Koppeling, type KoppelStatus, type MapRapport, type Ruimte, type Stand } from "./api"
+import { api, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
 
 export type Scherm = "overzicht" | "ruimtes" | "delen" | "tools" | "instellingen"
 
@@ -20,6 +20,8 @@ export const [koppelingen, setKoppelingen] = createSignal<Koppeling[]>([])
 export const [rapporten, setRapporten] = createSignal<Record<string, MapRapport & { tijd: Date }>>({})
 export const [koppelStatus, setKoppelStatus] = createSignal<Record<string, KoppelStatus>>({})
 export const [stand, setStand] = createSignal<Stand | null>(null)
+/** Opslaggebruik van de omgeving (null = nog niet bekend of niet op te halen). */
+export const [quotum, setQuotum] = createSignal<Quotum | null>(null)
 /** Bestand of map in het deelscherm. */
 export const [bestand, setBestand] = createSignal("")
 
@@ -72,5 +74,6 @@ export const verversOverzicht = async () => {
 export const ververs = () => {
   laadRuimtes()
   verversOverzicht()
+  api.quotum().then(setQuotum).catch(() => {})
   api.activiteit().then(setStand).catch(() => {})
 }

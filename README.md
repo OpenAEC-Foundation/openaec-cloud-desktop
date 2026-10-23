@@ -32,6 +32,15 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
   openen of te pauzeren. Het pictogram zelf toont met een gekleurde stip of alles bijgewerkt is, de sync bezig of
   gepauzeerd is, of dat er een fout is.
 
+## Voortgang en opslag
+
+- **Opslag:** Overzicht en het statusvenster tonen "X GB van Y GB gebruikt (Z GB vrij)", of "X GB gebruikt (geen
+  limiet)" (`openaec_storage.api.quotum`); na elke sync-ronde ververst.
+- **Ronde:** in het statusvenster, het Overzicht en de statusbalk: "nog N bestanden, A GB van B GB", de snelheid
+  (voortschrijdend gemiddelde over 8 seconden) en de geschatte resterende tijd.
+- **Blokhergebruik:** de motor meldt per bestand eerst hoeveel er echt over de lijn moet; de app toont wat dat scheelt
+  ("alleen 16 MB van 1,2 GB verstuurd"), per bestand en opgeteld per ronde.
+
 ## Tools
 
 Het tabblad **Tools** toont de OpenAEC-tools als kaarten (naam, omschrijving, afbeelding, categorie, versie) en werkt

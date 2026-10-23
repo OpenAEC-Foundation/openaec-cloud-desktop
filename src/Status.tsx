@@ -1,8 +1,8 @@
 // Statusvenster bij het systeemvak: wat de sync nu doet, wat er net gebeurd is, en snelle knoppen.
 
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { api, type Gebeurd, type Koppeling, type Stand } from "./lib/api"
-import { grootte, lokaalPad, naamVan, procent, snelheid, tijdstip } from "./lib/opmaak"
+import { api, type Gebeurd, type Koppeling, type Quotum, type Stand } from "./lib/api"
+import { besparingTekst, grootte, lokaalPad, naamVan, procent, quotumTekst, rondeTekst, snelheid, tijdstip } from "./lib/opmaak"
 
 const actieTekst: Record<Gebeurd["actie"], string> = {
   geupload: "Geüpload",
@@ -26,17 +26,23 @@ export default function Status() {
   const [stand, setStand] = createSignal<Stand | null>(null)
   const [koppelingen, setKoppelingen] = createSignal<Koppeling[]>([])
   const [fout, setFout] = createSignal("")
+  const [quotum, setQuotum] = createSignal<Quotum | null>(null)
 
   const laad = async () => {
     const s = await api.status()
     setKoppelingen(s.koppelingen)
     setStand(await api.activiteit())
     setFout("")
+    api.quotum().then(setQuotum).catch(() => {})
   }
 
   onMount(async () => {
     laad().catch(() => {})
-    const stoppers = [await api.opActiviteit(setStand), await api.opVensterOpen(() => laad().catch(() => {}))]
+    const stoppers = [
+      await api.opActiviteit(setStand),
+      await api.opVensterOpen(() => laad().catch(() => {})),
+      await api.opQuotum(setQuotum),
+    ]
     onCleanup(() => stoppers.forEach((stop) => stop()))
   })
 
@@ -71,6 +77,20 @@ export default function Status() {
         </div>
       </section>
 
+      <Show when={stand()?.ronde}>
+        {(r) => (
+          <div class="status-ronde">
+            <span class="balk">
+              <span style={{ width: `${procent(r().bytes_gedaan, r().bytes_totaal)}%` }} />
+            </span>
+            <span class="cijfers">{rondeTekst(r())}</span>
+            <Show when={r().bespaard > 0}>
+              <span class="cijfers">{grootte(r().bespaard)} bespaard door hergebruik van blokken</span>
+            </Show>
+          </div>
+        )}
+      </Show>
+
       <Show when={stand()?.actief.length}>
         <ul class="status-actief">
           <For each={stand()!.actief}>
@@ -89,6 +109,9 @@ export default function Status() {
                   <span class="balk">
                     <span style={{ width: `${procent(o.gedaan, o.totaal)}%` }} />
                   </span>
+                  <Show when={besparingTekst(o.grootte, o.totaal)}>
+                    <span class="bespaard">{besparingTekst(o.grootte, o.totaal)}</span>
+                  </Show>
                 </div>
               </li>
             )}
@@ -107,6 +130,7 @@ export default function Status() {
                   <span class="naam">{naamVan(g.pad)}</span>
                   <span class="meta">
                     {actieTekst[g.actie]} · {ruimteVan(g.lokaal)}
+                    {besparingTekst(g.grootte, g.verstuurd) ? ` · ${besparingTekst(g.grootte, g.verstuurd)}` : ""}
                     {g.fout ? ` · ${g.fout}` : ""}
                   </span>
                 </span>
@@ -119,6 +143,19 @@ export default function Status() {
 
       <Show when={fout()}>
         <p class="status-fout">{fout()}</p>
+      </Show>
+
+      <Show when={quotum()}>
+        {(q) => (
+          <div class="status-opslag">
+            <span>{quotumTekst(q().gebruikt_bytes, q().limiet_bytes)}</span>
+            <Show when={q().limiet_bytes !== null}>
+              <span class="balk" classList={{ vol: procent(q().gebruikt_bytes, q().limiet_bytes!) >= 90 }}>
+                <span style={{ width: `${procent(q().gebruikt_bytes, q().limiet_bytes!)}%` }} />
+              </span>
+            </Show>
+          </div>
+        )}
       </Show>
 
       <footer class="status-knoppen">

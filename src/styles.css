@@ -194,6 +194,12 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 .cijfers { font-size: 12px; color: var(--steen); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .balk { display: block; height: 6px; border-radius: 3px; background: var(--beton); overflow: hidden; }
 .balk span { display: block; height: 100%; background: var(--amber); border-radius: 3px; transition: width 0.25s; }
+.balk.vol span { background: var(--rood); }
+.opslag { display: flex; flex-direction: column; gap: 10px; }
+.opslag-kop { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.opslag-kop h2 { margin: 0; }
+.ronde { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.bespaard { color: var(--groen-tekst); }
 
 /* dialoog (mapselectie) */
 .laag { position: fixed; inset: 0; background: rgba(28, 25, 23, 0.35); display: grid; place-items: center; padding: 24px; z-index: 10; }
@@ -331,6 +337,9 @@ body.statusvenster { background: var(--wit); }
 .teken.verwijderd { background: var(--grijs-vlak); color: var(--grijs-tekst); }
 .teken.conflict { background: var(--amber-vlak); color: var(--amber-tekst); }
 .teken.fout { background: var(--rood-vlak); color: var(--rood-tekst); }
+.status-ronde { display: flex; flex-direction: column; gap: 5px; padding: 10px 16px; border-bottom: 1px solid var(--lijn); flex: none; }
+.status-actief .bespaard { font-size: 11px; color: var(--groen-tekst); }
+.status-opslag { display: flex; flex-direction: column; gap: 5px; padding: 8px 16px; border-top: 1px solid var(--lijn); font-size: 12px; color: var(--steen); flex: none; }
 .status-fout { font-size: 12px; color: var(--rood-tekst); background: var(--rood-vlak); padding: 6px 16px; flex: none; }
 .status-knoppen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 12px 16px; border-top: 1px solid var(--lijn); background: var(--papier); flex: none; }
 .status-knoppen button { padding: 8px 6px; }

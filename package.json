@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "node --test src/lib/tools.test.ts"
+    "test": "node --test src/lib/tools.test.ts src/lib/opmaak.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.12",

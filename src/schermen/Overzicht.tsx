@@ -1,8 +1,8 @@
 import { createSignal, For, Show } from "solid-js"
 import { api, type Koppeling, type MapRapport } from "../lib/api"
-import { naamVan, procent, snelheid, soort, tijdstip } from "../lib/opmaak"
+import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
-  bezig, doe, koppelingen, koppelStatus, rapporten, ruimtes, setKoppelingen, setMelding, setScherm, stand,
+  bezig, doe, koppelingen, koppelStatus, quotum, rapporten, ruimtes, setKoppelingen, setMelding, setScherm, stand,
   verversOverzicht, verwerkSync,
 } from "../lib/winkel"
 
@@ -91,9 +91,38 @@ export default function Overzicht() {
         </button>
       </div>
 
-      <Show when={stand()?.actief.length}>
+      <Show when={quotum()}>
+        {(q) => (
+          <section class="kaart opslag">
+            <div class="opslag-kop">
+              <h2>Opslag</h2>
+              <span class="cijfers">{quotumTekst(q().gebruikt_bytes, q().limiet_bytes)}</span>
+            </div>
+            <Show when={q().limiet_bytes !== null}>
+              <span class="balk" classList={{ vol: procent(q().gebruikt_bytes, q().limiet_bytes!) >= 90 }}>
+                <span style={{ width: `${procent(q().gebruikt_bytes, q().limiet_bytes!)}%` }} />
+              </span>
+            </Show>
+          </section>
+        )}
+      </Show>
+
+      <Show when={stand()?.actief.length || stand()?.ronde}>
         <section class="kaart lopend-blok">
           <h2>Nu bezig</h2>
+          <Show when={stand()?.ronde}>
+            {(r) => (
+              <div class="ronde">
+                <span class="balk">
+                  <span style={{ width: `${procent(r().bytes_gedaan, r().bytes_totaal)}%` }} />
+                </span>
+                <span class="cijfers">{rondeTekst(r())}</span>
+                <Show when={r().bespaard > 0}>
+                  <span class="cijfers bespaard">{grootte(r().bespaard)} niet verstuurd dankzij blokken die er al waren</span>
+                </Show>
+              </div>
+            )}
+          </Show>
           <ul class="overdrachten">
             <For each={stand()!.actief}>
               {(o) => (
@@ -101,7 +130,9 @@ export default function Overzicht() {
                   <span class="richting">{o.richting === "upload" ? "↑" : "↓"}</span>
                   <span class="naam" title={o.pad}>{naamVan(o.pad)}</span>
                   <span class="balk"><span style={{ width: `${procent(o.gedaan, o.totaal)}%` }} /></span>
-                  <span class="cijfers">{[`${procent(o.gedaan, o.totaal)}%`, snelheid(o.snelheid)].filter(Boolean).join(" · ")}</span>
+                  <span class="cijfers">
+                    {[`${procent(o.gedaan, o.totaal)}%`, snelheid(o.snelheid), besparingTekst(o.grootte, o.totaal)].filter(Boolean).join(" · ")}
+                  </span>
                 </li>
               )}
             </For>

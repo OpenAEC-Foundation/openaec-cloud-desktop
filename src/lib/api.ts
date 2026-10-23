@@ -82,6 +82,8 @@ export interface Overdracht {
   lokaal: string
   pad: string
   richting: "upload" | "download"
+  /** Grootte van het bestand; `totaal` is wat er echt over de lijn gaat. */
+  grootte: number
   gedaan: number
   totaal: number
   snelheid: number
@@ -93,6 +95,27 @@ export interface Gebeurd {
   actie: "geupload" | "gedownload" | "verwijderd" | "conflict" | "fout"
   tijd: number
   fout: string | null
+  /** Bij een upload of download: grootte van het bestand en wat er echt verstuurd is. */
+  grootte: number | null
+  verstuurd: number | null
+}
+
+/** Voortgang van de lopende ronde, over alle gekoppelde mappen samen. */
+export interface RondeStand {
+  nog: number
+  bytes_gedaan: number
+  bytes_totaal: number
+  /** Bytes per seconde, voortschrijdend gemiddelde. */
+  snelheid: number
+  /** Geschatte resterende tijd in seconden. */
+  resterend: number | null
+  /** Bytes die door blokhergebruik niet over de lijn hoefden. */
+  bespaard: number
+}
+
+export interface Quotum {
+  gebruikt_bytes: number
+  limiet_bytes: number | null
 }
 
 export interface Stand {
@@ -103,6 +126,7 @@ export interface Stand {
   downloaden: number
   actief: Overdracht[]
   recent: Gebeurd[]
+  ronde: RondeStand | null
 }
 
 /** Uitkomst van installeren: setup gestart (Windows) of direct geïnstalleerd (Linux). */
@@ -160,6 +184,8 @@ export const api = {
   toonHoofdvenster: () => invoke<void>("toon_hoofdvenster"),
   opActiviteit: (f: (s: Stand) => void) => listen<Stand>("activiteit", (e) => f(e.payload)),
   opVensterOpen: (f: () => void) => listen("venster-open", () => f()),
+  quotum: () => invoke<Quotum>("quotum"),
+  opQuotum: (f: (q: Quotum) => void) => listen<Quotum>("quotum", (e) => f(e.payload)),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>
