@@ -163,9 +163,12 @@ cd crates/openaec-sync && cargo test           # eenheden + motor + API (nageboo
 cd src-tauri && cargo test --lib               # app (unit-tests)
 cd src-tauri && cargo run --example status_smoke    # Windows: statusvinkjes (Cloud Filter API)
 cd src-tauri && cargo run --example vinkjes_smoke   # Windows: motor + statusvinkjes samen
+cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigatiepaneel, bestanden op aanvraag
 ```
 
-De twee voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` en ruimen hun registratie en map altijd op.
+De voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` (met een testnaam) en ruimen hun registratie,
+het item in het navigatiepaneel en de map altijd op. Met `OPENAEC_ROOKTEST_WACHT=<seconden>` blijft de registratie van
+`hoofdmap_smoke` zo lang staan om in de Verkenner te kijken.
 
 Tegen een echte omgeving: `cargo run --example sync -- <basis-url> <ruimte> <map>` met
 `OPENAEC_AUTORISATIE="token <sleutel>:<geheim>"`.
@@ -201,17 +204,99 @@ Een GitHub Actions-workflow (`tauri-action`) bouwt de installer reproduceerbaar.
 zet `TAURI_SIGNING_PRIVATE_KEY` op de sleutel of het pad ernaar (en `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` als hij een
 wachtwoord heeft). De sleutel staat nooit in de repo; in de bouwstraat komt hij uit de GitHub-secrets met dezelfde naam.
 
-## Statusvinkjes in de Verkenner (Windows)
+## De Verkenner (Windows)
 
-Een gekoppelde map wordt bij het koppelen (en bij elke start) een sync-root voor de Verkenner. Per bestand en map:
+### De hoofdmap en het navigatiepaneel
 
-- **groen vinkje** — gesynchroniseerd en altijd op deze computer (de bestanden blijven gewone, volledige bestanden;
-  "ruimte vrijmaken" kan niet);
-- **sync-pijlen** — gewijzigd of nieuw en nog niet geüpload, of er ging iets mis (dan ook de mappen erboven).
+Bij de eerste start stelt de app een **hoofdmap** voor: `%USERPROFILE%\OpenAEC` (Overzicht → **Instellen**, of
+**Andere map…**). Elke ruimte die je daarin synchroniseert (Ruimtes → **In de hoofdmap synchroniseren**) krijgt een
+eigen submap met de naam van de ruimte (tekens die in een mapnaam niet kunnen worden `_`; bestaat de naam al, dan
+`Naam (2)`). De hoofdmap staat in `instellingen.json` als `hoofdmap`.
 
-De toestandsmap `.openaec` staat als "uitgesloten". Bij ontkoppelen gaan de vinkjes eraf en wordt de map afgemeld; de
-bestanden blijven staan. Valt een map al onder een andere sync-provider of staat hij niet op NTFS, dan zijn er geen
-vinkjes, maar synchroniseren werkt gewoon.
+De hoofdmap is één sync-root bij Windows en staat daardoor als eigen item **OpenAEC**, met het pictogram van de app,
+in het navigatiepaneel van de Verkenner. Wat Windows daarvoor nodig heeft (`cloudfilter::registreer_hoofdmap`):
+
+- registratie via de shell (`StorageProviderSyncRootManager::Register`, niet alleen `CfRegisterSyncRoot`) met een id
+  `OpenAECStorage!<SID van de gebruiker>!<sleutel van de map>`, een `DisplayNameResource` ("OpenAEC") en een
+  `IconResource` (`<pad naar de exe>,0`);
+- `HydrationPolicy` **Full** met **AutoDehydrationAllowed** (bestanden mogen alleen online staan, ook opslagbeheer van
+  Windows mag ze vrijmaken), `PopulationPolicy` **AlwaysFull** (de app zet zelf alle placeholders neer),
+  `InSyncPolicy` **TrackAll** en `AllowPinning`;
+- twee eigen kolommen (`StorageProviderItemPropertyDefinitions`): "Status van OpenAEC" en "Vergrendeld door".
+
+Windows maakt dan zelf het naamruimte-item aan: een CLSID onder `HKCU\Software\Classes\CLSID\{…}` met
+`System.IsPinnedToNamespaceTree = 1` en `TargetFolderPath` = de hoofdmap, een sleutel onder
+`HKCU\…\Explorer\Desktop\NameSpace`, en `NamespaceCLSID` in de registratie onder
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager\<id>`. Bij afmelden ruimt Windows dat weer
+op. De app registreert en verbindt bij elke start opnieuw (herhaalbaar).
+
+**Losse gekoppelde mappen** (Ruimtes → **Koppelen aan map…**, en alles van vóór de hoofdmap) blijven werken zoals ze
+werkten: elke map is zijn eigen sync-root met volledige bestanden. In het Overzicht staat bij zo'n map **Naar de
+hoofdmap…**: na bevestiging gaan de statusvinkjes eraf, verhuist de map met zijn toestand (`.openaec`) naar een submap
+van de hoofdmap (dus zonder opnieuw te downloaden) en krijgt hij daar zijn status terug. Dat kan alleen binnen hetzelfde
+station; de app doet het nooit vanzelf.
+
+Een ruimte in de hoofdmap ontkoppelen haalt de bestanden die alleen online stonden weg (ze staan op de server); wat
+lokaal staat, blijft staan.
+
+Een ruimte waarvan de map ontbreekt (verwijderd, of een station dat niet is aangesloten) wordt niet gesynchroniseerd:
+de ronde geeft "de map ontbreekt op deze computer" in plaats van alles als lokaal verwijderd te zien.
+
+### Statusiconen
+
+Elk bestand en elke map krijgt de standaardstatus van de Cloud Files API (de app zet de in-sync-status met
+`CfSetInSyncState`; het wolkje en de vinkjes tekent Windows uit de placeholder- en pin-status). De afleiding staat los
+van Windows in `src-tauri/src/itemstatus.rs` (met unit-tests):
+
+| Icoon | Betekenis |
+|---|---|
+| wolkje | **alleen online**: staat op de server en wordt opgehaald zodra je het opent (alleen in de hoofdmap) |
+| groen vinkje (open) | **lokaal beschikbaar**: op deze computer, "Ruimte vrijmaken" kan |
+| groen vinkje (dicht) | **altijd op dit apparaat** (vastgezet); in een losse gekoppelde map is dat altijd zo |
+| sync-pijlen | **bezig**: nieuw of gewijzigd en nog niet op de server, of nu onderweg (ook tijdens de parallelle sync: een bestand krijgt de pijlen als het begint en zijn vinkje zodra het klaar is) |
+| sync-pijlen en een kolom **Status van OpenAEC** | **fout** ("Fout: …") of **overgeslagen** ("Overgeslagen: …", bijv. een naam die niet kan) |
+| kolom **Vergrendeld door** met een slotje | vergrendeld (Opslagvergrendeling): wie, en tot wanneer |
+
+Mappen tonen het geheel: sync-pijlen als er iets in bezig is of fout gaat, anders een vinkje (een overgeslagen bestand
+maakt de map niet "bezig"). De eigen kolommen zijn Verkenner-kolommen (rechtsklik op de kolomkoppen → Meer…) en
+staan ook in Eigenschappen; ze worden na elke ronde bijgewerkt en in `.openaec/verkenner.json` onthouden.
+Vergrendelingen komen uit de wijzigingenlijst van de server ("vergrendeld"/"ontgrendeld"; bij het starten de hele
+lijst), met `api.info` voor wie; elke 10 minuten kijkt de app na of ze nog gelden (een slot verloopt ook zonder
+melding).
+
+### Bestanden op aanvraag (hoofdmap)
+
+- **Nieuwe bestanden van de server** komen als placeholder die alleen online staat (wolkje): de grootte en de naam zijn
+  er, de inhoud niet. Onder een map met "Altijd op dit apparaat behouden" worden ze meteen helemaal gedownload.
+- **Openen** van een bestand dat alleen online staat, haalt het op (FETCH_DATA-callback): de app vraagt een downloadlink
+  voor precies de versie uit de toestand (`api.download` met `versie`) en geeft de inhoud in stukken van 1 MB door aan
+  Windows, dat daarmee de voortgang toont. Draait de app niet, dan kan Windows het bestand niet openen.
+- **Rechtermuismenu**: "Altijd op dit apparaat behouden" en "Ruimte vrijmaken" zijn de ingebouwde opties van Windows;
+  ze zetten alleen de pin-status. De app volgt die via de bestandswachter: vastgezet en alleen online → ophalen
+  (`CfHydratePlaceholder`), vrijgemaakt en lokaal → `CfDehydratePlaceholder`. Een bestand dat niet in sync is (lokaal
+  werk dat nog niet op de server staat) weigert Windows vrij te maken.
+- **Een nieuwe versie op de server** van een bestand dat alleen online staat, past alleen de placeholder aan (grootte,
+  tijd; `CfUpdatePlaceholder`), er wordt niets gedownload. Een lokaal bestand wordt gewoon bijgewerkt.
+- Vrijmaken en ophalen veranderen grootte en wijzigingstijd niet: de motor ziet geen wijziging en uploadt niets.
+
+In een losse gekoppelde map staan bestanden altijd volledig op deze computer (`HydrationPolicy` AlwaysFull); daar
+kan "Ruimte vrijmaken" niet.
+
+### Selectieve synchronisatie
+
+Per gekoppelde map (ook een ruimte in de hoofdmap) opent Overzicht → **Mappen kiezen…** een boom van de mappen op de
+server, met per map een vinkje en de grootte en het aantal bestanden eronder (uit `api.boom` als de server die kent,
+anders map voor map met `api.bladeren`). Een map uitvinken neemt zijn submappen mee.
+
+- Een uitgevinkte map wordt niet lokaal opgeslagen of gesynchroniseerd. Staan er al bestanden van op deze computer,
+  dan vraagt de app eerst bevestiging ("N bestanden (X MB) worden hier verwijderd; op de server blijven ze staan");
+  wat lokaal gewijzigd is, gaat eerst nog naar de server.
+- **Nieuwe mappen op de server**: **Automatisch meenemen** (standaard) of **Alleen wat ik hier gekozen heb**. Bij het
+  tweede onthoudt de app welke mappen er bij het kiezen waren; een map die daarna op de server verschijnt (ook een
+  submap van een gekozen map) blijft weg tot je hem aanvinkt. Een map die hier al bestaat, telt nooit als nieuw.
+- De keuze staat per koppeling in `instellingen.json` (`uitgesloten`, `nieuwe_mappen`, `bekende_mappen`). De regels
+  staan in één module zonder IO met unit-tests (`crates/openaec-sync/src/selectie.rs`); de motor slaat uitgesloten
+  mappen daarmee over bij uploaden en downloaden.
 
 ## Automatische updates
 
@@ -255,3 +340,4 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 
 - Bij het verwijderen van de app de registratie van gekoppelde mappen opruimen (nu: eerst ontkoppelen).
 - Statusvinkjes in de bestandsbeheerder op Linux.
+- Bestanden die alleen online staan, zijn niet te openen zolang de app niet draait.
