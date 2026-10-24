@@ -457,7 +457,12 @@ fn markeer(root: &Path, pad: &Path, staat: CF_IN_SYNC_STATE, vastzetten: bool) -
     }
     if voor.is_none() {
         let vlag = if in_sync { CF_CONVERT_FLAG_MARK_IN_SYNC } else { CF_CONVERT_FLAG_NONE };
-        unsafe { CfConvertToPlaceholder(h, None, 0, vlag, None, None) }
+        // Op aanvraag met een bestandsidentiteit: zonder identiteit weigert Windows later het vrijmaken
+        // (ERROR_CLOUD_FILE_DEHYDRATION_DISALLOWED). Het bestand-id staat in de toestand; de identiteit is alleen een
+        // merkteken ([`IDENTITEIT_LOKAAL`]).
+        let ident = wide(IDENTITEIT_LOKAAL);
+        let (ptr, lengte) = if vastzetten { (None, 0) } else { (Some(ident.as_ptr() as *const c_void), (ident.len() * 2) as u32) };
+        unsafe { CfConvertToPlaceholder(h, ptr, lengte, vlag, None, None) }
             .map_err(|e| anyhow!("CfConvertToPlaceholder({}): {e}", pad.display()))?;
         // Op aanvraag: een nieuw bestand erft "altijd op dit apparaat" van de map waarin het staat.
         let erft = !vastzetten && pad.parent().and_then(attributen).is_some_and(|a| a & ATTR_VASTGEZET != 0);
@@ -584,6 +589,10 @@ pub const ATTR_VASTGEZET: u32 = 0x0008_0000;
 pub const ATTR_LOSGEMAAKT: u32 = 0x0010_0000;
 pub const ATTR_OPHALEN_BIJ_OPENEN: u32 = 0x0004_0000;
 pub const ATTR_OPHALEN_BIJ_LEZEN: u32 = 0x0040_0000;
+
+/// Bestandsidentiteit van een bestand dat de app zelf tot placeholder maakte (geen bestand-id op de server; dat staat
+/// in de toestand van de motor).
+pub const IDENTITEIT_LOKAAL: &str = "lokaal";
 
 /// Eigen kolommen in de Verkenner (StorageProviderItemProperty): de status bij een fout of overgeslagen bestand, en
 /// wie het bestand vergrendeld heeft.
@@ -816,7 +825,7 @@ pub fn bestandsidentiteit(pad: &Path) -> Option<String> {
         }
         let begin = std::ptr::addr_of!(info.FileIdentity) as *const u16;
         let s = String::from_utf16_lossy(std::slice::from_raw_parts(begin, lengte));
-        Some(s.trim_end_matches('\0').to_string()).filter(|s| !s.is_empty())
+        Some(s.trim_end_matches('\0').to_string()).filter(|s| !s.is_empty() && s != IDENTITEIT_LOKAAL)
     }
 }
 

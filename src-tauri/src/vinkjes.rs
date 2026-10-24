@@ -202,7 +202,7 @@ mod echt {
     use super::{boven, lokaal_pad, nieuwe_kolommen, relatief, Kolommen};
     use crate::cloudfilter;
     use crate::instellingen::Koppeling;
-    use crate::itemstatus::{mapstatus, Itemstatus};
+    use crate::itemstatus::{bestandsstatus, mapstatussen, Bestandsfeiten, Itemstatus};
 
     /// Gekoppelde mappen waarvoor registreren in dit proces is geprobeerd (ook als het mislukte: geen herhaalde
     /// waarschuwingen), en de mappen waarvoor het lukte.
@@ -273,16 +273,10 @@ mod echt {
     /// Mappen boven de paden, met de status uit wat erin zit (zie `itemstatus::mapstatus`): niet in sync als er onder
     /// hen een foutpad is, anders in sync.
     fn mappen(root: &Path, bekend: &[String], foutpaden: &[String]) {
-        let mut status: BTreeMap<String, Itemstatus> = BTreeMap::new();
-        for (paden, s) in [(bekend, Itemstatus::Gesynchroniseerd), (foutpaden, Itemstatus::Fout)] {
-            for pad in paden {
-                for map in boven(pad) {
-                    let m = status.entry(map).or_insert(Itemstatus::Gesynchroniseerd);
-                    *m = mapstatus([*m, s]);
-                }
-            }
-        }
-        for (map, s) in &status {
+        let fout = Bestandsfeiten { fout: true, ..Default::default() };
+        let goed = Bestandsfeiten { in_sync: true, lokaal: true, ..Default::default() };
+        let bestanden = bekend.iter().map(|p| (p.as_str(), bestandsstatus(goed))).chain(foutpaden.iter().map(|p| (p.as_str(), bestandsstatus(fout))));
+        for (map, s) in &mapstatussen(bestanden) {
             zet(root, &lokaal_pad(root, map), s.weergave().0);
         }
     }
@@ -369,15 +363,26 @@ mod echt {
             }
             if nu_doen { bekend.as_slice() } else { &[] }
         };
+        // Per bestand de status uit wat de ronde weet (zie `itemstatus::bestandsstatus`).
+        let feiten = |pad: &str| {
+            let a = cloudfilter::attributen(&lokaal_pad(&root, pad)).unwrap_or(0);
+            Bestandsfeiten {
+                in_sync: in_sync.contains(pad),
+                fout: fout.contains(pad),
+                lokaal: !cloudfilter::is_ontwaterd(a),
+                vastgezet: a & cloudfilter::ATTR_VASTGEZET != 0,
+                ..Default::default()
+            }
+        };
         for pad in bijgewerkt.iter().chain(&voorlopig).chain(alles) {
-            if in_sync.contains(pad.as_str()) && !fout.contains(pad.as_str()) {
+            if bestandsstatus(feiten(pad)).weergave().0 {
                 zet(&root, &lokaal_pad(&root, pad), true);
             }
         }
         for pad in foutpaden {
             let p = lokaal_pad(&root, pad);
             if p.exists() {
-                zet(&root, &p, false);
+                zet(&root, &p, bestandsstatus(feiten(pad)).weergave().0);
             }
         }
         mappen(&root, &bekend, foutpaden);
