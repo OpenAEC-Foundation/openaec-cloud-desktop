@@ -14,12 +14,44 @@ export type NieuweMappen = "automatisch" | "alleen_gekozen"
 
 export interface Koppeling {
   ruimte: string
+  /** Naam van de ruimte, of bij een gedeelde map de naam van die map. */
   ruimte_naam: string
   lokaal: string
   uitgesloten: string[]
   nieuwe_mappen?: NieuweMappen
   /** De mappen van de server toen er gekozen werd (voor "alleen wat ik koos"). */
   bekende_mappen?: string[]
+  /** Een map die met mij gedeeld is: de deling, de gedeelde map, de rechten en wie hem deelde. */
+  deling?: string | null
+  wortel?: string | null
+  rechten?: "lezen" | "schrijven" | "beheren" | null
+  gedeeld_door?: string | null
+}
+
+/** Iets dat een ander met mij deelde (`gedeeld_met_mij` op de server). */
+export interface Gedeeld {
+  deling: string
+  doel_doctype: "Opslagmap" | "Opslagbestand"
+  doel: string
+  naam: string
+  ruimte: string
+  ruimte_naam: string | null
+  rechten: "lezen" | "schrijven" | "beheren"
+  gedeeld_door: string | null
+  gedeeld_door_naam: string | null
+  sinds: string | null
+  verloopt: string | null
+  al_lid: boolean
+  rol: string | null
+  grootte?: number | null
+  versie?: number | null
+}
+
+/** Wat ik met een map of bestand mag (voor het deelvenster). */
+export interface Toegang {
+  rechten: "lezen" | "schrijven" | "beheren" | null
+  mag_delen: boolean
+  max_rechten: "lezen" | "schrijven" | "beheren" | null
 }
 
 /** Een map van een ruimte voor "Mappen kiezen…", met alles eronder samen. */
@@ -222,7 +254,7 @@ export interface DelingRegel {
   deling: string
   soort: "link" | "gebruiker"
   gebruiker: string | null
-  rechten: "lezen" | "schrijven" | "uploaden"
+  rechten: "lezen" | "schrijven" | "beheren" | "uploaden"
   verloopt: string | null
   gemaakt: string | null
   url: string | null
@@ -265,7 +297,12 @@ export const api = {
   vergrendel: (bestand: string) => invoke<void>("vergrendel", { bestand }),
   ontgrendel: (bestand: string) => invoke<void>("ontgrendel", { bestand }),
   deel: (bestand: string, wachtwoord: string, verloopt: string) => invoke<string>("deel", { bestand, wachtwoord, verloopt }),
-  mappenVan: (ruimte: string) => invoke<Mapkeuze[]>("mappen_van", { ruimte }),
+  mappenVan: (ruimte: string, lokaal?: string) => invoke<Mapkeuze[]>("mappen_van", { ruimte, lokaal: lokaal ?? null }),
+  gedeeldMetMij: () => invoke<Gedeeld[]>("gedeeld_met_mij"),
+  koppelGedeeld: (gedeeld: Gedeeld, lokaal: string) => invoke<Koppeling[]>("koppel_gedeeld", { gedeeld, lokaal }),
+  koppelGedeeldInHoofdmap: (gedeeld: Gedeeld) => invoke<Koppeling[]>("koppel_gedeeld_in_hoofdmap", { gedeeld }),
+  openGedeeld: (deling: string) => invoke<void>("open_gedeeld", { deling }),
+  opKoppelingen: (f: (k: Koppeling[]) => void) => listen<Koppeling[]>("koppelingen", (e) => f(e.payload)),
   lokaleOmvang: (lokaal: string, mappen: string[]) => invoke<Omvang>("lokale_omvang", { lokaal, mappen }),
   zetSelectie: (lokaal: string, uitgesloten: string[], nieuweMappen?: NieuweMappen, bekendeMappen?: string[]) =>
     invoke<Koppeling[]>("zet_selectie", { lokaal, uitgesloten, nieuweMappen, bekendeMappen }),
@@ -277,11 +314,13 @@ export const api = {
   openVersie: (bestand: string, versie: number) => invoke<void>("open_versie", { bestand, versie }),
   opActie: (f: (a: { actie: string; pad: string }) => void) =>
     listen<{ actie: string; pad: string }>("actie", (e) => f(e.payload)),
-  maakCloudmap: (ruimte: string, lokaal: string) => invoke<number>("maak_cloudmap", { ruimte, lokaal }),
+  maakCloudmap: (ruimte: string, lokaal: string, gedeeld?: Gedeeld) =>
+    invoke<number>("maak_cloudmap", { ruimte, lokaal, gedeeld: gedeeld ?? null }),
   autostart: () => invoke<boolean>("autostart"),
   zetAutostart: (aan: boolean) => invoke<boolean>("zet_autostart", { aan }),
   opSync: (f: (r: MapRapport[]) => void) => listen<MapRapport[]>("sync", (e) => f(e.payload)),
-  bladeren: (ruimte: string, map: string | null) => invoke<MapInhoud>("bladeren", { ruimte, map }),
+  bladeren: (ruimte: string, map: string | null, deling?: string | null) =>
+    invoke<MapInhoud>("bladeren", { ruimte, map, deling: deling ?? null }),
   overzicht: () => invoke<Overzicht>("overzicht"),
   openMap: (pad: string) => invoke<void>("open_map", { pad }),
   openBeheer: () => invoke<void>("open_beheer"),
@@ -312,6 +351,8 @@ export const api = {
     invoke<string>("maak_link", { doctype: doel.doctype, id: doel.id, rechten, wachtwoord, verloopt }),
   delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { doctype: doel.doctype, id: doel.id }),
   trekDelingIn: (deling: string) => invoke<void>("trek_deling_in", { deling }),
+  wijzigDeling: (deling: string, rechten: string) => invoke<void>("wijzig_deling", { deling, rechten }),
+  toegangVan: (doel: Deeldoel) => invoke<Toegang>("toegang_van", { doctype: doel.doctype, id: doel.id }),
   ruimteleden: (ruimte: string) => invoke<Ruimtelid[]>("ruimteleden", { ruimte }),
   collegas: (ruimte: string, tekst: string) => invoke<Collega[]>("collegas", { ruimte, tekst }),
   kopieer: (tekst: string) => invoke<void>("kopieer", { tekst }),

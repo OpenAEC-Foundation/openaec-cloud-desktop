@@ -72,6 +72,11 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
         self.binnen.verwijder(bestand).await
     }
 
+    /// Een map die alleen te lezen met mij gedeeld is: ook in de hoofdmap gaat er niets naar de server.
+    fn alleen_lezen(&self) -> bool {
+        self.binnen.alleen_lezen()
+    }
+
     async fn upload_met_voortgang(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>, voortgang: Voortgang<'_>) -> Result<Upload, Fout> {
         self.binnen.upload_met_voortgang(pad, lokaal, basis_versie, voortgang).await
     }
@@ -252,13 +257,19 @@ mod tests {
     struct Proef {
         lijst: Vec<OpslagBestand>,
         gedownload: Mutex<Vec<String>>,
+        geupload: Mutex<Vec<String>>,
+        alleen_lezen: bool,
     }
 
     impl Opslag for Proef {
         async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
             Ok(self.lijst.clone())
         }
+        fn alleen_lezen(&self) -> bool {
+            self.alleen_lezen
+        }
         async fn upload(&self, pad: &str, _lokaal: &Path, _basis: Option<u64>) -> Result<Upload, Fout> {
+            self.geupload.lock().unwrap().push(pad.to_string());
             Ok(Upload { pad: pad.into(), bestand: "x".into(), versie: 1, conflict: false })
         }
         async fn download(&self, bestand: &OpslagBestand, _lokaal: &Path) -> Result<(), Fout> {
@@ -303,5 +314,25 @@ mod tests {
         let r = schil.download_klein(&[(&x, dir.join("a.txt").as_path()), (&y, dir.join("b.txt").as_path())]).await.unwrap();
         assert_eq!(r.len(), 2);
         assert_eq!(*proef.gedownload.lock().unwrap(), vec!["a.txt", "a.txt", "b.txt"]);
+    }
+
+    #[tokio::test]
+    async fn alleen_lezen_gaat_door_en_uploadt_niets() {
+        let dir = std::env::temp_dir().join(format!("openaec-opaanvraag-lezen-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Map")).unwrap();
+        std::fs::write(dir.join("Map").join("nieuw.txt"), "lokaal werk").unwrap();
+        let proef = Proef { alleen_lezen: true, ..Default::default() };
+        for op_aanvraag in [false, true] {
+            let schil = Verkenneropslag::new(&proef, &dir, op_aanvraag, NieuweMappen::Automatisch, &[]);
+            assert!(schil.alleen_lezen());
+            let r = openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+            assert_eq!(r.geupload, 0);
+            assert!(r.overgeslagen.iter().any(|o| o.pad == "Map/nieuw.txt"));
+        }
+        assert!(proef.geupload.lock().unwrap().is_empty());
+        let schrijven = Proef::default();
+        assert!(!Verkenneropslag::new(&schrijven, &dir, true, NieuweMappen::Automatisch, &[]).alleen_lezen());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

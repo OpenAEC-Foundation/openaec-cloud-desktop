@@ -2,7 +2,7 @@
 // de sync. De schermen lezen hieruit en roepen de acties hieronder aan.
 
 import { createSignal } from "solid-js"
-import { api, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
+import { api, type Gedeeld, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
 
 export type Scherm = "overzicht" | "ruimtes" | "delen" | "tools" | "instellingen"
 
@@ -15,6 +15,8 @@ export const [ruimtes, setRuimtes] = createSignal<Ruimte[]>([])
 export const [ruimtesLaden, setRuimtesLaden] = createSignal(false)
 export const [ruimteFout, setRuimteFout] = createSignal("")
 export const [ruimtesOpgehaald, setRuimtesOpgehaald] = createSignal(false)
+/** Wat anderen met mij deelden (mappen en bestanden); leeg op een oudere server. */
+export const [gedeeld, setGedeeld] = createSignal<Gedeeld[]>([])
 export const [koppelingen, setKoppelingen] = createSignal<Koppeling[]>([])
 /** Laatste rapport per gekoppelde map, met het tijdstip ervan. */
 export const [rapporten, setRapporten] = createSignal<Record<string, MapRapport & { tijd: Date }>>({})
@@ -55,6 +57,8 @@ export const laadRuimtes = async (altijd = false) => {
     setRuimtes(await api.ruimtes())
     setRuimteFout("")
     setRuimtesOpgehaald(true)
+    // Een oudere server kent `gedeeld_met_mij` niet: dan is er gewoon niets gedeeld.
+    setGedeeld(await api.gedeeldMetMij().catch(() => []))
   } catch (e) {
     setRuimteFout(String(e))
   }

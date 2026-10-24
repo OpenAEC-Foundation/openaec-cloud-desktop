@@ -18,7 +18,7 @@ export default function Mappenkiezer(props: { koppeling: Koppeling; klaar: (k: K
 
   onMount(async () => {
     try {
-      const b = boom(await api.mappenVan(k.ruimte))
+      const b = boom(await api.mappenVan(k.ruimte, k.lokaal))
       setRegels(b)
       // Diepere niveaus eerst ingeklapt bij een grote ruimte.
       if (b.length > 40) setIngeklapt(new Set(b.filter((r) => r.kinderen && r.diepte >= 0).map((r) => r.pad)))

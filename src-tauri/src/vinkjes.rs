@@ -322,7 +322,8 @@ mod echt {
     pub fn koppel_op_aanvraag(k: &Koppeling) {
         let root = PathBuf::from(&k.lokaal);
         BEHANDELD.lock().unwrap().insert(root.clone());
-        let onder_hoofdmap = root.parent().is_some_and(|h| cloudfilter::eigen_sync_root(&h.to_string_lossy()));
+        // De hoofdmap is de ouder (een ruimte) of de grootouder (een gedeelde map onder "Gedeeld met mij").
+        let onder_hoofdmap = root.ancestors().skip(1).take(2).any(|h| cloudfilter::eigen_sync_root(&h.to_string_lossy()));
         if !onder_hoofdmap {
             log::warn!("statusvinkjes voor {} niet beschikbaar: de hoofdmap is niet geregistreerd", k.lokaal);
             return;

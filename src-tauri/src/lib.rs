@@ -27,7 +27,7 @@ extern "C" {}
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use openaec_sync::api::Ruimte;
+use openaec_sync::api::{Gedeeld, Ruimte};
 use openaec_sync::motor::{aantal_bekend, bekend_bestand, sync_met_opties, Opties, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
@@ -154,22 +154,96 @@ async fn ruimtes(state: tauri::State<'_, AppState>) -> Result<Vec<Ruimte>, Strin
 
 #[tauri::command]
 fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String, lokaal: String) -> Result<Vec<Koppeling>, String> {
-    std::fs::create_dir_all(&lokaal).map_err(fout)?;
+    voeg_koppeling_toe(&state, Koppeling::ruimte(ruimte, ruimte_naam, lokaal))
+}
+
+fn voeg_koppeling_toe(state: &AppState, k: Koppeling) -> Result<Vec<Koppeling>, String> {
+    std::fs::create_dir_all(&k.lokaal).map_err(fout)?;
     let mut inst = state.instellingen.lock().unwrap();
-    if inst.koppelingen.iter().any(|k| Path::new(&k.lokaal) == Path::new(&lokaal)) {
+    if inst.koppelingen.iter().any(|b| Path::new(&b.lokaal) == Path::new(&k.lokaal)) {
         return Err("deze map is al gekoppeld".into());
     }
-    inst.koppelingen.push(Koppeling {
-        ruimte,
-        ruimte_naam,
-        lokaal,
-        uitgesloten: Vec::new(),
-        nieuwe_mappen: Default::default(),
-        bekende_mappen: Vec::new(),
-    });
+    inst.koppelingen.push(k);
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
+}
+
+/// Wat anderen met mij deelden (mappen en bestanden).
+#[tauri::command]
+async fn gedeeld_met_mij(state: tauri::State<'_, AppState>) -> Result<Vec<Gedeeld>, String> {
+    client(&state).await?.gedeeld_met_mij().await.map_err(fout)
+}
+
+/// Een map die met mij gedeeld is koppelen aan een lokale map, net als een ruimte: de sync gebruikt de gedeelde map
+/// als bovenste map, met de rechten van de deling.
+#[tauri::command]
+fn koppel_gedeeld(state: tauri::State<'_, AppState>, gedeeld: Gedeeld, lokaal: String) -> Result<Vec<Koppeling>, String> {
+    if gedeeld.doel_doctype != "Opslagmap" {
+        return Err("alleen een gedeelde map kan gekoppeld worden; een gedeeld bestand open je".into());
+    }
+    voeg_koppeling_toe(&state, gedeelde_koppeling(gedeeld, lokaal)?)
+}
+
+/// De koppeling voor een map die met mij gedeeld is (een gedeeld bestand kan niet).
+fn gedeelde_koppeling(gedeeld: Gedeeld, lokaal: String) -> Result<Koppeling, String> {
+    if gedeeld.doel_doctype != "Opslagmap" {
+        return Err("alleen een gedeelde map kan gekoppeld worden; een gedeeld bestand open je".into());
+    }
+    let mut k = Koppeling::ruimte(gedeeld.ruimte, gedeeld.naam, lokaal);
+    k.deling = Some(gedeeld.deling);
+    k.wortel = Some(gedeeld.doel);
+    k.rechten = Some(gedeeld.rechten);
+    k.gedeeld_door = gedeeld.gedeeld_door_naam.or(gedeeld.gedeeld_door);
+    Ok(k)
+}
+
+/// Een gedeeld bestand of een gedeelde map openen op `/opslag` in de browser (daar ook een nieuwe versie uploaden).
+#[tauri::command]
+fn open_gedeeld(app: AppHandle, state: tauri::State<'_, AppState>, deling: String) -> Result<(), String> {
+    let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
+    #[allow(deprecated)]
+    app.shell().open(format!("{basis}/opslag?deling={deling}"), None).map_err(fout)
+}
+
+/// De opslag voor een koppeling: de hele ruimte, of een gedeelde map als bovenste map.
+fn opslag_voor(client: Client, k: &Koppeling) -> ClientOpslag {
+    match (&k.deling, &k.wortel) {
+        (Some(deling), Some(wortel)) => {
+            ClientOpslag::gedeeld(client, &k.ruimte, deling, wortel, k.rechten.as_deref().unwrap_or("lezen"))
+        }
+        _ => ClientOpslag::new(client, &k.ruimte),
+    }
+}
+
+/// Melding als een gedeelde map niet meer gesynct wordt, bij de foutcode van de server.
+fn gestopt_tekst(naam: &str, foutcode: &str) -> String {
+    let reden = match foutcode {
+        "deling_ingetrokken" => "de deling is ingetrokken",
+        "deling_verlopen" => "de deling is verlopen",
+        "deling_weg" => "de gedeelde map is verwijderd",
+        _ => "de map is niet meer met je gedeeld",
+    };
+    format!("{naam}: {reden}. De koppeling is gestopt; de bestanden op deze computer blijven staan.")
+}
+
+/// Een gedeelde map stopt met syncen (ingetrokken, verlopen, weg): de koppeling gaat eraf, de lokale bestanden blijven
+/// staan, met een melding. Na een lopende ronde gaan ook de statusvinkjes eraf.
+fn stop_koppeling(app: &AppHandle, lokaal: &str, tekst: &str) {
+    let state = app.state::<AppState>();
+    {
+        let mut inst = state.instellingen.lock().unwrap();
+        inst.koppelingen.retain(|k| k.lokaal != lokaal);
+        if let Err(e) = inst.bewaar() {
+            log::warn!("instellingen bewaren mislukt: {e}");
+        }
+        werk_menu_bij(&inst.koppelingen);
+    }
+    let lokaal = lokaal.to_string();
+    let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::ontkoppel(&lokaal));
+    melding(app, tekst);
+    let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
+    let _ = app.emit("koppelingen", &koppelingen);
 }
 
 fn werk_menu_bij(koppelingen: &[Koppeling]) {
@@ -190,9 +264,15 @@ struct Mapkeuze {
 /// Alle mappen van een ruimte (voor "Mappen kiezen…"), gesorteerd, met de omvang per map uit de bestanden op de
 /// server (de hele ruimte in één verzoek als de server dat kent, anders map voor map).
 #[tauri::command]
-async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<Mapkeuze>, String> {
+/// Met `lokaal` die van die koppeling (ook een gedeelde map).
+async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String, lokaal: Option<String>) -> Result<Vec<Mapkeuze>, String> {
     use openaec_sync::motor::Opslag;
-    let opslag = ClientOpslag::new(client(&state).await?, &ruimte);
+    let k = lokaal.and_then(|l| state.instellingen.lock().unwrap().koppelingen.iter().find(|k| k.lokaal == l).cloned());
+    let client = client(&state).await?;
+    let opslag = match &k {
+        Some(k) => opslag_voor(client, k),
+        None => ClientOpslag::new(client, &ruimte),
+    };
     let bestanden = opslag.lijst().await.map_err(fout)?;
     let mappen = opslag.alle_mappen().await.map_err(fout)?;
     let omvang = openaec_sync::selectie::mapomvang(bestanden.iter().map(|b| (b.pad.as_str(), b.grootte)));
@@ -269,10 +349,17 @@ struct MapInhoud {
 const GELIJKTIJDIG: usize = 8;
 
 /// Inhoud van een map in een ruimte op de server (`map` None = hoofdniveau), met per bestand de actieve vergrendeling.
+/// Met `deling` in een map die met mij gedeeld is (hoofdniveau = de gedeelde map).
 #[tauri::command]
-async fn bladeren(state: tauri::State<'_, AppState>, ruimte: String, map: Option<String>) -> Result<MapInhoud, String> {
+async fn bladeren(
+    state: tauri::State<'_, AppState>,
+    ruimte: String,
+    map: Option<String>,
+    deling: Option<String>,
+) -> Result<MapInhoud, String> {
     let client = client(&state).await?;
-    let inhoud = client.bladeren(&ruimte, map.as_deref().filter(|m| !m.is_empty())).await.map_err(fout)?;
+    let map = map.filter(|m| !m.is_empty());
+    let inhoud = client.bladeren_in(&ruimte, deling.as_deref(), map.as_deref()).await.map_err(fout)?;
 
     // Vergrendelingen per bestand ophalen, een paar tegelijk; lukt het niet, dan blijft het veld leeg.
     let rem = std::sync::Arc::new(tokio::sync::Semaphore::new(GELIJKTIJDIG));
@@ -546,8 +633,15 @@ async fn sync_ronde(
         prullenbak: opruimen::prullenbak(),
         ..Default::default()
     };
+    let koppelingen: Vec<Koppeling> = koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))).collect();
+    // Gedeelde mappen: de rechten kunnen veranderd zijn (bijv. van bewerken naar bekijken); volg de server.
+    let koppelingen = if koppelingen.iter().any(|k| k.deling.is_some()) {
+        werk_rechten_bij(state, koppelingen, client.gedeeld_met_mij().await.ok())
+    } else {
+        koppelingen
+    };
     let mut uit = Vec::new();
-    for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
+    for k in koppelingen {
         let root = Path::new(&k.lokaal);
         if !root.is_dir() {
             // Een verwijderde of niet aangesloten map: niet synchroniseren, anders lijkt alles lokaal verwijderd.
@@ -555,10 +649,17 @@ async fn sync_ronde(
             uit.push(MapRapport { lokaal: k.lokaal.clone(), ruimte_naam: k.ruimte_naam.clone(), rapport: None, fout });
             continue;
         }
-        let binnen = ClientOpslag::new(client.clone(), &k.ruimte).met_gelijktijdig(sync.gelijktijdig);
+        let binnen = opslag_voor(client.clone(), &k).met_gelijktijdig(sync.gelijktijdig);
         let opslag = opaanvraag::Verkenneropslag::new(&binnen, root, op_aanvraag.contains(&k.lokaal), k.nieuwe_mappen, &k.bekende_mappen);
         let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
         let mut r = sync_met_opties(&opslag, root, &k.uitgesloten, &waarnemer, &opties).await;
+        // Ingetrokken, verlopen of weg: niet elke ronde opnieuw proberen, maar de koppeling netjes stoppen.
+        if let Some(code) = r.as_ref().err().and_then(|f| f.deling_gestopt()).filter(|_| k.deling.is_some()) {
+            let tekst = gestopt_tekst(&k.ruimte_naam, &code);
+            stop_koppeling(app, &k.lokaal, &tekst);
+            uit.push(MapRapport { lokaal: k.lokaal, ruimte_naam: k.ruimte_naam, rapport: None, fout: Some(tekst) });
+            continue;
+        }
         if let Ok(rapport) = &mut r {
             // Wat de motor zelf deed met een lastige naam (opgeruimd, onder een veilige naam): één melding per map.
             if !rapport.meldingen.is_empty() {
@@ -589,6 +690,30 @@ async fn sync_ronde(
         });
     }
     Ok(uit)
+}
+
+/// De rechten van gedeelde koppelingen gelijk zetten met `gedeeld_met_mij` (als dat lukte) en bewaren als er iets
+/// veranderde. Staat een deling er niet meer in, dan merkt de ronde dat aan de foutcode van de server.
+fn werk_rechten_bij(state: &AppState, mut koppelingen: Vec<Koppeling>, lijst: Option<Vec<Gedeeld>>) -> Vec<Koppeling> {
+    let Some(lijst) = lijst else { return koppelingen };
+    let mut veranderd = false;
+    for k in koppelingen.iter_mut() {
+        let nu = k.deling.as_ref().and_then(|d| lijst.iter().find(|g| &g.deling == d)).map(|g| g.rechten.clone());
+        if nu.is_some() && nu != k.rechten {
+            k.rechten = nu;
+            veranderd = true;
+        }
+    }
+    if veranderd {
+        let mut inst = state.instellingen.lock().unwrap();
+        for k in &koppelingen {
+            if let Some(b) = inst.koppelingen.iter_mut().find(|b| b.lokaal == k.lokaal) {
+                b.rechten = k.rechten.clone();
+            }
+        }
+        let _ = inst.bewaar();
+    }
+    koppelingen
 }
 
 /// Instellingen van de sync (aantal overdrachten tegelijk).
@@ -662,7 +787,7 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
     let client = client(state).await?;
     let (doctype, id) = if Path::new(pad).is_dir() {
         let (k, rel) = zoek(state, pad)?;
-        let id = ClientOpslag::new(client.clone(), &k.ruimte)
+        let id = opslag_voor(client.clone(), &k)
             .zoek_map(&rel)
             .await
             .map_err(fout)?
@@ -682,7 +807,7 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
     }
     let client = client(state).await?;
     let (k, rel) = zoek(state, pad)?;
-    let id = ClientOpslag::new(client.clone(), &k.ruimte)
+    let id = opslag_voor(client.clone(), &k)
         .zoek_map(&rel)
         .await
         .map_err(fout)?
@@ -704,6 +829,38 @@ async fn open_versie(app: AppHandle, state: tauri::State<'_, AppState>, bestand:
     let link = client(&state).await?.download_versie(&id, versie).await.map_err(fout)?;
     #[allow(deprecated)]
     app.shell().open(&link.url, None).map_err(fout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn melding_bij_een_gestopte_deling() {
+        assert_eq!(
+            gestopt_tekst("Tekeningen", "deling_ingetrokken"),
+            "Tekeningen: de deling is ingetrokken. De koppeling is gestopt; de bestanden op deze computer blijven staan."
+        );
+        assert!(gestopt_tekst("T", "deling_verlopen").contains("verlopen"));
+        assert!(gestopt_tekst("T", "deling_weg").contains("verwijderd"));
+        assert!(gestopt_tekst("T", "deling_onbekend").contains("niet meer met je gedeeld"));
+    }
+
+    #[test]
+    fn opslag_voor_een_gedeelde_koppeling() {
+        use openaec_sync::motor::Opslag;
+        let client = Client::new("https://voorbeeld.test", "token a:b");
+        let mut k = Koppeling::ruimte("R1".into(), "Tekeningen".into(), "C:/T".into());
+        assert_eq!(opslag_voor(client.clone(), &k).deling(), None);
+        k.deling = Some("D1".into());
+        k.wortel = Some("M1".into());
+        k.rechten = Some("lezen".into());
+        let opslag = opslag_voor(client.clone(), &k);
+        assert_eq!(opslag.deling(), Some("D1"));
+        assert!(opslag.alleen_lezen());
+        k.rechten = Some("beheren".into());
+        assert!(!opslag_voor(client, &k).alleen_lezen());
+    }
 }
 
 fn melding(app: &AppHandle, tekst: &str) {
@@ -762,13 +919,24 @@ pub(crate) async fn voer_actie(app: AppHandle, actie: String, pad: String) {
 
 /// Maak van een lokale map een cloud-map (alleen Windows): bestanden van de ruimte verschijnen als
 /// placeholder en worden pas opgehaald als je ze opent. Geeft het aantal placeholders terug.
+/// Met `gedeeld` een map die met mij gedeeld is: de placeholders komen uit die map (de hydrator downloadt met de
+/// rechten van de deling).
 #[tauri::command]
-async fn maak_cloudmap(state: tauri::State<'_, AppState>, ruimte: String, lokaal: String) -> Result<u32, String> {
+async fn maak_cloudmap(
+    state: tauri::State<'_, AppState>,
+    ruimte: String,
+    lokaal: String,
+    gedeeld: Option<Gedeeld>,
+) -> Result<u32, String> {
     #[cfg(windows)]
     {
         use openaec_sync::motor::Opslag;
         let client = client(&state).await?;
-        let bestanden = ClientOpslag::new(client.clone(), &ruimte).lijst().await.map_err(fout)?;
+        let opslag = match &gedeeld {
+            Some(g) => ClientOpslag::gedeeld(client.clone(), &g.ruimte, &g.deling, &g.doel, &g.rechten),
+            None => ClientOpslag::new(client.clone(), &ruimte),
+        };
+        let bestanden = opslag.lijst().await.map_err(fout)?;
         std::fs::create_dir_all(&lokaal).map_err(fout)?;
         cloudfilter::register(&lokaal, "OpenAEC Storage", env!("CARGO_PKG_VERSION")).map_err(fout)?;
         cloudfilter::set_hydrator(hydrator(client));
@@ -789,7 +957,7 @@ async fn maak_cloudmap(state: tauri::State<'_, AppState>, ruimte: String, lokaal
     }
     #[cfg(not(windows))]
     {
-        let _ = (&state, &ruimte, &lokaal);
+        let _ = (&state, &ruimte, &lokaal, &gedeeld);
         Err("cloud-mappen zijn alleen op Windows beschikbaar".into())
     }
 }
@@ -892,6 +1060,9 @@ pub fn run() {
             verbreek,
             ruimtes,
             koppel,
+            gedeeld_met_mij,
+            koppel_gedeeld,
+            open_gedeeld,
             ontkoppel,
             sync_nu,
             vergrendel,
@@ -908,6 +1079,7 @@ pub fn run() {
             hoofdmap::hoofdmap_status,
             hoofdmap::zet_hoofdmap,
             hoofdmap::koppel_in_hoofdmap,
+            hoofdmap::koppel_gedeeld_in_hoofdmap,
             hoofdmap::verplaats_naar_hoofdmap,
             bladeren,
             overzicht,
@@ -932,6 +1104,8 @@ pub fn run() {
             delen::maak_link,
             delen::delingen_van,
             delen::trek_deling_in,
+            delen::wijzig_deling,
+            delen::toegang_van,
             delen::ruimteleden,
             delen::collegas,
             delen::kopieer,

@@ -13,6 +13,11 @@
 //! onder een veilige naam (`nul_`). Komt zo'n naam van de server (een andere computer), dan staat hij hier onder de
 //! veilige naam; de toestand onthoudt de koppeling, zodat een wijziging terug gaat naar de oorspronkelijke naam.
 //! Bestanden op de negeerlijst ([`Negeerlijst`]) doen niet mee.
+//!
+//! Alleen lezen ([`Opslag::alleen_lezen`], een map die met mij gedeeld is om te bekijken): er gaat niets naar de
+//! server. Een lokaal nieuw of gewijzigd bestand blijft staan en komt in [`Rapport::overgeslagen`] met de reden
+//! [`ALLEEN_LEZEN`] (elke ronde, zonder fout en zonder opnieuw te proberen); een lokaal verwijderd bestand komt terug
+//! van de server. Wijzigingen op de server komen gewoon binnen, behalve over een lokaal gewijzigd bestand.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -31,6 +36,8 @@ use crate::{Fout, MAX_GELIJKTIJDIG, STANDAARD_GELIJKTIJDIG};
 
 /// Map in de gesynchroniseerde map waarin de motor zijn toestand bewaart; wordt zelf niet gesynchroniseerd.
 pub const TOESTANDSMAP: &str = ".openaec";
+/// Begin van de reden bij een overgeslagen bestand in een map die alleen te lezen is (zie [`Opslag::alleen_lezen`]).
+pub const ALLEEN_LEZEN: &str = "alleen lezen gedeeld";
 const TIJDELIJK_EXT: &str = "openaec-download";
 
 /// Een bestand op de server, met zijn pad binnen de ruimte (met '/').
@@ -69,6 +76,12 @@ pub trait Opslag {
     async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout>;
     async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout>;
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout>;
+
+    /// Is deze opslag alleen te lezen (een map die met mij gedeeld is om te bekijken)? Dan stuurt de motor niets naar
+    /// de server. Standaard niet.
+    fn alleen_lezen(&self) -> bool {
+        false
+    }
 
     /// Upload met bytevoortgang; standaard zonder tussenstanden.
     async fn upload_met_voortgang(
@@ -770,16 +783,20 @@ pub async fn sync_met_opties<O: Opslag>(
         })
         .collect();
 
-    // Vooraf melden hoeveel er over de lijn gaat (een verwijdering op de server telt niet mee).
+    // Vooraf melden hoeveel er over de lijn gaat (een verwijdering op de server telt niet mee). Alleen lezen: geen
+    // uploads, en een lokaal verwijderd bestand komt terug.
+    let alleen_lezen = opslag.alleen_lezen();
     let (mut uploaden, mut downloaden, mut bytes) = (0u32, 0u32, 0u64);
     for (pad, lokaal_gewijzigd, server_gewijzigd) in &wijzigingen {
         if uitgesloten_pad(pad, uitgesloten) && !lokaal_gewijzigd {
             continue;
         }
         if *lokaal_gewijzigd {
-            uploaden += 1;
-            bytes += lokaal.get(pad).map_or(0, |(g, _)| *g);
-        } else if let Some(s) = server.get(pad).filter(|_| *server_gewijzigd) {
+            if !alleen_lezen {
+                uploaden += 1;
+                bytes += lokaal.get(pad).map_or(0, |(g, _)| *g);
+            }
+        } else if let Some(s) = server.get(pad).filter(|_| *server_gewijzigd || (alleen_lezen && !lokaal.contains_key(pad))) {
             downloaden += 1;
             bytes += s.grootte;
         }
@@ -810,6 +827,16 @@ pub async fn sync_met_opties<O: Opslag>(
             continue;
         }
         match (hier, op_server) {
+            (true, _) if lokaal_gewijzigd && alleen_lezen => {
+                // Niets naar de server: het lokale werk blijft staan, met een melding (geen fout, geen nieuwe poging).
+                let reden = match (bekend.is_some(), op_server.is_some()) {
+                    (true, true) => "lokaal gewijzigd; gaat niet naar de server",
+                    (true, false) => "lokaal gewijzigd en op de server verwijderd; blijft hier staan",
+                    (false, _) => "nieuw op deze computer; gaat niet naar de server",
+                };
+                let pad = ronde.rel(&pad);
+                ronde.rapport.lock().unwrap().overgeslagen.push(Overgeslagen { pad, reden: format!("{ALLEEN_LEZEN}: {reden}"), opruimbaar: false });
+            }
             (true, Some(server)) => {
                 if lokaal_gewijzigd {
                     let basis = bekend.as_ref().map(|b| b.versie);
@@ -830,7 +857,7 @@ pub async fn sync_met_opties<O: Opslag>(
                 }
             }
             (false, Some(server)) => {
-                if bekend.is_some() && !server_gewijzigd {
+                if bekend.is_some() && !server_gewijzigd && !alleen_lezen {
                     verwijderingen.push(Taak::VerwijderServer { pad, server: server.clone() });
                 } else {
                     overdrachten.push(Taak::Download { pad, server: server.clone() });
@@ -866,6 +893,8 @@ pub async fn sync_met_opties<O: Opslag>(
     for u in uitgesloten.iter().map(|u| u.trim_matches('/')).filter(|u| !u.is_empty()) {
         ruim_lege_mappen_op(&lokaal_pad(root, u));
     }
+    // Ook wat bij alleen lezen niet naar de server ging, staat in de lijst met overgeslagen bestanden.
+    ronde.toestand.lock().unwrap().overgeslagen = ronde.rapport.lock().unwrap().overgeslagen.clone();
     bewaar(root, &ronde.toestand.lock().unwrap())?;
     Ok(ronde.rapport.into_inner().unwrap())
 }

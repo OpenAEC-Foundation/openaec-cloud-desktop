@@ -3,6 +3,7 @@ import { ask, open } from "@tauri-apps/plugin-dialog"
 import { api, type Koppeling, type KoppelOvergeslagen, type MapRapport } from "../lib/api"
 import Mappenkiezer from "../Mappenkiezer"
 import OvergeslagenLijst from "../OvergeslagenLijst"
+import { rechtenTekst } from "../lib/delen"
 import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
   bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
@@ -150,7 +151,13 @@ export default function Overzicht() {
     })
   }
 
-  const soortVan = (k: Koppeling) => soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
+  // Een gedeelde map: wie hem deelde en wat je kunt, in plaats van de soort ruimte.
+  const soortVan = (k: Koppeling) =>
+    k.deling
+      ? ["gedeeld", k.gedeeld_door ? `door ${k.gedeeld_door}` : "", rechtenTekst("gebruiker", k.rechten ?? "lezen").toLowerCase()]
+          .filter(Boolean)
+          .join(" · ")
+      : soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
 
   return (
     <div class="scherm">

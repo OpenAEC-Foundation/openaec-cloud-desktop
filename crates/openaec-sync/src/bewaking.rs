@@ -29,10 +29,15 @@ pub fn telt_mee(root: &Path, pad: &Path) -> bool {
 
 /// Zijn er wijzigingen in de ruimte na `sinds`? Geeft ook de nieuwe cursor (loopt alle pagina's af).
 pub async fn nieuwe_wijzigingen(client: &Client, ruimte: &str, sinds: u64) -> Result<(bool, u64), Fout> {
+    nieuwe_wijzigingen_in(client, ruimte, None, sinds).await
+}
+
+/// Als [`nieuwe_wijzigingen`]; met `deling` alleen de wijzigingen binnen de gedeelde map.
+pub async fn nieuwe_wijzigingen_in(client: &Client, ruimte: &str, deling: Option<&str>, sinds: u64) -> Result<(bool, u64), Fout> {
     let mut cursor = sinds;
     let mut iets = false;
     loop {
-        let pagina = client.wijzigingen(ruimte, cursor).await?;
+        let pagina = client.wijzigingen_in(ruimte, deling, cursor).await?;
         iets |= !pagina.wijzigingen.is_empty();
         cursor = pagina.cursor.max(cursor);
         if !pagina.meer {

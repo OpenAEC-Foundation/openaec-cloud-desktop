@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-use crate::instellingen::{self, submapnaam, Koppeling};
+use crate::instellingen::{self, submapnaam, Koppeling, GEDEELD_MET_MIJ};
 use crate::{fout, werk_menu_bij, AppState};
 
 /// Naam van het item in het navigatiepaneel.
@@ -175,7 +175,41 @@ fn bezette_namen(hoofdmap: &Path, koppelingen: &[Koppeling]) -> Vec<String> {
         .map(|r| r.flatten().map(|i| i.file_name().to_string_lossy().to_string()).collect())
         .unwrap_or_default();
     namen.extend(koppelingen.iter().filter_map(|k| Path::new(&k.lokaal).file_name().map(|n| n.to_string_lossy().to_string())));
+    namen.push(GEDEELD_MET_MIJ.to_string());
     namen
+}
+
+/// Waar een koppeling in de hoofdmap komt: een ruimte direct eronder, een gedeelde map onder "Gedeeld met mij".
+fn plek_in_hoofdmap(hoofdmap: &Path, k: &Koppeling, koppelingen: &[Koppeling]) -> PathBuf {
+    if k.deling.is_some() {
+        let map = hoofdmap.join(GEDEELD_MET_MIJ);
+        let bezet: Vec<String> = std::fs::read_dir(&map)
+            .map(|r| r.flatten().map(|i| i.file_name().to_string_lossy().to_string()).collect())
+            .unwrap_or_default();
+        map.join(submapnaam(&k.ruimte_naam, &bezet))
+    } else {
+        hoofdmap.join(submapnaam(&k.ruimte_naam, &bezette_namen(hoofdmap, koppelingen)))
+    }
+}
+
+/// Is dit dezelfde ruimte of dezelfde gedeelde map?
+fn zelfde_bron(a: &Koppeling, b: &Koppeling) -> bool {
+    a.ruimte == b.ruimte && a.deling == b.deling
+}
+
+/// Een map die met mij gedeeld is, synchroniseren in de hoofdmap, onder "Gedeeld met mij".
+#[tauri::command]
+pub fn koppel_gedeeld_in_hoofdmap(state: tauri::State<'_, AppState>, gedeeld: openaec_sync::api::Gedeeld) -> Result<Vec<Koppeling>, String> {
+    let hoofdmap = PathBuf::from(state.instellingen.lock().unwrap().hoofdmap.clone().ok_or("stel eerst de hoofdmap in")?);
+    let mut k = crate::gedeelde_koppeling(gedeeld, String::new())?;
+    {
+        let inst = state.instellingen.lock().unwrap();
+        if inst.koppelingen.iter().any(|o| zelfde_bron(o, &k) && inst.in_hoofdmap(o)) {
+            return Err("deze map staat al in de hoofdmap".into());
+        }
+        k.lokaal = plek_in_hoofdmap(&hoofdmap, &k, &inst.koppelingen).to_string_lossy().to_string();
+    }
+    crate::voeg_koppeling_toe(&state, k)
 }
 
 /// Een ruimte synchroniseren in de hoofdmap: een submap met de naam van de ruimte.
@@ -183,20 +217,13 @@ fn bezette_namen(hoofdmap: &Path, koppelingen: &[Koppeling]) -> Vec<String> {
 pub fn koppel_in_hoofdmap(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String) -> Result<Vec<Koppeling>, String> {
     let mut inst = state.instellingen.lock().unwrap();
     let hoofdmap = PathBuf::from(inst.hoofdmap.clone().ok_or("stel eerst de hoofdmap in")?);
-    if inst.koppelingen.iter().any(|k| k.ruimte == ruimte && inst.in_hoofdmap(k)) {
+    if inst.koppelingen.iter().any(|k| k.ruimte == ruimte && k.deling.is_none() && inst.in_hoofdmap(k)) {
         return Err("deze ruimte staat al in de hoofdmap".into());
     }
     let naam = submapnaam(&ruimte_naam, &bezette_namen(&hoofdmap, &inst.koppelingen));
     let lokaal = hoofdmap.join(naam).to_string_lossy().to_string();
     std::fs::create_dir_all(&lokaal).map_err(fout)?;
-    inst.koppelingen.push(Koppeling {
-        ruimte,
-        ruimte_naam,
-        lokaal,
-        uitgesloten: Vec::new(),
-        nieuwe_mappen: Default::default(),
-        bekende_mappen: Vec::new(),
-    });
+    inst.koppelingen.push(Koppeling::ruimte(ruimte, ruimte_naam, lokaal));
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
@@ -208,24 +235,26 @@ pub fn koppel_in_hoofdmap(state: tauri::State<'_, AppState>, ruimte: String, rui
 #[tauri::command]
 pub async fn verplaats_naar_hoofdmap(state: tauri::State<'_, AppState>, lokaal: String) -> Result<Vec<Koppeling>, String> {
     let _slot = state.bezig.lock().await;
-    let (hoofdmap, k, bezet) = {
+    let (k, doel) = {
         let inst = state.instellingen.lock().unwrap();
         let hoofdmap = PathBuf::from(inst.hoofdmap.clone().ok_or("stel eerst de hoofdmap in")?);
         let k = inst.koppelingen.iter().find(|k| k.lokaal == lokaal).cloned().ok_or("deze map is niet gekoppeld")?;
         if inst.in_hoofdmap(&k) {
             return Err("deze ruimte staat al in de hoofdmap".into());
         }
-        if inst.koppelingen.iter().any(|o| o.ruimte == k.ruimte && inst.in_hoofdmap(o)) {
+        if inst.koppelingen.iter().any(|o| zelfde_bron(o, &k) && inst.in_hoofdmap(o)) {
             return Err("deze ruimte staat al in de hoofdmap".into());
         }
-        let bezet = bezette_namen(&hoofdmap, &inst.koppelingen);
-        (hoofdmap, k, bezet)
+        let doel = plek_in_hoofdmap(&hoofdmap, &k, &inst.koppelingen);
+        (k, doel)
     };
-    let doel = hoofdmap.join(submapnaam(&k.ruimte_naam, &bezet));
     let (van, naar) = (PathBuf::from(&k.lokaal), doel.clone());
     tauri::async_runtime::spawn_blocking(move || {
         if !van.is_dir() {
             return Err("de map bestaat niet (meer) op deze computer".to_string());
+        }
+        if let Some(ouder) = naar.parent() {
+            std::fs::create_dir_all(ouder).map_err(|e| e.to_string())?;
         }
         crate::vinkjes::ontkoppel(&van.to_string_lossy());
         std::fs::rename(&van, &naar).map_err(|e| {

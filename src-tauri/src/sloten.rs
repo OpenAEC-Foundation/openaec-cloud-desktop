@@ -41,11 +41,12 @@ pub fn slottekst(v: &Vergrendeling) -> String {
     format!("Vergrendeld door {}{tot}", v.gebruiker)
 }
 
-/// Wijzigingen na `sinds` (alle pagina's): of er een ronde nodig is, de nieuwe cursor en de slotgebeurtenissen.
-pub async fn wijzigingen(client: &Client, ruimte: &str, sinds: u64) -> Result<(bool, u64, BTreeMap<String, bool>), Fout> {
+/// Wijzigingen na `sinds` (alle pagina's; met `deling` alleen binnen de gedeelde map): of er een ronde nodig is, de
+/// nieuwe cursor en de slotgebeurtenissen.
+pub async fn wijzigingen(client: &Client, ruimte: &str, deling: Option<&str>, sinds: u64) -> Result<(bool, u64, BTreeMap<String, bool>), Fout> {
     let (mut cursor, mut ronde, mut alle) = (sinds, false, Vec::new());
     loop {
-        let pagina = client.wijzigingen(ruimte, cursor).await?;
+        let pagina = client.wijzigingen_in(ruimte, deling, cursor).await?;
         ronde |= pagina.wijzigingen.iter().any(vraagt_ronde);
         cursor = pagina.cursor.max(cursor);
         alle.extend(pagina.wijzigingen);

@@ -1,11 +1,14 @@
 // Deelvenster: een bestand of map delen met een collega of met een link, en zien wie er toegang heeft. Opent vanuit
 // "Delen…" in het rechtermuismenu van de Verkenner (met een lokaal pad) of vanuit de bestandsweergave van Ruimtes.
+// Met een collega delen kan als "Kan bekijken", "Kan bewerken" of "Kan beheren" (mag ook delen). Wat je zelf mag, zegt de
+// server (`toegang`): je geeft nooit meer dan je zelf hebt, en de knoppen om te delen, de rol te wijzigen en in te trekken
+// staan er alleen als je hier mag delen.
 
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "solid-js"
-import { api, type Collega, type Deeldoel, type Deelverzoek, type DelingRegel, type Ruimtelid } from "./lib/api"
+import { api, type Collega, type Deeldoel, type Deelverzoek, type DelingRegel, type Ruimtelid, type Toegang } from "./lib/api"
 import {
-  collegaRechten, collegaTekst, controleerVervaldatum, datumWaarde, delingDetails, delingVerlopen, geldigEmail, leesFout,
-  linkRechten, rechtenTekst, rolTekst,
+  collegaTekst, controleerVervaldatum, datumWaarde, delingDetails, delingVerlopen, geldigEmail, leesFout,
+  linkRechten, rang, rechtenTekst, rolTekst, toegestaneRechten,
   vervaldatumTekst, type Deelfout,
 } from "./lib/delen"
 import { naamVan, servertijd } from "./lib/opmaak"
@@ -48,6 +51,15 @@ export default function Deelvenster() {
 
   const [bezig, setBezig] = createSignal("")
   const [melding, setMelding] = createSignal("")
+
+  // Wat ik hier mag (null: nog niet bekend). Tot het antwoord er is, gelden de oude regels: delen tot en met bewerken.
+  const [toegang, setToegang] = createSignal<Toegang | null>(null)
+  const [lijstVerborgen, setLijstVerborgen] = createSignal(false)
+  const magDelen = () => toegang()?.mag_delen ?? true
+  const keuzes = () => toegestaneRechten(toegang()?.max_rechten ?? "schrijven")
+  /** Mag ik de rol van deze collega wijzigen? Alleen als ik hier deel en hij niet meer heeft dan ik mag geven. */
+  const magWijzigen = (d: DelingRegel) =>
+    magDelen() && d.soort === "gebruiker" && rang(d.rechten) <= rang(toegang()?.max_rechten ?? "schrijven")
 
   const isMap = () => doel()?.doctype === "Opslagmap"
   const lid = () => {
@@ -104,6 +116,8 @@ export default function Deelvenster() {
     setLijstFout(null)
     setIntrekken("")
     setMelding("")
+    setToegang(null)
+    setLijstVerborgen(false)
     if (v.doel) {
       setPad(v.doel.pad)
       setDoel(v.doel)
@@ -120,18 +134,25 @@ export default function Deelvenster() {
       setDelingen(await api.delingenVan(d))
       setLijstFout(null)
     } catch (e) {
-      setLijstFout(leesFout(e))
+      // Wie via een deling alleen bekijkt of bewerkt, ziet niet wie er nog meer toegang heeft.
+      if (leesFout(e).code === "geen_beheerrecht") setDelingen(null)
+      setLijstFout(leesFout(e).code === "geen_beheerrecht" ? null : leesFout(e))
+      setLijstVerborgen(leesFout(e).code === "geen_beheerrecht")
     }
   }
 
   // Ander doel: delingen en leden van de ruimte ophalen. Lukt het ophalen van de leden niet (bijv. alleen toegang
   // via een deling), dan blijft de lijst leeg en typ je het e-mailadres zelf.
   createEffect(
-    on(doel, (d) => {
+    on(doel, async (d) => {
       if (!d) return
-      laadDelingen()
       api.ruimteleden(d.ruimte).then(setLeden).catch(() => setLeden([]))
-      zoekCollegas("")
+      const t = await api.toegangVan(d).catch(() => null)
+      if (doel() !== d) return
+      setToegang(t)
+      if (!keuzes().some((k) => k.waarde === collegaRecht())) setCollegaRecht("lezen")
+      laadDelingen()
+      if (magDelen()) zoekCollegas("")
     }),
   )
 
@@ -190,6 +211,20 @@ export default function Deelvenster() {
       .then(() => setMelding("Link staat op het klembord"))
       .catch((e) => setMelding(leesFout(e).melding))
 
+  /** De rol van een collega wijzigen (bekijken, bewerken of beheren). */
+  const wijzigRol = (d: DelingRegel, rechten: string) => {
+    if (rechten === d.rechten) return
+    doe("wijzigen", async () => {
+      try {
+        await api.wijzigDeling(d.deling, rechten)
+        setMelding(`${d.gebruiker}: ${rechtenTekst("gebruiker", rechten).toLowerCase()}`)
+      } catch (e) {
+        setLijstFout(leesFout(e))
+      }
+      await laadDelingen()
+    })
+  }
+
   /** Intrekken in twee klikken: de eerste vraagt om bevestiging. */
   const trekIn = (d: DelingRegel) => {
     if (intrekken() !== d.deling) return setIntrekken(d.deling)
@@ -235,7 +270,17 @@ export default function Deelvenster() {
           </Show>
         </Show>
 
-        <Show when={doel()}>
+        <Show when={doel() && !magDelen()}>
+          <section class="deel-sectie">
+            <h2>Je toegang</h2>
+            <p class="uitleg">
+              Jouw rol hier: {rechtenTekst("gebruiker", toegang()?.rechten ?? "lezen").toLowerCase()}. Verder delen mag wie{" "}
+              {isMap() ? "deze map" : "dit bestand"} beheert; vraag het aan een beheerder of aan wie het met je deelde.
+            </p>
+          </section>
+        </Show>
+
+        <Show when={doel() && magDelen()}>
           <section class="deel-sectie">
             <h2>Met een collega</h2>
             <p class="uitleg">
@@ -261,7 +306,7 @@ export default function Deelvenster() {
               <label>
                 Rechten
                 <select value={collegaRecht()} onChange={(e) => setCollegaRecht(e.currentTarget.value)}>
-                  <For each={collegaRechten}>{(k) => <option value={k.waarde}>{k.tekst}</option>}</For>
+                  <For each={keuzes()}>{(k) => <option value={k.waarde}>{k.tekst}</option>}</For>
                 </select>
               </label>
               <button class="primair" disabled={!!bezig() || !collega().trim()} onClick={delen}>
@@ -277,7 +322,9 @@ export default function Deelvenster() {
                   Al lid van {doel()!.ruimte_naam} ({rolTekst(l().rol).toLowerCase()}).
                   {collegaRecht() === "schrijven" && !["beheerder", "schrijver"].includes(l().rol)
                     ? " Met Kan bewerken mag deze collega hier ook wijzigen."
-                    : ""}
+                    : collegaRecht() === "beheren" && l().rol !== "beheerder"
+                      ? " Met Kan beheren mag deze collega hier ook verder delen."
+                      : ""}
                 </p>
               )}
             </Show>
@@ -345,7 +392,7 @@ export default function Deelvenster() {
             </Show>
           </section>
 
-          <section class="deel-sectie">
+          <section class="deel-sectie" hidden={lijstVerborgen()}>
             <div class="deel-sectiekop">
               <h2>Wie heeft toegang</h2>
               <button class="tekstknop" onClick={laadDelingen}>
@@ -375,7 +422,7 @@ export default function Deelvenster() {
                           </span>
                           <span class="meta">
                             {[
-                              rechtenTekst(d.soort, d.rechten),
+                              magWijzigen(d) ? "" : rechtenTekst(d.soort, d.rechten),
                               d.verlopen === true && !d.verloopt ? "Verlopen" : vervaldatumTekst(d.verloopt),
                               d.gemaakt ? `gemaakt ${servertijd(d.gemaakt)}` : "",
                               delingDetails(d),
@@ -385,14 +432,27 @@ export default function Deelvenster() {
                           </span>
                         </div>
                         <div class="knoppen">
+                          <Show when={magWijzigen(d)}>
+                            <select
+                              class="klein"
+                              aria-label={`Rol van ${d.gebruiker}`}
+                              value={d.rechten}
+                              disabled={!!bezig()}
+                              onChange={(e) => wijzigRol(d, e.currentTarget.value)}
+                            >
+                              <For each={keuzes()}>{(k) => <option value={k.waarde}>{k.tekst}</option>}</For>
+                            </select>
+                          </Show>
                           <Show when={d.url}>
                             <button class="klein" onClick={() => kopieer(d.url!)}>
                               Kopiëren
                             </button>
                           </Show>
-                          <button class="klein gevaar-licht" disabled={!!bezig()} onClick={() => trekIn(d)}>
-                            {intrekken() === d.deling ? "Zeker intrekken?" : "Intrekken"}
-                          </button>
+                          <Show when={magDelen()}>
+                            <button class="klein gevaar-licht" disabled={!!bezig()} onClick={() => trekIn(d)}>
+                              {intrekken() === d.deling ? "Zeker intrekken?" : "Intrekken"}
+                            </button>
+                          </Show>
                         </div>
                       </li>
                     )}

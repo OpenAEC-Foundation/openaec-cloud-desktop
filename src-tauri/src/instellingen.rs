@@ -23,6 +23,34 @@ pub struct Koppeling {
     /// in staat weg.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bekende_mappen: Vec<String>,
+    /// Een map die met mij gedeeld is (geen hele ruimte): de deling, de gedeelde map (de wortel), de rechten
+    /// (`lezen`, `schrijven` of `beheren`) en wie hem deelde. `ruimte_naam` is dan de naam van de map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deling: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wortel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rechten: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gedeeld_door: Option<String>,
+}
+
+impl Koppeling {
+    /// Een koppeling aan een hele ruimte.
+    pub fn ruimte(ruimte: String, ruimte_naam: String, lokaal: String) -> Self {
+        Self {
+            ruimte,
+            ruimte_naam,
+            lokaal,
+            uitgesloten: Vec::new(),
+            nieuwe_mappen: Default::default(),
+            bekende_mappen: Vec::new(),
+            deling: None,
+            wortel: None,
+            rechten: None,
+            gedeeld_door: None,
+        }
+    }
 }
 
 /// Hoe de sync werkt (voor alle gekoppelde mappen).
@@ -89,10 +117,16 @@ pub fn submapnaam(ruimte_naam: &str, bestaand: &[String]) -> String {
     (2..).map(|i| format!("{schoon} ({i})")).find(|n| !bezet(n)).unwrap()
 }
 
+/// Submap van de hoofdmap voor mappen die met mij gedeeld zijn (`<hoofdmap>\Gedeeld met mij\<naam>`).
+pub const GEDEELD_MET_MIJ: &str = "Gedeeld met mij";
+
 impl Instellingen {
-    /// Staat deze koppeling in de hoofdmap (een ruimte met bestanden op aanvraag)?
+    /// Staat deze koppeling in de hoofdmap (bestanden op aanvraag)? Een ruimte direct eronder, een gedeelde map onder
+    /// [`GEDEELD_MET_MIJ`].
     pub fn in_hoofdmap(&self, k: &Koppeling) -> bool {
-        self.hoofdmap.as_deref().is_some_and(|h| std::path::Path::new(&k.lokaal).parent() == Some(std::path::Path::new(h)))
+        let Some(h) = self.hoofdmap.as_deref().map(std::path::Path::new) else { return false };
+        let ouder = std::path::Path::new(&k.lokaal).parent();
+        ouder == Some(h) || (k.deling.is_some() && ouder == Some(h.join(GEDEELD_MET_MIJ).as_path()))
     }
 }
 
@@ -162,5 +196,28 @@ mod tests {
         assert!(!inst.in_hoofdmap(&k));
         k.lokaal = pad(&hoofdmap.join("P").join("Sub"));
         assert!(!inst.in_hoofdmap(&k));
+        // Een gedeelde map onder "Gedeeld met mij"; een ruimte daar niet.
+        k.lokaal = pad(&hoofdmap.join(GEDEELD_MET_MIJ).join("Tekeningen"));
+        assert!(!inst.in_hoofdmap(&k));
+        k.deling = Some("D1".into());
+        assert!(inst.in_hoofdmap(&k));
+    }
+
+    #[test]
+    fn een_oude_koppeling_is_een_hele_ruimte() {
+        let k: Koppeling = serde_json::from_str(r#"{"ruimte":"R1","ruimte_naam":"Project","lokaal":"C:\\P"}"#).unwrap();
+        assert!(k.deling.is_none() && k.rechten.is_none());
+        // En zo blijft hij ook bewaard: zonder de velden van een deling.
+        assert!(!serde_json::to_string(&k).unwrap().contains("deling"));
+    }
+
+    #[test]
+    fn gedeelde_koppeling_met_rechten() {
+        let mut k = Koppeling::ruimte("R1".into(), "Tekeningen".into(), "C:\\T".into());
+        k.deling = Some("D1".into());
+        k.wortel = Some("M1".into());
+        k.rechten = Some("beheren".into());
+        let terug: Koppeling = serde_json::from_str(&serde_json::to_string(&k).unwrap()).unwrap();
+        assert_eq!((terug.deling.as_deref(), terug.wortel.as_deref()), (Some("D1"), Some("M1")));
     }
 }

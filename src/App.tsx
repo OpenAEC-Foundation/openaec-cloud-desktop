@@ -114,6 +114,8 @@ export default function App() {
         if (actie === "versies") toonVersies()
       }),
       await api.opSync(verwerkSync),
+      // Een gedeelde map die is ingetrokken of verlopen, stopt met syncen: de koppeling is er dan niet meer.
+      await api.opKoppelingen(setKoppelingen),
       await api.opActiviteit(setStand),
       await api.opQuotum(setQuotum),
       // Het venster komt (weer) in beeld vanuit het systeemvak: ruimtes en overzicht verversen.

@@ -3,16 +3,19 @@
 //! rechtermuismenu van de Verkenner (met een lokaal pad, dat het venster eerst laat opzoeken) of vanuit de
 //! bestandsweergave van Ruimtes (met het id op de server). Fouten krijgen een vaste code, zodat het venster de
 //! juiste uitleg toont: geen verbinding, geen rechten, een gearchiveerde ruimte of een onbekende gebruiker.
+//!
+//! Met een collega delen kan met de rol bekijken (`lezen`), bewerken (`schrijven`) of beheren (`beheren`: ook verder
+//! delen en de toegang daar regelen). Wat de gebruiker zelf mag, vraagt het venster aan de server (`toegang_van`):
+//! nooit meer rechten geven dan je zelf hebt, en wie niet mag delen, ziet alleen wat hij zelf kan.
 
 use std::path::Path;
 
-use openaec_sync::api::{Collega, Ruimtelid};
-use openaec_sync::opslag::ClientOpslag;
+use openaec_sync::api::{Collega, Ruimtelid, Toegang};
 use openaec_sync::Fout;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{bestand_id, client, systeemvak, zoek, AppState};
+use crate::{bestand_id, client, opslag_voor, systeemvak, zoek, AppState};
 
 pub const VENSTER: &str = "delen";
 
@@ -75,6 +78,17 @@ pub fn deelfout(f: &Fout) -> DeelFout {
             "Deze ruimte is gearchiveerd en alleen te lezen: delen en intrekken kan niet. Vraag een beheerder om hem terug te zetten.",
         );
     }
+    match f.foutcode().as_deref() {
+        Some("geen_beheerrecht") => {
+            return melding(
+                "geen_beheerrecht",
+                "Je kunt dit niet verder delen: dat mag wie het beheert. Vraag het aan wie het met je deelde.",
+            )
+        }
+        Some("meer_dan_eigen_recht") => return melding("meer_dan_eigen_recht", "Je kunt niet meer rechten geven dan je zelf hebt."),
+        Some("buiten_deling") => return melding("buiten_deling", "Dit valt buiten wat met je gedeeld is."),
+        _ => {}
+    }
     let server = f.servermelding();
     // Nieuwere servers geven een foutcode; een oudere alleen de melding.
     if f.foutcode().as_deref() == Some("gebruiker_onbekend") || server.as_deref().is_some_and(|m| m.contains("bestaande gebruiker")) {
@@ -92,14 +106,14 @@ pub fn deelfout(f: &Fout) -> DeelFout {
     }
 }
 
-/// Mogen deze rechten bij deze soort deling? Bewerken alleen met een collega, bestanden opvragen alleen met een link
-/// naar een map (dezelfde regels als de server, maar met een melding voordat er iets verstuurd wordt).
+/// Mogen deze rechten bij deze soort deling? Bewerken en beheren alleen met een collega, bestanden opvragen alleen met
+/// een link naar een map (dezelfde regels als de server, maar met een melding voordat er iets verstuurd wordt).
 pub fn controleer_rechten(doctype: &str, soort: &str, rechten: &str) -> Result<(), DeelFout> {
     if doctype != "Opslagbestand" && doctype != "Opslagmap" {
         return Err("alleen mappen en bestanden kunnen gedeeld worden".into());
     }
     match (soort, rechten) {
-        ("gebruiker", "lezen" | "schrijven") | ("link", "lezen") => Ok(()),
+        ("gebruiker", "lezen" | "schrijven" | "beheren") | ("link", "lezen") => Ok(()),
         ("link", "uploaden") if doctype == "Opslagmap" => Ok(()),
         ("link", "uploaden") => Err("bestanden opvragen kan alleen voor een map".into()),
         _ => Err(format!("deze rechten passen niet bij delen via een {soort}").into()),
@@ -166,13 +180,18 @@ pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<
     let (k, rel) = zoek(&state, &pad)?;
     let naam = Path::new(&pad).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| pad.clone());
     let (doctype, id) = if Path::new(&pad).is_dir() {
+        if rel.is_empty() && k.deling.is_some() {
+            // De gedeelde map zelf: die deelt wie hem mag beheren, met het id van de map.
+            let id = k.wortel.clone().ok_or("deze gedeelde map is onbekend")?;
+            return Ok(Deeldoel { doctype: "Opslagmap".into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam });
+        }
         if rel.is_empty() {
             return Err(DeelFout {
                 code: "hoofdmap",
                 melding: "De gekoppelde map is de hele ruimte. Deel een map of bestand daarin, of laat een beheerder je collega lid van de ruimte maken.".into(),
             });
         }
-        let id = ClientOpslag::new(client(&state).await?, &k.ruimte)
+        let id = opslag_voor(client(&state).await?, &k)
             .zoek_map(&rel)
             .await?
             .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
@@ -268,6 +287,29 @@ pub async fn trek_deling_in(state: tauri::State<'_, AppState>, deling: String) -
     Ok(())
 }
 
+/// De rol van een collega wijzigen: `lezen`, `schrijven` of `beheren` (de server weigert meer dan je zelf hebt).
+#[tauri::command]
+pub async fn wijzig_deling(state: tauri::State<'_, AppState>, deling: String, rechten: String) -> Result<(), DeelFout> {
+    controleer_rechten("Opslagmap", "gebruiker", &rechten)?;
+    client(&state).await?.wijzig_deling(&deling, &rechten).await?;
+    Ok(())
+}
+
+/// Wat ik met dit doel mag. Kent de server `toegang` niet (een oudere versie), dan zoals vroeger: delen tot en met
+/// bewerken, en de server beslist.
+#[tauri::command]
+pub async fn toegang_van(state: tauri::State<'_, AppState>, doctype: String, id: String) -> Result<Toegang, DeelFout> {
+    match client(&state).await?.toegang(&doctype, &id).await {
+        Ok(t) => Ok(t),
+        Err(Fout::Server { status: 404 | 417 | 500, .. }) => Ok(oude_toegang()),
+        Err(f) => Err(f.into()),
+    }
+}
+
+fn oude_toegang() -> Toegang {
+    Toegang { rechten: None, mag_delen: true, max_rechten: Some("schrijven".into()) }
+}
+
 /// De leden van de ruimte (om een collega te kiezen, en om te zien wie al toegang heeft via de ruimte).
 #[tauri::command]
 pub async fn ruimteleden(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<Ruimtelid>, DeelFout> {
@@ -333,9 +375,22 @@ mod tests {
     }
 
     #[test]
+    fn beheren_en_eigen_rechten_krijgen_een_vaste_code() {
+        assert_eq!(deelfout(&server(403, json!({"foutcode": "geen_beheerrecht"}))).code, "geen_beheerrecht");
+        let meer = deelfout(&server(403, json!({"foutcode": "meer_dan_eigen_recht"})));
+        assert_eq!(meer, DeelFout { code: "meer_dan_eigen_recht", melding: "Je kunt niet meer rechten geven dan je zelf hebt.".into() });
+        assert_eq!(deelfout(&server(403, json!({"foutcode": "buiten_deling"}))).code, "buiten_deling");
+        // Een oudere server zonder `toegang`: delen tot en met bewerken, zoals vroeger.
+        assert_eq!(oude_toegang().max_rechten.as_deref(), Some("schrijven"));
+        assert!(oude_toegang().mag_delen);
+    }
+
+    #[test]
     fn rechten_volgen_de_regels_van_de_server() {
         assert!(controleer_rechten("Opslagbestand", "gebruiker", "lezen").is_ok());
         assert!(controleer_rechten("Opslagmap", "gebruiker", "schrijven").is_ok());
+        assert!(controleer_rechten("Opslagmap", "gebruiker", "beheren").is_ok());
+        assert!(controleer_rechten("Opslagmap", "link", "beheren").is_err());
         assert!(controleer_rechten("Opslagbestand", "link", "lezen").is_ok());
         assert!(controleer_rechten("Opslagmap", "link", "uploaden").is_ok());
         assert!(controleer_rechten("Opslagbestand", "link", "uploaden").is_err());
