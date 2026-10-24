@@ -385,6 +385,8 @@ impl Koppelwaarnemer {
 impl Waarnemer for Koppelwaarnemer {
     fn melding(&self, g: Gebeurtenis) {
         let altijd = matches!(g, Gebeurtenis::Ronde { .. });
+        // De status in de Verkenner meteen mee (sync-pijlen bij het begin, vinkje als het klaar is).
+        crate::vinkjes::tijdens(&self.lokaal, &g);
         self.app.state::<AppState>().activiteit.verwerk(&self.lokaal, g);
         let nu = Instant::now();
         {

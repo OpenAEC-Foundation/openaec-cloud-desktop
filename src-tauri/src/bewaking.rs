@@ -1,19 +1,20 @@
 //! Wanneer de app synchroniseert: direct na een lokale wijziging (bestandswachter, 2 s rust) en wanneer de
 //! wijzigingenlijst van de server iets nieuws heeft (controle elke 30 s). Elke 10 minuten volgt hoe dan ook een
 //! volledige ronde, als vangnet voor gemiste gebeurtenissen. Een nieuwe koppeling (ook bij het starten) krijgt eerst
-//! zijn statusvinkjes in de Verkenner.
+//! zijn statusvinkjes in de Verkenner (een ruimte in de hoofdmap pas als de hoofdmap geregistreerd is). Vergrendelingen
+//! uit de wijzigingenlijst gaan naar de Verkenner (zie `sloten`); een vergrendeling alleen vraagt geen ronde.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use openaec_sync::bewaking::{nieuwe_wijzigingen, telt_mee};
+use openaec_sync::bewaking::telt_mee;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use crate::instellingen::Koppeling;
-use crate::{client, sync_mappen, vinkjes, AppState};
+use crate::{client, hoofdmap, sloten, sync_mappen, vinkjes, AppState};
 
 const RUST: Duration = Duration::from_secs(2);
 const CONTROLE: Duration = Duration::from_secs(30);
@@ -40,10 +41,21 @@ fn wachter(lokaal: &str, tx: UnboundedSender<String>) -> notify::Result<Recommen
     Ok(w)
 }
 
-/// Statusvinkjes voor een (nieuwe) koppeling, niet tegelijk met een sync-ronde.
-async fn markeer(state: &AppState, k: Koppeling) {
+/// Statusvinkjes voor een (nieuwe) koppeling, niet tegelijk met een sync-ronde. Een ruimte in de hoofdmap: eerst de
+/// hoofdmap registreren en verbinden.
+async fn markeer(app: &AppHandle, state: &AppState, k: Koppeling) {
     let _slot = state.bezig.lock().await;
-    let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::koppel(&k)).await;
+    let in_hoofdmap = state.instellingen.lock().unwrap().in_hoofdmap(&k);
+    let app = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        if in_hoofdmap {
+            hoofdmap::zorg_voor_registratie(&app);
+            vinkjes::koppel_op_aanvraag(&k);
+        } else {
+            vinkjes::koppel(&k);
+        }
+    })
+    .await;
 }
 
 pub fn start(app: AppHandle) {
@@ -62,7 +74,7 @@ pub fn start(app: AppHandle) {
 
             for k in &koppelingen {
                 if vinkjes::nog_te_koppelen(&k.lokaal) {
-                    markeer(&state, k.clone()).await;
+                    markeer(&app, &state, k.clone()).await;
                 }
             }
 
@@ -101,14 +113,21 @@ pub fn start(app: AppHandle) {
                     if laatste_volledig.is_none_or(|t| t.elapsed() >= VANGNET) {
                         te_doen.extend(actief.iter().cloned());
                         laatste_volledig = Some(Instant::now());
+                        // Ook de vergrendelingen in de Verkenner nakijken (die verlopen zonder melding).
+                        if let Ok(client) = client(&state).await {
+                            for k in &koppelingen {
+                                sloten::herbekijk(&client, k).await;
+                            }
+                        }
                     } else if let Ok(client) = client(&state).await {
                         for k in &koppelingen {
                             let sinds = cursors.get(&k.lokaal).copied().unwrap_or(0);
-                            if let Ok((iets, cursor)) = nieuwe_wijzigingen(&client, &k.ruimte, sinds).await {
+                            if let Ok((iets, cursor, slotgebeurtenissen)) = sloten::wijzigingen(&client, &k.ruimte, sinds).await {
                                 if iets {
                                     te_doen.insert(k.lokaal.clone());
                                 }
                                 cursors.insert(k.lokaal.clone(), cursor);
+                                sloten::werk_bij(&client, k, slotgebeurtenissen).await;
                             }
                         }
                     }

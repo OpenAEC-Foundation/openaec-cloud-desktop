@@ -22,7 +22,8 @@ use openaec_sync::motor::TOESTANDSMAP;
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Storage::Provider::{
     StorageProviderHardlinkPolicy, StorageProviderHydrationPolicy, StorageProviderHydrationPolicyModifier,
-    StorageProviderInSyncPolicy, StorageProviderPopulationPolicy, StorageProviderProtectionMode,
+    StorageProviderInSyncPolicy, StorageProviderItemProperties, StorageProviderItemProperty,
+    StorageProviderItemPropertyDefinition, StorageProviderPopulationPolicy, StorageProviderProtectionMode,
     StorageProviderSyncRootInfo, StorageProviderSyncRootManager,
 };
 use windows::Storage::StorageFolder;
@@ -423,35 +424,51 @@ pub fn placeholder_status(pad: &Path) -> Result<Option<Placeholder>> {
 /// toestandsmap van de motor en tijdelijke downloads worden overgeslagen.
 /// Geeft terug of er iets veranderd is.
 pub fn markeer_in_sync(root: &Path, pad: &Path) -> Result<bool> {
-    markeer(root, pad, CF_IN_SYNC_STATE_IN_SYNC)
+    markeer(root, pad, CF_IN_SYNC_STATE_IN_SYNC, true)
 }
 
-/// Zet een bestand of map op "niet in sync" (sync-pijlen), bijvoorbeeld na een
-/// fout; verder als [`markeer_in_sync`].
+/// Zet een bestand of map op "niet in sync" (sync-pijlen), bijvoorbeeld na een fout; verder als [`markeer_in_sync`].
 pub fn markeer_niet_in_sync(root: &Path, pad: &Path) -> Result<bool> {
-    markeer(root, pad, CF_IN_SYNC_STATE_NOT_IN_SYNC)
+    markeer(root, pad, CF_IN_SYNC_STATE_NOT_IN_SYNC, true)
 }
 
-fn markeer(root: &Path, pad: &Path, staat: CF_IN_SYNC_STATE) -> Result<bool> {
+/// Als [`markeer_in_sync`] en [`markeer_niet_in_sync`], voor de hoofdmap (bestanden op aanvraag): de pin-status is
+/// daar van de gebruiker en blijft staan. Een nieuw bestand in een vastgezette map wordt zelf ook vastgezet.
+pub fn markeer_op_aanvraag(root: &Path, pad: &Path, in_sync: bool) -> Result<bool> {
+    let staat = if in_sync { CF_IN_SYNC_STATE_IN_SYNC } else { CF_IN_SYNC_STATE_NOT_IN_SYNC };
+    markeer(root, pad, staat, false)
+}
+
+fn markeer(root: &Path, pad: &Path, staat: CF_IN_SYNC_STATE, vastzetten: bool) -> Result<bool> {
     if !telt_mee(root, pad) {
         return Ok(false);
     }
     let f = open(pad)?;
     let h = handle(&f);
-    let gewenst = Placeholder { in_sync: staat == CF_IN_SYNC_STATE_IN_SYNC, vastgezet: true, uitgesloten: false };
+    let in_sync = staat == CF_IN_SYNC_STATE_IN_SYNC;
     let voor = lees_placeholder(h)?;
-    if voor == Some(gewenst) {
+    let klaar = match voor {
+        Some(p) if vastzetten => p == Placeholder { in_sync, vastgezet: true, uitgesloten: false },
+        Some(p) => p.in_sync == in_sync && !p.uitgesloten,
+        None => false,
+    };
+    if klaar {
         return Ok(false);
     }
     if voor.is_none() {
-        let vlag = if gewenst.in_sync { CF_CONVERT_FLAG_MARK_IN_SYNC } else { CF_CONVERT_FLAG_NONE };
+        let vlag = if in_sync { CF_CONVERT_FLAG_MARK_IN_SYNC } else { CF_CONVERT_FLAG_NONE };
         unsafe { CfConvertToPlaceholder(h, None, 0, vlag, None, None) }
             .map_err(|e| anyhow!("CfConvertToPlaceholder({}): {e}", pad.display()))?;
+        // Op aanvraag: een nieuw bestand erft "altijd op dit apparaat" van de map waarin het staat.
+        let erft = !vastzetten && pad.parent().and_then(attributen).is_some_and(|a| a & ATTR_VASTGEZET != 0);
+        if erft {
+            zet_vast_handle(h, pad)?;
+        }
     }
-    if !voor.is_some_and(|p| p.vastgezet) {
+    if vastzetten && !voor.is_some_and(|p| p.vastgezet) {
         zet_vast_handle(h, pad)?;
     }
-    if lees_placeholder(h)?.map(|p| p.in_sync) != Some(gewenst.in_sync) {
+    if lees_placeholder(h)?.map(|p| p.in_sync) != Some(in_sync) {
         unsafe { CfSetInSyncState(h, staat, CF_SET_IN_SYNC_FLAG_NONE, None) }
             .map_err(|e| anyhow!("CfSetInSyncState({}): {e}", pad.display()))?;
     }
@@ -544,4 +561,335 @@ pub fn zet_terug(root: &Path) -> Result<u32> {
         None => Ok(aantal),
         Some(eerste) => Err(anyhow!("{} niet teruggezet ({aantal} wel), o.a. {eerste}", fouten.len())),
     }
+}
+
+// ---- Fase 3: de hoofdmap (één plek in het navigatiepaneel, bestanden op aanvraag) ----
+//
+// De hoofdmap (bijv. `%USERPROFILE%\OpenAEC`) is één sync-root met per ruimte een submap. Anders dan een losse
+// gekoppelde map mogen bestanden hier "alleen online" staan: een placeholder met de metadata, die pas bij openen
+// wordt opgehaald (FETCH_DATA-callback, zie [`verbind_hoofdmap`]). De Verkenner toont dan zelf "Altijd op dit
+// apparaat behouden" en "Ruimte vrijmaken"; die zetten alleen de pin-status (attribuut), het ophalen en vrijmaken
+// zelf doet de app ([`volg_pinstatus`]).
+//
+// Wat Windows nodig heeft voor een eigen item in het navigatiepaneel: een registratie via de shell
+// (StorageProviderSyncRootManager::Register, niet alleen CfRegisterSyncRoot) met een id van de vorm
+// `<provider>!<SID>!<account>`, een DisplayNameResource en een IconResource. Windows maakt dan zelf een
+// naamruimte-item aan (HKCU\Software\Classes\CLSID\{…} met `System.IsPinnedToNamespaceTree` = 1 en een
+// `TargetFolderPath`, en de sleutel onder Explorer\Desktop\NameSpace) en zet de CLSID als `NamespaceCLSID` in de
+// registratie onder HKLM\…\Explorer\SyncRootManager. Bij afmelden ruimt Windows dat item weer op.
+
+/// Attributen die de Cloud Files API op bestanden zet.
+pub const ATTR_OFFLINE: u32 = 0x0000_1000;
+pub const ATTR_VASTGEZET: u32 = 0x0008_0000;
+pub const ATTR_LOSGEMAAKT: u32 = 0x0010_0000;
+pub const ATTR_OPHALEN_BIJ_OPENEN: u32 = 0x0004_0000;
+pub const ATTR_OPHALEN_BIJ_LEZEN: u32 = 0x0040_0000;
+
+/// Eigen kolommen in de Verkenner (StorageProviderItemProperty): de status bij een fout of overgeslagen bestand, en
+/// wie het bestand vergrendeld heeft.
+pub const EIGENSCHAP_STATUS: i32 = 1;
+pub const EIGENSCHAP_SLOT: i32 = 2;
+
+/// Pictogrammen voor de eigen kolommen (uit Windows zelf, zodat ze overal hetzelfde ogen).
+pub const ICOON_FOUT: &str = "%SystemRoot%\\System32\\imageres.dll,-98";
+pub const ICOON_OVERGESLAGEN: &str = "%SystemRoot%\\System32\\imageres.dll,-81";
+pub const ICOON_SLOT: &str = "%SystemRoot%\\System32\\imageres.dll,-59";
+
+/// Is het bestand ontwaterd (alleen online)? Uit de attributen, zonder het bestand te openen of op te halen.
+pub fn is_ontwaterd(attributen: u32) -> bool {
+    attributen & (ATTR_OFFLINE | ATTR_OPHALEN_BIJ_LEZEN | ATTR_OPHALEN_BIJ_OPENEN) != 0
+}
+
+/// Attributen van een pad (zonder op te halen); None als het niet bestaat.
+pub fn attributen(pad: &Path) -> Option<u32> {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::symlink_metadata(pad).ok().map(|m| m.file_attributes())
+}
+
+/// Registreer de hoofdmap als sync-root met bestanden op aanvraag. Herhaalbaar; een map die al onder een andere
+/// sync-provider valt, wordt geweigerd. `naam` is wat het navigatiepaneel toont ("OpenAEC").
+pub fn registreer_hoofdmap(path: &str, naam: &str, version: &str, icoon: &str) -> Result<()> {
+    if naam.is_empty() || icoon.is_empty() {
+        return Err(anyhow!("registreren van {path}: naam en pictogram zijn verplicht"));
+    }
+    match sync_root(path) {
+        SyncRoot::Eigen => return Ok(()),
+        SyncRoot::Vreemd(provider) => return Err(anyhow!("{path} valt al onder een andere sync-provider ({provider})")),
+        SyncRoot::Geen => {}
+    }
+    let map = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path))?.get()?;
+    let info = StorageProviderSyncRootInfo::new()?;
+    info.SetId(&registratie_id(path)?)?;
+    info.SetPath(&map)?;
+    info.SetDisplayNameResource(&HSTRING::from(naam))?;
+    info.SetIconResource(&HSTRING::from(icoon))?;
+    info.SetVersion(&HSTRING::from(version))?;
+    // FULL: openen haalt het hele bestand op voordat het programma verder gaat; ontwateren ("ruimte vrijmaken") mag,
+    // ook door Windows zelf bij weinig schijfruimte (opslagbeheer) voor bestanden die niet vastgezet zijn.
+    info.SetHydrationPolicy(StorageProviderHydrationPolicy::Full)?;
+    info.SetHydrationPolicyModifier(StorageProviderHydrationPolicyModifier::AutoDehydrationAllowed)?;
+    // ALWAYS_FULL: de app zet zelf alle placeholders neer, Windows hoeft geen mapinhoud op te vragen.
+    info.SetPopulationPolicy(StorageProviderPopulationPolicy::AlwaysFull)?;
+    info.SetInSyncPolicy(StorageProviderInSyncPolicy(CF_INSYNC_POLICY_TRACK_ALL.0))?;
+    info.SetHardlinkPolicy(StorageProviderHardlinkPolicy::None)?;
+    info.SetAllowPinning(true)?;
+    info.SetShowSiblingsAsGroup(false)?;
+    info.SetProtectionMode(StorageProviderProtectionMode::Unknown)?;
+    let definities = info.StorageProviderItemPropertyDefinitions()?;
+    for (id, kop) in [(EIGENSCHAP_STATUS, "Status van OpenAEC"), (EIGENSCHAP_SLOT, "Vergrendeld door")] {
+        let d = StorageProviderItemPropertyDefinition::new()?;
+        d.SetId(id)?;
+        d.SetDisplayNameResource(&HSTRING::from(kop))?;
+        definities.Append(&d)?;
+    }
+    StorageProviderSyncRootManager::Register(&info).map_err(|e| anyhow!("registreren van {path}: {e}"))
+}
+
+/// Meld de hoofdmap af (eerst [`zet_terug`]); het item in het navigatiepaneel verdwijnt dan ook.
+pub fn afmelden_hoofdmap(path: &str) -> Result<()> {
+    afmelden_volledig(path)
+}
+
+/// Ophaler voor de hoofdmap: (volledig pad, offset, lengte, schrijf) -> klaar of een fout. `schrijf` krijgt de bytes
+/// op volgorde vanaf `offset` en geeft `false` als Windows het verzoek intussen heeft afgebroken.
+pub type Ophaler = Box<dyn Fn(&Path, i64, i64, &mut dyn FnMut(&[u8]) -> bool) -> std::result::Result<(), String> + Send + Sync>;
+static OPHALER: OnceLock<Ophaler> = OnceLock::new();
+
+/// Zet de ophaler voor bestanden op aanvraag (één keer per proces).
+pub fn zet_ophaler(f: Ophaler) {
+    let _ = OPHALER.set(f);
+}
+
+/// Verbind de callbacks met de hoofdmap, zodat een bestand dat alleen online staat bij openen wordt opgehaald. De
+/// sleutel moet bij afsluiten naar [`disconnect`].
+pub fn verbind_hoofdmap(path: &str) -> Result<CF_CONNECTION_KEY> {
+    let wpath = wide(path);
+    let table = [
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(ophaal_cb) },
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NONE, Callback: None },
+    ];
+    unsafe {
+        CfConnectSyncRoot(PCWSTR(wpath.as_ptr()), table.as_ptr(), None, CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH)
+            .map_err(|e| anyhow!("CfConnectSyncRoot({path}): {e}"))
+    }
+}
+
+/// Zoveel bytes per TRANSFER_DATA (een veelvoud van 4 KB; alleen het laatste stuk mag korter).
+const STUK: usize = 1024 * 1024;
+
+fn breng_over(info: &CF_CALLBACK_INFO, data: &[u8], offset: i64, lengte: i64, status: NTSTATUS) -> bool {
+    unsafe {
+        let mut opinfo: CF_OPERATION_INFO = zeroed();
+        opinfo.StructSize = size_of::<CF_OPERATION_INFO>() as u32;
+        opinfo.Type = CF_OPERATION_TYPE_TRANSFER_DATA;
+        opinfo.ConnectionKey = info.ConnectionKey;
+        opinfo.TransferKey = info.TransferKey;
+        opinfo.RequestKey = info.RequestKey;
+        let mut op: CF_OPERATION_PARAMETERS = zeroed();
+        op.ParamSize = size_of::<CF_OPERATION_PARAMETERS>() as u32;
+        op.Anonymous.TransferData.CompletionStatus = status;
+        op.Anonymous.TransferData.Buffer = if data.is_empty() { std::ptr::null() } else { data.as_ptr() as *const c_void };
+        op.Anonymous.TransferData.Offset = offset;
+        op.Anonymous.TransferData.Length = lengte;
+        CfExecute(&opinfo, &mut op).is_ok()
+    }
+}
+
+/// FETCH_DATA voor de hoofdmap: haal het gevraagde bereik op via de ophaler en geef het in stukken van 1 MB door
+/// (Windows toont daarmee de voortgang). Lukt het niet, dan krijgt het programma dat het bestand opende een fout.
+unsafe extern "system" fn ophaal_cb(info: *const CF_CALLBACK_INFO, params: *const CF_CALLBACK_PARAMETERS) {
+    let info = &*info;
+    let fetch = (*params).Anonymous.FetchData;
+    let (begin, lengte) = (fetch.RequiredFileOffset, fetch.RequiredLength);
+    // Met CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH is NormalizedPath het volledige pad met stationsletter.
+    let pad = std::path::PathBuf::from(info.NormalizedPath.to_string().unwrap_or_default());
+    let mut volgende = begin;
+    let mut buffer: Vec<u8> = Vec::with_capacity(STUK);
+    let mut gelukt = true;
+    let uitkomst = match OPHALER.get() {
+        None => Err("de app is niet klaar om bestanden op te halen".to_string()),
+        Some(ophaler) => ophaler(&pad, begin, lengte, &mut |stuk: &[u8]| {
+            buffer.extend_from_slice(stuk);
+            while buffer.len() >= STUK && gelukt {
+                gelukt = breng_over(info, &buffer[..STUK], volgende, STUK as i64, NTSTATUS(0));
+                volgende += STUK as i64;
+                buffer.drain(..STUK);
+            }
+            gelukt
+        }),
+    };
+    let rest = begin + lengte - volgende;
+    match uitkomst {
+        Ok(()) if gelukt && buffer.len() as i64 == rest => {
+            if !buffer.is_empty() {
+                breng_over(info, &buffer, volgende, buffer.len() as i64, NTSTATUS(0));
+            }
+        }
+        _ => {
+            match &uitkomst {
+                Err(e) => log::warn!("ophalen van {} mislukt: {e}", pad.display()),
+                Ok(()) if gelukt => log::warn!("ophalen van {}: {} bytes ontvangen, {rest} verwacht", pad.display(), buffer.len()),
+                Ok(()) => log::info!("ophalen van {} afgebroken", pad.display()),
+            }
+            // STATUS_UNSUCCESSFUL voor de rest van het bereik.
+            breng_over(info, &[], volgende, rest.max(0), NTSTATUS(0xC000_0001u32 as i32));
+        }
+    }
+}
+
+/// FILETIME (100 ns sinds 1601) voor nu.
+fn nu_filetime() -> i64 {
+    let sinds_1970 = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    (sinds_1970.as_nanos() / 100) as i64 + 116_444_736_000_000_000
+}
+
+/// Maak een bestand dat alleen online staat (placeholder, in sync, wolkje) op `pad`, met de grootte van de versie op
+/// de server en als bestandsidentiteit het bestand-id op de server. De map erboven moet bestaan.
+pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<()> {
+    let map = pad.parent().ok_or_else(|| anyhow!("{} heeft geen map", pad.display()))?;
+    let naam = pad.file_name().ok_or_else(|| anyhow!("{} heeft geen naam", pad.display()))?.to_string_lossy().to_string();
+    let wmap = wide(&map.to_string_lossy());
+    let wnaam = wide(&naam);
+    let ident = wide(bestand_id);
+    let nu = nu_filetime();
+    unsafe {
+        let mut info: CF_PLACEHOLDER_CREATE_INFO = zeroed();
+        info.RelativeFileName = PCWSTR(wnaam.as_ptr());
+        info.FsMetadata.BasicInfo.FileAttributes = 0x80; // FILE_ATTRIBUTE_NORMAL
+        info.FsMetadata.BasicInfo.CreationTime = nu;
+        info.FsMetadata.BasicInfo.LastWriteTime = nu;
+        info.FsMetadata.BasicInfo.ChangeTime = nu;
+        info.FsMetadata.BasicInfo.LastAccessTime = nu;
+        info.FsMetadata.FileSize = grootte as i64;
+        info.FileIdentity = ident.as_ptr() as *const c_void;
+        info.FileIdentityLength = (ident.len() * 2) as u32;
+        info.Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC | CF_PLACEHOLDER_CREATE_FLAG_SUPERSEDE;
+        let mut arr = [info];
+        let mut verwerkt = 0u32;
+        CfCreatePlaceholders(PCWSTR(wmap.as_ptr()), &mut arr, CF_CREATE_FLAG_NONE, Some(&mut verwerkt))
+            .map_err(|e| anyhow!("CfCreatePlaceholders({}): {e}", pad.display()))?;
+        if verwerkt != 1 || arr[0].Result.is_err() {
+            return Err(anyhow!("placeholder {} niet aangemaakt ({:?})", pad.display(), arr[0].Result));
+        }
+    }
+    Ok(())
+}
+
+/// Werk een bestand dat alleen online staat bij naar een nieuwe versie op de server: nieuwe grootte en
+/// wijzigingstijd, blijft alleen online en in sync. Er wordt niets gedownload.
+pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, bestand_id: &str) -> Result<()> {
+    let f = open(pad)?;
+    let ident = wide(bestand_id);
+    let nu = nu_filetime();
+    let mut meta: CF_FS_METADATA = unsafe { zeroed() };
+    meta.BasicInfo.LastWriteTime = nu;
+    meta.BasicInfo.ChangeTime = nu;
+    meta.FileSize = grootte as i64;
+    unsafe {
+        CfUpdatePlaceholder(
+            handle(&f),
+            Some(&meta),
+            Some(ident.as_ptr() as *const c_void),
+            (ident.len() * 2) as u32,
+            None,
+            CF_UPDATE_FLAG_DEHYDRATE | CF_UPDATE_FLAG_MARK_IN_SYNC,
+            None,
+            None,
+        )
+    }
+    .map_err(|e| anyhow!("CfUpdatePlaceholder({}): {e}", pad.display()))
+}
+
+/// Bestandsidentiteit van een placeholder (het bestand-id op de server, zie [`maak_alleen_online`]).
+pub fn bestandsidentiteit(pad: &Path) -> Option<String> {
+    let f = open(pad).ok()?;
+    let mut buf = [0u64; (size_of::<CF_PLACEHOLDER_BASIC_INFO>() + 4096) / 8 + 1];
+    unsafe {
+        let r = CfGetPlaceholderInfo(handle(&f), CF_PLACEHOLDER_INFO_BASIC, buf.as_mut_ptr() as *mut c_void, std::mem::size_of_val(&buf) as u32, None);
+        if r.is_err() {
+            return None;
+        }
+        let info = &*(buf.as_ptr() as *const CF_PLACEHOLDER_BASIC_INFO);
+        let lengte = (info.FileIdentityLength / 2) as usize;
+        if lengte == 0 {
+            return None;
+        }
+        let begin = std::ptr::addr_of!(info.FileIdentity) as *const u16;
+        let s = String::from_utf16_lossy(std::slice::from_raw_parts(begin, lengte));
+        Some(s.trim_end_matches('\0').to_string()).filter(|s| !s.is_empty())
+    }
+}
+
+/// Haal een bestand dat alleen online staat helemaal op (bijv. na "Altijd op dit apparaat behouden").
+pub fn hydrateer(pad: &Path) -> Result<()> {
+    let f = open(pad)?;
+    unsafe { CfHydratePlaceholder(handle(&f), 0, -1, CF_HYDRATE_FLAG_NONE, None) }
+        .map_err(|e| anyhow!("CfHydratePlaceholder({}): {e}", pad.display()))
+}
+
+/// Maak ruimte vrij: de inhoud gaat weg, het bestand blijft als placeholder (alleen online). Weigert Windows als het
+/// bestand niet in sync is: dan staat er werk dat nog niet op de server staat.
+pub fn ontwater(pad: &Path) -> Result<()> {
+    let f = open(pad)?;
+    unsafe { CfDehydratePlaceholder(handle(&f), 0, -1, CF_DEHYDRATE_FLAG_NONE, None) }
+        .map_err(|e| anyhow!("CfDehydratePlaceholder({}): {e}", pad.display()))
+}
+
+/// Wat [`volg_pinstatus`] deed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pinactie {
+    Niets,
+    Opgehaald,
+    Vrijgemaakt,
+}
+
+/// Volg de pin-status die de Verkenner zet: vastgezet ("Altijd op dit apparaat behouden") en alleen online -> ophalen;
+/// losgemaakt ("Ruimte vrijmaken") en lokaal -> vrijmaken. Alleen voor bestanden.
+pub fn volg_pinstatus(pad: &Path) -> Result<Pinactie> {
+    let Some(a) = attributen(pad) else { return Ok(Pinactie::Niets) };
+    if a & 0x10 != 0 {
+        return Ok(Pinactie::Niets); // een map: de bestanden erin krijgen elk hun eigen gebeurtenis
+    }
+    if a & ATTR_VASTGEZET != 0 && is_ontwaterd(a) {
+        hydrateer(pad)?;
+        return Ok(Pinactie::Opgehaald);
+    }
+    if a & ATTR_LOSGEMAAKT != 0 && !is_ontwaterd(a) && placeholder_status(pad)?.is_some_and(|p| p.in_sync) {
+        ontwater(pad)?;
+        return Ok(Pinactie::Vrijgemaakt);
+    }
+    Ok(Pinactie::Niets)
+}
+
+/// Pin-status van een map of bestand zetten (bij een map ook voor alles eronder).
+pub fn zet_pin(pad: &Path, vast: Option<bool>) -> Result<()> {
+    let f = open(pad)?;
+    let staat = match vast {
+        Some(true) => CF_PIN_STATE_PINNED,
+        Some(false) => CF_PIN_STATE_UNPINNED,
+        None => CF_PIN_STATE_UNSPECIFIED,
+    };
+    let vlag = if pad.is_dir() { CF_SET_PIN_FLAG_RECURSE } else { CF_SET_PIN_FLAG_NONE };
+    unsafe { CfSetPinState(handle(&f), staat, vlag, None) }.map_err(|e| anyhow!("CfSetPinState({}): {e}", pad.display()))
+}
+
+/// Eigen kolommen op een bestand of map zetten (leeg: weghalen). Per eigenschap (id, waarde, pictogram).
+pub fn zet_eigenschappen(pad: &Path, eigenschappen: &[(i32, String, &str)]) -> Result<()> {
+    use windows::core::Interface;
+    let pad_h = HSTRING::from(pad.as_os_str());
+    let item: windows::Storage::IStorageItem = if pad.is_dir() {
+        StorageFolder::GetFolderFromPathAsync(&pad_h)?.get()?.cast()?
+    } else {
+        windows::Storage::StorageFile::GetFileFromPathAsync(&pad_h)?.get()?.cast()?
+    };
+    let mut lijst = Vec::new();
+    for (id, waarde, icoon) in eigenschappen {
+        let e = StorageProviderItemProperty::new()?;
+        e.SetId(*id)?;
+        e.SetValue(&HSTRING::from(waarde.as_str()))?;
+        e.SetIconResource(&HSTRING::from(*icoon))?;
+        lijst.push(Some(e));
+    }
+    let iterabel: windows_collections::IIterable<StorageProviderItemProperty> = lijst.into();
+    StorageProviderItemProperties::SetAsync(&item, &iterabel)?.get().map_err(|e| anyhow!("eigenschappen van {}: {e}", pad.display()))
 }

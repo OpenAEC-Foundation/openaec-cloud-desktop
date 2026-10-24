@@ -17,6 +17,11 @@ mod instellingen;
 
 #[cfg(windows)]
 #[allow(dead_code)]
+#[path = "../src/itemstatus.rs"]
+mod itemstatus;
+
+#[cfg(windows)]
+#[allow(dead_code)]
 #[path = "../src/vinkjes.rs"]
 mod vinkjes;
 
@@ -155,7 +160,14 @@ async fn proef(dir: &std::path::Path) -> anyhow::Result<()> {
     println!("gekoppelde map: {lokaal}");
 
     // --- koppelen (registreren; nog niets bekend) en de eerste ronde ---
-    let k = instellingen::Koppeling { ruimte: "R1".into(), ruimte_naam: "Smoke-test".into(), lokaal: lokaal.clone(), uitgesloten: vec![] };
+    let k = instellingen::Koppeling {
+        ruimte: "R1".into(),
+        ruimte_naam: "Smoke-test".into(),
+        lokaal: lokaal.clone(),
+        uitgesloten: vec![],
+        nieuwe_mappen: Default::default(),
+        bekende_mappen: vec![],
+    };
     controleer(vinkjes::nog_te_koppelen(&lokaal), "nog te koppelen")?;
     vinkjes::koppel(&k);
     controleer(cloudfilter::eigen_sync_root(&lokaal) && !vinkjes::nog_te_koppelen(&lokaal), "koppel: geregistreerd")?;

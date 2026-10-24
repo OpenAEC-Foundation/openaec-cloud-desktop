@@ -4,8 +4,12 @@
 mod activiteit;
 mod bewaking;
 mod delen;
+mod hoofdmap;
 mod instellingen;
+mod itemstatus;
+mod opaanvraag;
 mod opruimen;
+mod sloten;
 mod systeemvak;
 mod tools;
 mod updates;
@@ -155,7 +159,14 @@ fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String
     if inst.koppelingen.iter().any(|k| Path::new(&k.lokaal) == Path::new(&lokaal)) {
         return Err("deze map is al gekoppeld".into());
     }
-    inst.koppelingen.push(Koppeling { ruimte, ruimte_naam, lokaal, uitgesloten: Vec::new() });
+    inst.koppelingen.push(Koppeling {
+        ruimte,
+        ruimte_naam,
+        lokaal,
+        uitgesloten: Vec::new(),
+        nieuwe_mappen: Default::default(),
+        bekende_mappen: Vec::new(),
+    });
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst.koppelingen);
     Ok(inst.koppelingen.clone())
@@ -168,10 +179,65 @@ fn werk_menu_bij(koppelingen: &[Koppeling]) {
     }
 }
 
-/// Alle mappen van een ruimte (voor de mapselectie).
+/// Een map van een ruimte voor de mapselectie, met wat erin staat (alles eronder samen).
+#[derive(Serialize)]
+struct Mapkeuze {
+    pad: String,
+    bytes: u64,
+    bestanden: u64,
+}
+
+/// Alle mappen van een ruimte (voor "Mappen kiezen…"), gesorteerd, met de omvang per map uit de bestanden op de
+/// server (de hele ruimte in één verzoek als de server dat kent, anders map voor map).
 #[tauri::command]
-async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<String>, String> {
-    ClientOpslag::new(client(&state).await?, &ruimte).alle_mappen().await.map_err(fout)
+async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<Mapkeuze>, String> {
+    use openaec_sync::motor::Opslag;
+    let opslag = ClientOpslag::new(client(&state).await?, &ruimte);
+    let bestanden = opslag.lijst().await.map_err(fout)?;
+    let mappen = opslag.alle_mappen().await.map_err(fout)?;
+    let omvang = openaec_sync::selectie::mapomvang(bestanden.iter().map(|b| (b.pad.as_str(), b.grootte)));
+    let alle = openaec_sync::selectie::met_bovenliggende(mappen);
+    Ok(alle
+        .into_iter()
+        .map(|pad| {
+            let o = omvang.get(&pad).copied().unwrap_or_default();
+            Mapkeuze { pad, bytes: o.bytes, bestanden: o.bestanden }
+        })
+        .collect())
+}
+
+/// Wat er van deze mappen (paden met '/') op deze computer staat: aantal bestanden en bytes (bestanden die alleen
+/// online staan, tellen niet mee voor de bytes). Voor de bevestiging bij het uitvinken.
+#[tauri::command]
+async fn lokale_omvang(lokaal: String, mappen: Vec<String>) -> Result<openaec_sync::selectie::Omvang, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut uit = openaec_sync::selectie::Omvang::default();
+        for map in openaec_sync::selectie::opgeschoond(&mappen) {
+            let mut te_doen = vec![map.split('/').fold(PathBuf::from(&lokaal), |p, d| p.join(d))];
+            while let Some(m) = te_doen.pop() {
+                let Ok(items) = std::fs::read_dir(&m) else { continue };
+                for item in items.flatten() {
+                    match item.file_type() {
+                        Ok(t) if t.is_dir() => te_doen.push(item.path()),
+                        Ok(t) if t.is_file() => {
+                            uit.bestanden += 1;
+                            #[cfg(windows)]
+                            let online = cloudfilter::attributen(&item.path()).is_some_and(cloudfilter::is_ontwaterd);
+                            #[cfg(not(windows))]
+                            let online = false;
+                            if !online {
+                                uit.bytes += item.metadata().map(|m| m.len()).unwrap_or(0);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        uit
+    })
+    .await
+    .map_err(fout)
 }
 
 #[derive(Serialize)]
@@ -372,12 +438,26 @@ fn installeer_update(app: AppHandle) {
     updates::installeer(&app);
 }
 
-/// Mapselectie van een koppeling instellen; de volgende ronde haalt uitgevinkte mappen lokaal weg.
+/// Mapselectie van een koppeling instellen; de volgende ronde haalt uitgevinkte mappen lokaal weg (wat lokaal gewijzigd
+/// is, gaat eerst nog naar de server). `nieuwe_mappen` en `bekende_mappen` (de mappen die de gebruiker zag) bepalen wat
+/// er met mappen gebeurt die later op de server verschijnen.
 #[tauri::command]
-fn zet_selectie(state: tauri::State<'_, AppState>, lokaal: String, uitgesloten: Vec<String>) -> Result<Vec<Koppeling>, String> {
+fn zet_selectie(
+    state: tauri::State<'_, AppState>,
+    lokaal: String,
+    uitgesloten: Vec<String>,
+    nieuwe_mappen: Option<openaec_sync::selectie::NieuweMappen>,
+    bekende_mappen: Option<Vec<String>>,
+) -> Result<Vec<Koppeling>, String> {
     let mut inst = state.instellingen.lock().unwrap();
     let k = inst.koppelingen.iter_mut().find(|k| k.lokaal == lokaal).ok_or("deze map is niet gekoppeld")?;
-    k.uitgesloten = uitgesloten;
+    k.uitgesloten = openaec_sync::selectie::opgeschoond(&uitgesloten);
+    if let Some(n) = nieuwe_mappen {
+        k.nieuwe_mappen = n;
+    }
+    if let Some(b) = bekende_mappen {
+        k.bekende_mappen = b;
+    }
     inst.bewaar().map_err(fout)?;
     Ok(inst.koppelingen.clone())
 }
@@ -454,9 +534,11 @@ async fn sync_ronde(
     alleen: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<MapRapport>, String> {
     let client = client(state).await?;
-    let (koppelingen, sync) = {
+    let (koppelingen, sync, op_aanvraag) = {
         let inst = state.instellingen.lock().unwrap();
-        (inst.koppelingen.clone(), inst.sync.clone().begrensd())
+        let op_aanvraag: std::collections::HashSet<String> =
+            inst.koppelingen.iter().filter(|k| inst.in_hoofdmap(k)).map(|k| k.lokaal.clone()).collect();
+        (inst.koppelingen.clone(), inst.sync.clone().begrensd(), op_aanvraag)
     };
     let opties = Opties {
         gelijktijdig: sync.gelijktijdig,
@@ -466,9 +548,17 @@ async fn sync_ronde(
     };
     let mut uit = Vec::new();
     for k in koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))) {
-        let opslag = ClientOpslag::new(client.clone(), &k.ruimte).met_gelijktijdig(sync.gelijktijdig);
+        let root = Path::new(&k.lokaal);
+        if !root.is_dir() {
+            // Een verwijderde of niet aangesloten map: niet synchroniseren, anders lijkt alles lokaal verwijderd.
+            let fout = Some("de map ontbreekt op deze computer".to_string());
+            uit.push(MapRapport { lokaal: k.lokaal.clone(), ruimte_naam: k.ruimte_naam.clone(), rapport: None, fout });
+            continue;
+        }
+        let binnen = ClientOpslag::new(client.clone(), &k.ruimte).met_gelijktijdig(sync.gelijktijdig);
+        let opslag = opaanvraag::Verkenneropslag::new(&binnen, root, op_aanvraag.contains(&k.lokaal), k.nieuwe_mappen, &k.bekende_mappen);
         let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
-        let mut r = sync_met_opties(&opslag, Path::new(&k.lokaal), &k.uitgesloten, &waarnemer, &opties).await;
+        let mut r = sync_met_opties(&opslag, root, &k.uitgesloten, &waarnemer, &opties).await;
         if let Ok(rapport) = &mut r {
             // Wat de motor zelf deed met een lastige naam (opgeruimd, onder een veilige naam): één melding per map.
             if !rapport.meldingen.is_empty() {
@@ -483,7 +573,13 @@ async fn sync_ronde(
             let lokaal = k.lokaal.clone();
             let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
             let foutpaden = std::mem::take(&mut rapport.foutpaden);
-            let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::na_ronde(&lokaal, &bijgewerkt, &foutpaden)).await;
+            let fouten: Vec<(String, String)> = rapport.fouten.iter().filter_map(|f| vinkjes::splits_fout(f, &foutpaden)).collect();
+            let overgeslagen: Vec<(String, String)> = rapport.overgeslagen.iter().map(|o| (o.pad.clone(), o.reden.clone())).collect();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                vinkjes::na_ronde(&lokaal, &bijgewerkt, &foutpaden);
+                vinkjes::eigen_staten(&lokaal, &fouten, &overgeslagen);
+            })
+            .await;
         }
         uit.push(MapRapport {
             lokaal: k.lokaal,
@@ -807,7 +903,12 @@ pub fn run() {
             versies,
             open_versie,
             mappen_van,
+            lokale_omvang,
             zet_selectie,
+            hoofdmap::hoofdmap_status,
+            hoofdmap::zet_hoofdmap,
+            hoofdmap::koppel_in_hoofdmap,
+            hoofdmap::verplaats_naar_hoofdmap,
             bladeren,
             overzicht,
             open_map,
