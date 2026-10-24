@@ -2,7 +2,7 @@
 // de sync. De schermen lezen hieruit en roepen de acties hieronder aan.
 
 import { createSignal } from "solid-js"
-import { api, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
+import { api, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
 
 export type Scherm = "overzicht" | "ruimtes" | "delen" | "tools" | "instellingen"
 
@@ -70,9 +70,23 @@ export const verversOverzicht = async () => {
   }
 }
 
+/** De hoofdmap (één plek in het navigatiepaneel); null zolang hij niet is opgehaald. */
+export const [hoofdmap, setHoofdmap] = createSignal<HoofdmapStatus | null>(null)
+
+export const laadHoofdmap = () => api.hoofdmapStatus().then(setHoofdmap).catch(() => {})
+
+/** Staat deze koppeling in de hoofdmap (een submap ervan)? */
+export const inHoofdmap = (k: Koppeling) => {
+  const h = hoofdmap()?.hoofdmap
+  if (!h) return false
+  const ouder = k.lokaal.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "")
+  return ouder.toLowerCase() === h.replace(/[\\/]+$/, "").toLowerCase()
+}
+
 /** Gegevens verversen als het venster (weer) in beeld komt. */
 export const ververs = () => {
   laadRuimtes()
+  laadHoofdmap()
   verversOverzicht()
   api.quotum().then(setQuotum).catch(() => {})
   api.activiteit().then(setStand).catch(() => {})

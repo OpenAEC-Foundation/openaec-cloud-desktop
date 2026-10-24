@@ -9,11 +9,38 @@ export interface Ruimte {
   rol: string
 }
 
+/** Wat er gebeurt met mappen die later op de server verschijnen. */
+export type NieuweMappen = "automatisch" | "alleen_gekozen"
+
 export interface Koppeling {
   ruimte: string
   ruimte_naam: string
   lokaal: string
   uitgesloten: string[]
+  nieuwe_mappen?: NieuweMappen
+  /** De mappen van de server toen er gekozen werd (voor "alleen wat ik koos"). */
+  bekende_mappen?: string[]
+}
+
+/** Een map van een ruimte voor "Mappen kiezen…", met alles eronder samen. */
+export interface Mapkeuze {
+  pad: string
+  bytes: number
+  bestanden: number
+}
+
+export interface Omvang {
+  bytes: number
+  bestanden: number
+}
+
+/** De hoofdmap: één map met per ruimte een submap, als eigen plek in het navigatiepaneel. */
+export interface HoofdmapStatus {
+  hoofdmap: string | null
+  voorstel: string
+  actief: boolean
+  ondersteund: boolean
+  fout: string | null
 }
 
 export interface Status {
@@ -238,8 +265,14 @@ export const api = {
   vergrendel: (bestand: string) => invoke<void>("vergrendel", { bestand }),
   ontgrendel: (bestand: string) => invoke<void>("ontgrendel", { bestand }),
   deel: (bestand: string, wachtwoord: string, verloopt: string) => invoke<string>("deel", { bestand, wachtwoord, verloopt }),
-  mappenVan: (ruimte: string) => invoke<string[]>("mappen_van", { ruimte }),
-  zetSelectie: (lokaal: string, uitgesloten: string[]) => invoke<Koppeling[]>("zet_selectie", { lokaal, uitgesloten }),
+  mappenVan: (ruimte: string) => invoke<Mapkeuze[]>("mappen_van", { ruimte }),
+  lokaleOmvang: (lokaal: string, mappen: string[]) => invoke<Omvang>("lokale_omvang", { lokaal, mappen }),
+  zetSelectie: (lokaal: string, uitgesloten: string[], nieuweMappen?: NieuweMappen, bekendeMappen?: string[]) =>
+    invoke<Koppeling[]>("zet_selectie", { lokaal, uitgesloten, nieuweMappen, bekendeMappen }),
+  hoofdmapStatus: () => invoke<HoofdmapStatus>("hoofdmap_status"),
+  zetHoofdmap: (pad: string) => invoke<HoofdmapStatus>("zet_hoofdmap", { pad }),
+  koppelInHoofdmap: (ruimte: string, ruimteNaam: string) => invoke<Koppeling[]>("koppel_in_hoofdmap", { ruimte, ruimteNaam }),
+  verplaatsNaarHoofdmap: (lokaal: string) => invoke<Koppeling[]>("verplaats_naar_hoofdmap", { lokaal }),
   versies: (bestand: string) => invoke<Versie[]>("versies", { bestand }),
   openVersie: (bestand: string, versie: number) => invoke<void>("open_versie", { bestand, versie }),
   opActie: (f: (a: { actie: string; pad: string }) => void) =>

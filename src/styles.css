@@ -208,6 +208,14 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 .mapboom { list-style: none; overflow: auto; min-height: 120px; max-height: 50vh; border: 1px solid var(--lijn); border-radius: 6px; padding: 8px 12px; }
 .mapboom li { padding: 3px 0; }
 .mapboom label.vinkje { margin: 0; }
+.mapboom li { display: flex; align-items: center; gap: 6px; }
+.mapboom .klapper { display: inline-block; width: 16px; flex: none; }
+.mapboom .klapper .tekstknop { padding: 0; font-size: 12px; }
+.mapboom .cijfers { margin-left: auto; }
+fieldset.keuze { border: 0; padding: 0; margin: 14px 0 4px; }
+fieldset.keuze legend { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.hoofdmap-kaart { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.hoofdmap-kaart .pad { word-break: break-all; }
 
 /* ruimtes */
 .ruimtes { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }

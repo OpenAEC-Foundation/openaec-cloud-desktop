@@ -1,10 +1,12 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { ask, open } from "@tauri-apps/plugin-dialog"
 import { api, type Koppeling, type KoppelOvergeslagen, type MapRapport } from "../lib/api"
+import Mappenkiezer from "../Mappenkiezer"
 import OvergeslagenLijst from "../OvergeslagenLijst"
 import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
-  bezig, doe, koppelingen, koppelStatus, quotum, rapporten, ruimtes, setKoppelingen, setMelding, setScherm, stand,
-  verversOverzicht, verwerkSync,
+  bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
+  setKoppelingen, setMelding, setScherm, stand, verversOverzicht, verwerkSync,
 } from "../lib/winkel"
 
 const samenvatting = (m: MapRapport) => {
@@ -35,14 +37,75 @@ const toestandVan = (k: Koppeling): [string, Kleur] => {
   return ["Bijgewerkt", "groen"]
 }
 
+/** De hoofdmap: bij de eerste start een voorstel, daarna waar hij staat en of hij in het navigatiepaneel staat. */
+function HoofdmapKaart() {
+  const zet = (pad: string) =>
+    doe("Hoofdmap instellen", async () => {
+      setHoofdmap(await api.zetHoofdmap(pad))
+      setMelding(`Hoofdmap ingesteld: ${pad}. Ruimtes die je daarin synchroniseert, staan in de Verkenner onder "OpenAEC".`)
+    })
+  const kies = async () => {
+    const map = await open({ directory: true, multiple: false, title: "Hoofdmap voor OpenAEC" })
+    if (typeof map === "string") zet(map)
+  }
+  return (
+    <Show when={hoofdmap()}>
+      {(h) => (
+        <section class="kaart hoofdmap-kaart">
+          <Show
+            when={h().hoofdmap}
+            fallback={
+              <>
+                <div>
+                  <h2>Eén map voor al je ruimtes</h2>
+                  <p class="uitleg">
+                    Stel een hoofdmap in: <span class="pad">{h().voorstel}</span>. Elke ruimte krijgt daarin een eigen map
+                    <Show when={h().ondersteund}>, de map staat als "OpenAEC" in het navigatiepaneel van de Verkenner en bestanden komen pas op deze computer als je ze opent</Show>.
+                  </p>
+                </div>
+                <div class="knoppen">
+                  <button class="primair" disabled={bezig()} onClick={() => zet(h().voorstel)}>
+                    Instellen
+                  </button>
+                  <button disabled={bezig()} onClick={kies}>
+                    Andere map…
+                  </button>
+                </div>
+              </>
+            }
+          >
+            <div>
+              <h2>Hoofdmap</h2>
+              <p class="uitleg">
+                <span class="pad">{h().hoofdmap}</span>
+                <Show when={h().ondersteund}>
+                  {" · "}
+                  {h().actief ? "in het navigatiepaneel van de Verkenner" : h().fout ? `niet in de Verkenner: ${h().fout}` : "wordt aangemeld bij de Verkenner…"}
+                </Show>
+              </p>
+            </div>
+            <div class="knoppen">
+              <button onClick={() => api.openMap(h().hoofdmap!).catch((e) => setMelding(String(e)))}>Openen in Verkenner</button>
+              <Show when={h().fout}>
+                <button disabled={bezig()} onClick={() => zet(h().hoofdmap!)}>
+                  Opnieuw aanmelden
+                </button>
+              </Show>
+            </div>
+          </Show>
+        </section>
+      )}
+    </Show>
+  )
+}
+
 export default function Overzicht() {
-  // Mapselectie: welke koppeling, alle mappen van de ruimte en de uitgevinkte mappen.
+  // Mapselectie: voor welke koppeling het venster "Mappen kiezen…" open is.
   const [selectieVoor, setSelectieVoor] = createSignal<Koppeling | null>(null)
-  const [alleMappen, setAlleMappen] = createSignal<string[]>([])
-  const [uit, setUit] = createSignal<string[]>([])
   const [overgeslagen, setOvergeslagen] = createSignal<KoppelOvergeslagen[]>([])
 
   onMount(async () => {
+    laadHoofdmap()
     api.overgeslagen().then(setOvergeslagen).catch(() => {})
     const stop = await api.opOvergeslagen(setOvergeslagen)
     onCleanup(stop)
@@ -61,29 +124,31 @@ export default function Overzicht() {
       setMelding(`${k.ruimte_naam} ontkoppeld; de lokale bestanden blijven staan`)
     })
 
-  const kiesMappen = (k: Koppeling) =>
-    doe("Mappen ophalen", async () => {
-      setAlleMappen(await api.mappenVan(k.ruimte))
-      setUit(k.uitgesloten ?? [])
-      setSelectieVoor(k)
-      setMelding("")
-    })
+  const selectieKlaar = (k: Koppeling[] | null, tekst?: string) => {
+    setSelectieVoor(null)
+    if (!k) return
+    setKoppelingen(k)
+    if (tekst) setMelding(tekst)
+    api.syncNu().then(verwerkSync).catch(() => {})
+  }
 
-  // Een map is uitgesloten als hij zelf of een bovenliggende map uitgevinkt is.
-  const onder = (map: string, ouder: string) => map === ouder || map.startsWith(ouder + "/")
-  const isUit = (map: string) => uit().some((u) => onder(map, u))
-  const ouderUit = (map: string) => uit().some((u) => u !== map && onder(map, u))
-  const wissel = (map: string) =>
-    setUit(isUit(map) ? uit().filter((u) => u !== map) : [...uit().filter((u) => !onder(u, map)), map])
-
-  const bewaarSelectie = () =>
-    doe("Mapselectie opslaan", async () => {
-      const k = selectieVoor()!
-      setKoppelingen(await api.zetSelectie(k.lokaal, uit()))
-      setSelectieVoor(null)
-      api.syncNu().then(verwerkSync).catch(() => {})
-      setMelding(uit().length ? `${uit().length} map(pen) niet meer op deze computer; ze blijven op de server` : "Alle mappen staan op deze computer")
+  /** Overstap van een losse map naar de hoofdmap (na bevestiging; nooit vanzelf). */
+  const naarHoofdmap = async (k: Koppeling) => {
+    const h = hoofdmap()?.hoofdmap
+    if (!h) return
+    const ja = await ask(
+      `${k.ruimte_naam} verplaatsen van ${k.lokaal} naar de hoofdmap ${h}?\n\n` +
+        "De bestanden verhuizen mee (niets wordt opnieuw gedownload). Daarna kun je bestanden ook alleen online laten staan. " +
+        "Sluit eerst programma's die bestanden in de map open hebben.",
+      { title: "Naar de hoofdmap", kind: "info", okLabel: "Verplaatsen", cancelLabel: "Annuleren" },
+    )
+    if (!ja) return
+    doe("Verplaatsen naar de hoofdmap", async () => {
+      setKoppelingen(await api.verplaatsNaarHoofdmap(k.lokaal))
+      verversOverzicht()
+      setMelding(`${k.ruimte_naam} staat nu in de hoofdmap`)
     })
+  }
 
   const soortVan = (k: Koppeling) => soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
 
@@ -98,6 +163,8 @@ export default function Overzicht() {
           Nu synchroniseren
         </button>
       </div>
+
+      <HoofdmapKaart />
 
       <Show when={quotum()}>
         {(q) => (
@@ -179,7 +246,12 @@ export default function Overzicht() {
                         <span class="soort">{soortVan(k)}</span>
                       </Show>
                     </div>
-                    <span class={`label ${t()[1]}`}>{t()[0]}</span>
+                    <div>
+                      <Show when={inHoofdmap(k)}>
+                        <span class="label klein blauw">In de hoofdmap</span>
+                      </Show>
+                      <span class={`label ${t()[1]}`}>{t()[0]}</span>
+                    </div>
                   </div>
                   <dl class="gegevens">
                     <div>
@@ -214,9 +286,14 @@ export default function Overzicht() {
                     <button disabled={st() && !st()!.bestaat} onClick={() => api.openMap(k.lokaal).catch((e) => setMelding(String(e)))}>
                       Openen in Verkenner
                     </button>
-                    <button disabled={bezig()} onClick={() => kiesMappen(k)}>
+                    <button disabled={bezig()} onClick={() => setSelectieVoor(k)}>
                       Mappen kiezen…
                     </button>
+                    <Show when={hoofdmap()?.hoofdmap && !inHoofdmap(k)}>
+                      <button disabled={bezig()} onClick={() => naarHoofdmap(k)} title="De map verhuist naar een submap van de hoofdmap">
+                        Naar de hoofdmap…
+                      </button>
+                    </Show>
                     <button class="gevaar-licht" disabled={bezig()} onClick={() => ontkoppel(k)}>
                       Ontkoppelen
                     </button>
@@ -234,38 +311,7 @@ export default function Overzicht() {
         <p class="hint">Synchroniseert vanzelf zodra er iets verandert, hier of op de server.</p>
       </Show>
 
-      <Show when={selectieVoor()}>
-        {(k) => (
-          <div class="laag" onClick={(e) => e.target === e.currentTarget && setSelectieVoor(null)}>
-            <section class="kaart dialoog">
-              <h2>Mappen op deze computer: {k().ruimte_naam}</h2>
-              <p class="uitleg">Uitgevinkte mappen blijven op de server en voor collega's beschikbaar, maar komen niet (meer) op deze computer.</p>
-              <Show when={alleMappen().length} fallback={<p class="hint">Deze ruimte heeft nog geen mappen.</p>}>
-                <ul class="mapboom">
-                  <For each={alleMappen()}>
-                    {(m) => (
-                      <li style={{ "padding-left": `${(m.split("/").length - 1) * 18}px` }}>
-                        <label class="vinkje">
-                          <input type="checkbox" checked={!isUit(m)} disabled={ouderUit(m)} onChange={() => wissel(m)} />
-                          {m.split("/").pop()}
-                        </label>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-              <div class="knoppen rechts">
-                <button disabled={bezig()} onClick={() => setSelectieVoor(null)}>
-                  Annuleren
-                </button>
-                <button class="primair" disabled={bezig()} onClick={bewaarSelectie}>
-                  Opslaan
-                </button>
-              </div>
-            </section>
-          </div>
-        )}
-      </Show>
+      <Show when={selectieVoor()}>{(k) => <Mappenkiezer koppeling={k()} klaar={selectieKlaar} />}</Show>
     </div>
   )
 }

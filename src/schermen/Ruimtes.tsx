@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { api, type Deeldoel, type MapInhoud, type Ruimte } from "../lib/api"
 import { grootte, servertijd, soort } from "../lib/opmaak"
 import {
-  bezig, doe, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald, setKoppelingen,
-  setMelding, setScherm, verversOverzicht, verwerkSync,
+  bezig, doe, hoofdmap, inHoofdmap, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald,
+  setKoppelingen, setMelding, setScherm, verversOverzicht, verwerkSync,
 } from "../lib/winkel"
 
 const rolNaam: Record<string, string> = { beheerder: "beheerder", schrijver: "schrijver", lezer: "lezer", gast: "gast" }
@@ -189,6 +189,16 @@ export default function Ruimtes() {
       api.syncNu().then(verwerkSync).catch(() => {})
     })
 
+  /** In de hoofdmap: een submap met de naam van de ruimte, als "OpenAEC" in het navigatiepaneel. */
+  const inDeHoofdmap = (r: Ruimte) =>
+    doe("Synchroniseren in de hoofdmap", async () => {
+      setKoppelingen(await api.koppelInHoofdmap(r.name, r.naam))
+      verversOverzicht()
+      setMelding(`${r.naam} staat nu in de hoofdmap; de eerste synchronisatie loopt`)
+      api.syncNu().then(verwerkSync).catch(() => {})
+    })
+  const alInHoofdmap = (r: Ruimte) => gekoppeldAan(r).some(inHoofdmap)
+
   const cloudmap = (r: Ruimte) =>
     doe("Cloud-map maken", async () => {
       const map = await open({ directory: true, multiple: false, title: `Lege map voor cloud-map ${r.naam}` })
@@ -266,7 +276,12 @@ export default function Ruimtes() {
                     <span class="soort">{[soort(r().soort), `jouw rol: ${rol(r().rol)}`].filter(Boolean).join(" · ")}</span>
                   </div>
                   <div class="knoppen">
-                    <button class="primair" disabled={bezig()} onClick={() => koppel(r())}>
+                    <Show when={hoofdmap()?.hoofdmap && !alInHoofdmap(r())}>
+                      <button class="primair" disabled={bezig()} onClick={() => inDeHoofdmap(r())} title={`In ${hoofdmap()?.hoofdmap}`}>
+                        In de hoofdmap synchroniseren
+                      </button>
+                    </Show>
+                    <button classList={{ primair: !hoofdmap()?.hoofdmap }} disabled={bezig()} onClick={() => koppel(r())}>
                       Koppelen aan map…
                     </button>
                     <button disabled={bezig()} onClick={() => cloudmap(r())} title="Alleen Windows: bestanden worden opgehaald zodra je ze opent">
