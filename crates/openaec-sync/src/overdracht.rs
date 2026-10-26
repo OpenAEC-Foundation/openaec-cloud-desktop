@@ -9,6 +9,11 @@
 //!
 //! Een naam op de server kan geen '/' bevatten; een map gaat daarom mee als zip ([`pak_map`]), zonder compressie,
 //! net als "Alles downloaden" op de ontvangstpagina.
+//!
+//! Wat al in de opslag staat (gesynchroniseerd), hoeft niet opnieuw over de lijn: [`Client::voeg_toe_van_opslag`]
+//! zet bestanden en mappen uit een ruimte in een concept, en [`Client::maak_van_opslag`] maakt in één verzoek een
+//! hele overdracht; de server kopieert ze zelf. Een map komt dan mee met zijn mappen (geen zip). Alleen op een server
+//! met [`crate::api::Mogelijkheden::overdracht_van_opslag`].
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -116,6 +121,9 @@ pub struct BestandStand {
 pub struct OverdrachtBestand {
     pub bestand: String,
     pub naam: String,
+    /// Bij een bestand uit een meegestuurde map: die map in de overdracht (pad met '/').
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map: Option<String>,
     #[serde(default)]
     pub grootte: u64,
     #[serde(default)]
@@ -124,8 +132,71 @@ pub struct OverdrachtBestand {
     pub aantal_downloads: u64,
 }
 
+/// Een bestand of map in een ruimte om te versturen zonder upload: een bestand met de versie die hier staat, of een
+/// map (met alles eronder, zoals hij op de server staat).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "doctype")]
+pub enum UitOpslag {
+    #[serde(rename = "Opslagbestand")]
+    Bestand { id: String, versie: Option<u64> },
+    #[serde(rename = "Opslagmap")]
+    Map { id: String },
+}
+
+/// Antwoord van `voeg_toe_van_opslag`: de nieuwe bestanden in de overdracht, en `bezig` als de server ze nog kopieert.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Toegevoegd {
+    pub overdracht: String,
+    #[serde(default)]
+    pub bezig: bool,
+    #[serde(default)]
+    pub bestanden: Vec<OverdrachtBestand>,
+}
+
+/// Antwoord van `maak_van_opslag`: klaar (met de link, zoals `voltooi`), of `bezig` (de server kopieert nog; `info`
+/// geeft de link zodra hij klaar is).
+#[derive(Debug, Clone, Deserialize)]
+pub struct VanOpslag {
+    pub overdracht: String,
+    pub status: String,
+    #[serde(default)]
+    pub bezig: bool,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub verloopt_op: Option<String>,
+    #[serde(default)]
+    pub aantal_bestanden: u64,
+    #[serde(default)]
+    pub totale_grootte: u64,
+    #[serde(default)]
+    pub mail: Vec<String>,
+}
+
+/// De lijsten `bestanden` en `mappen` voor de server.
+fn bronnen(items: &[UitOpslag]) -> (Vec<Value>, Vec<&str>) {
+    let mut bestanden = Vec::new();
+    let mut mappen = Vec::new();
+    for item in items {
+        match item {
+            UitOpslag::Bestand { id, versie } => bestanden.push(json!({"bestand": id, "versie": versie})),
+            UitOpslag::Map { id } => mappen.push(id.as_str()),
+        }
+    }
+    (bestanden, mappen)
+}
+
+/// Kent de server deze methode niet (een oudere versie)? Frappe meldt dan dat de methode niet op te halen is.
+pub fn methode_onbekend(f: &Fout) -> bool {
+    let tekst = f.servermelding().unwrap_or_default();
+    matches!(f.status(), Some(404))
+        || tekst.contains("Failed to get method")
+        || tekst.contains("ophalen")
+        || tekst.contains("has no attribute")
+}
+
 /// Antwoord van `voltooi`: de link en naar wie de mail in de wachtrij staat.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Voltooid {
     pub overdracht: String,
     pub status: String,
@@ -244,6 +315,27 @@ impl Client {
     /// Een bestand uit een concept halen (bijv. omdat het lokaal veranderd is sinds de onderbreking).
     pub async fn overdracht_bestand_weg(&self, overdracht: &str, bestand: &str) -> Result<(), Fout> {
         self.roep_leeg_op(OVERDRACHT, "bestand_weg", json!({"overdracht": overdracht, "bestand": bestand})).await
+    }
+
+    /// Bestanden en mappen uit de opslag in een concept zetten: de server kopieert ze (zonder upload). Is `bezig` waar,
+    /// dan kopieert hij nog: [`Client::overdracht_info`] zegt per bestand wanneer het klaar is; `voltooi` kan pas daarna.
+    pub async fn voeg_toe_van_opslag(&self, overdracht: &str, items: &[UitOpslag]) -> Result<Toegevoegd, Fout> {
+        let (bestanden, mappen) = bronnen(items);
+        self.overdracht("voeg_toe_van_opslag", json!({"overdracht": overdracht, "bestanden": bestanden, "mappen": mappen})).await
+    }
+
+    /// Een hele overdracht van bestanden en mappen uit de opslag in één verzoek: maken, kopiëren (op de server) en de
+    /// link maken, met de mail aan de ontvangers.
+    pub async fn maak_van_opslag(&self, nieuw: &NieuweOverdracht, items: &[UitOpslag]) -> Result<VanOpslag, Fout> {
+        let (bestanden, mappen) = bronnen(items);
+        let ontvangers: Vec<&str> = nieuw.ontvangers.iter().map(|o| o.trim()).filter(|o| !o.is_empty()).collect();
+        self.overdracht(
+            "maak_van_opslag",
+            json!({"bestanden": bestanden, "mappen": mappen, "naam": nieuw.naam.trim(), "bericht": ingevuld(&nieuw.bericht),
+                   "verloopt": ingevuld(&nieuw.verloopt_op), "wachtwoord": nieuw.wachtwoord.as_deref().filter(|w| !w.is_empty()),
+                   "ontvangers": ontvangers}),
+        )
+        .await
     }
 
     /// De link maken en de ontvangers mailen; kan pas als elk bestand afgerond is.
@@ -371,7 +463,7 @@ pub async fn verstuur_bestand(
             }
             if stand.klaar {
                 voortgang(grootte, grootte);
-                return Ok(OverdrachtBestand { bestand: stand.bestand, naam: stand.naam, grootte, klaar: true, aantal_downloads: 0 });
+                return Ok(OverdrachtBestand { bestand: stand.bestand, naam: stand.naam, map: None, grootte, klaar: true, aantal_downloads: 0 });
             }
             let al: u64 = stand.aanwezig.iter().map(|d| d.grootte).sum();
             (stand.bestand, stand.deelgrootte, stand.delen, al)

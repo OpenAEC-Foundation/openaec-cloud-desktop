@@ -12,6 +12,8 @@ export interface VerstuurItem {
   grootte: number
   bestanden: number
   fout: string | null
+  /** In een gekoppelde map en helemaal gesynchroniseerd: staat al in OpenAEC, er hoeft niets geüpload te worden. */
+  in_opslag?: boolean
 }
 
 /** De grenzen van de server voor een overdracht (`grenzen`); GB = 10^9. */
@@ -33,6 +35,8 @@ export interface Onderdeel {
   grootte: number
   bestand: string | null
   klaar: boolean
+  /** Staat al in OpenAEC: de server kopieert het (geen upload). */
+  bron?: { toegevoegd: boolean } | null
 }
 
 /** Een overdracht die bezig of onderbroken is. */
@@ -44,7 +48,7 @@ export interface Lopend {
   concept_geldig_tot: string | null
 }
 
-export type Stapstatus = "wachten" | "inpakken" | "bezig" | "klaar" | "fout"
+export type Stapstatus = "wachten" | "inpakken" | "kopieren" | "bezig" | "klaar" | "fout"
 
 /** Voortgang van één onderdeel (event `versturen-stap`). */
 export interface VerstuurStap {
@@ -172,6 +176,14 @@ export const voegSamen = (huidig: string[], nieuw: string[], fase: Fase) => {
   return { paden, wachtend: [] as string[] }
 }
 
+/** Regel onder de lijst: wat er al in OpenAEC staat en dus niet geüpload hoeft te worden ("" als niets). */
+export const opslagTekst = (items: VerstuurItem[]) => {
+  const al = items.filter((i) => i.in_opslag && !i.fout).length
+  if (!al) return ""
+  if (al === items.length) return "Staat al in OpenAEC: er wordt niets geüpload."
+  return `${al} van ${items.length} staan al in OpenAEC en worden niet opnieuw geüpload; de rest wordt geüpload.`
+}
+
 /** Status van een overdracht zoals het venster hem noemt. */
 export const statusTekst = (status: string) =>
   ({ Concept: "Niet afgemaakt", Actief: "Actief", Verlopen: "Verlopen", Ingetrokken: "Ingetrokken" })[status] ?? status
@@ -207,6 +219,8 @@ export const stapTekst = (s: { status: Stapstatus; gedaan: number; totaal: numbe
       return "Wacht"
     case "inpakken":
       return "Map inpakken…"
+    case "kopieren":
+      return "Kopiëren in OpenAEC…"
     case "bezig":
       return s.totaal > 0 ? `${Math.min(100, Math.floor((s.gedaan / s.totaal) * 100))}%` : "Bezig…"
     case "klaar":

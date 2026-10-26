@@ -363,8 +363,17 @@ pub fn bekende_bestanden(root: &Path) -> Vec<BekendBestand> {
 /// die dat niet zijn (nieuw of gewijzigd); bestanden op de negeerlijst tellen niet mee. Leest alleen de toestand en de
 /// bestanden onder `pad`. Voor versturen: wat helemaal in sync is, staat al op de server.
 pub fn stand_onder(root: &Path, pad: &str) -> (Vec<BekendBestand>, Vec<String>) {
+    stand_van(root, &[pad]).pop().unwrap_or_default()
+}
+
+/// Als [`stand_onder`], voor een aantal paden in dezelfde gekoppelde map (de toestand wordt één keer gelezen).
+pub fn stand_van(root: &Path, paden: &[&str]) -> Vec<(Vec<BekendBestand>, Vec<String>)> {
     let toestand = laad(root);
     let negeer = Negeerlijst::laad(root);
+    paden.iter().map(|pad| stand_in(root, &toestand, &negeer, pad)).collect()
+}
+
+fn stand_in(root: &Path, toestand: &Toestand, negeer: &Negeerlijst, pad: &str) -> (Vec<BekendBestand>, Vec<String>) {
     let pad = pad.trim_matches('/');
     let plek = lokaal_pad(root, pad);
     let lokaal: Vec<(String, (u64, u128))> = match std::fs::metadata(&plek) {

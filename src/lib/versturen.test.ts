@@ -4,7 +4,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, overdrachtMeta,
-  samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen, type OverdrachtRegel, type VerstuurItem,
+  opslagTekst, samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen, type OverdrachtRegel, type VerstuurItem,
 } from "./versturen.ts"
 
 const nu = new Date(2026, 9, 26, 14, 30)
@@ -99,5 +99,12 @@ describe("voortgang", () => {
     assert.equal(stapTekst({ status: "bezig", gedaan: 0, totaal: 0, fout: null }), "Bezig…")
     assert.equal(stapTekst({ status: "fout", gedaan: 0, totaal: 3, fout: "Geen verbinding" }), "Geen verbinding")
     assert.equal(stapTekst({ status: "inpakken", gedaan: 0, totaal: 0, fout: null }), "Map inpakken…")
+    assert.equal(stapTekst({ status: "kopieren", gedaan: 0, totaal: 9, fout: null }), "Kopiëren in OpenAEC…")
+  })
+  it("zegt wat al in OpenAEC staat en niet opnieuw geüpload wordt", () => {
+    const al = { ...item("plan.pdf", 3), in_opslag: true }
+    assert.equal(opslagTekst([al, { ...item("Tekeningen", 9, true), in_opslag: true }]), "Staat al in OpenAEC: er wordt niets geüpload.")
+    assert.equal(opslagTekst([al, item("nieuw.pdf", 1)]), "1 van 2 staan al in OpenAEC en worden niet opnieuw geüpload; de rest wordt geüpload.")
+    assert.equal(opslagTekst([item("nieuw.pdf", 1)]), "")
   })
 })

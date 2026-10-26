@@ -73,3 +73,7 @@ windows = { version = "0.61", features = [
   "Win32_Security_WinTrust",
   "Win32_Security_Cryptography",
 ] }
+
+# Versturen tegen een nagebootste server (versturen.rs).
+[dev-dependencies]
+wiremock = "0.6"

@@ -325,3 +325,37 @@ fn een_map_als_zip_met_paden_en_lege_mappen() {
     assert_eq!(inhoud, "hallo");
     assert_eq!(openaec_sync::overdracht::mapomvang(&map).unwrap(), (3, 8));
 }
+
+#[tokio::test]
+async fn uit_de_opslag_stuurt_bestanden_met_versie_en_mappen() {
+    use openaec_sync::overdracht::{methode_onbekend, UitOpslag};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API}voeg_toe_van_opslag")))
+        .and(body_partial_json(json!({"overdracht": "OV1", "bestanden": [{"bestand": "B1", "versie": 4}], "mappen": ["M1"]})))
+        .respond_with(antwoord(json!({"overdracht": "OV1", "bezig": true, "bestanden": [
+            {"bestand": "K1", "naam": "plan.pdf", "grootte": 3, "klaar": false},
+            {"bestand": "K2", "naam": "a.dwg", "map": "Tekeningen", "grootte": 1, "klaar": false}]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{API}maak_van_opslag")))
+        .and(body_partial_json(json!({"naam": "Tekeningen", "mappen": ["M1"], "bestanden": [], "verloopt": "2026-11-30"})))
+        .respond_with(antwoord(json!({"overdracht": "OV2", "status": "Actief", "bezig": false, "url": "https://x/overdracht/t"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(&server.uri(), "token a:b");
+    let items = [UitOpslag::Bestand { id: "B1".into(), versie: Some(4) }, UitOpslag::Map { id: "M1".into() }];
+    let t = client.voeg_toe_van_opslag("OV1", &items).await.unwrap();
+    assert!(t.bezig);
+    assert_eq!(t.bestanden[1].map.as_deref(), Some("Tekeningen"));
+    let nieuw = NieuweOverdracht { naam: "Tekeningen".into(), verloopt_op: Some("2026-11-30".into()), ..Default::default() };
+    let v = client.maak_van_opslag(&nieuw, &[UitOpslag::Map { id: "M1".into() }]).await.unwrap();
+    assert_eq!((v.overdracht.as_str(), v.bezig, v.url.as_deref()), ("OV2", false, Some("https://x/overdracht/t")));
+    // Een oudere server kent de methode niet.
+    let oud = openaec_sync::Fout::Server { status: 404, tekst: json!({"exception": "Failed to get method"}).to_string() };
+    assert!(methode_onbekend(&oud));
+    assert!(!methode_onbekend(&openaec_sync::Fout::Server { status: 417, tekst: json!({"exception": "x"}).to_string() }));
+}
