@@ -374,7 +374,7 @@ export const api = {
   opDelenVerzoek: (f: (v: Deelverzoek) => void) => listen<Deelverzoek>("delen-verzoek", (e) => f(e.payload)),
   deeldoel: (pad: string) => invoke<Deeldoel>("deeldoel", { pad }),
   deelMetCollega: (doel: Deeldoel, gebruiker: string, rechten: string, verloopt: string) =>
-    invoke<void>("deel_met_collega", { doctype: doel.doctype, id: doel.id, gebruiker, rechten, verloopt }),
+    invoke<"al_lid" | "lid" | "uitgenodigd" | null>("deel_met_collega", { doctype: doel.doctype, id: doel.id, gebruiker, rechten, verloopt }),
   maakLink: (doel: Deeldoel, rechten: string, wachtwoord: string, verloopt: string) =>
     invoke<string>("maak_link", { doctype: doel.doctype, id: doel.id, rechten, wachtwoord, verloopt }),
   delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { doctype: doel.doctype, id: doel.id }),

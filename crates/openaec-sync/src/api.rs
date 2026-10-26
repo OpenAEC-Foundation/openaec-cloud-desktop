@@ -153,6 +153,10 @@ pub struct Deling {
     /// Volledig publiek adres van de deelpagina (nieuwere servers); anders zelf bouwen met `basis`.
     #[serde(default)]
     pub url: Option<String>,
+    /// Bij delen met een adres dat nog geen gebruiker was: hoe de uitnodiging als gast (met een OpenAEC-account)
+    /// ging: `al_lid`, `lid` of `uitgenodigd` (nieuwere servers met Beheer); anders leeg.
+    #[serde(default)]
+    pub uitnodiging: Option<String>,
 }
 
 /// Een bestaande deling van een map of bestand (`delingen`): een link of een gebruiker, met de rechten.

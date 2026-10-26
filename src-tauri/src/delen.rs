@@ -206,7 +206,9 @@ pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<
     Ok(Deeldoel { doctype: doctype.into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam })
 }
 
-/// Delen met een bestaande gebruiker van de omgeving: `lezen` (kan bekijken) of `schrijven` (kan bewerken).
+/// Delen met een gebruiker: `lezen` (kan bekijken), `schrijven` (kan bewerken) of `beheren`. Heeft het adres nog
+/// geen gebruiker in deze omgeving, dan nodigt de server hem uit als gast met een OpenAEC-account (als de omgeving dat
+/// kent); het antwoord zegt dan hoe (`al_lid`, `lid`, `uitgenodigd`), anders `None`.
 #[tauri::command]
 pub async fn deel_met_collega(
     state: tauri::State<'_, AppState>,
@@ -215,12 +217,12 @@ pub async fn deel_met_collega(
     gebruiker: String,
     rechten: String,
     verloopt: Option<String>,
-) -> Result<(), DeelFout> {
+) -> Result<Option<String>, DeelFout> {
     controleer_rechten(&doctype, "gebruiker", &rechten)?;
     let gebruiker = controleer_email(&gebruiker)?;
     let verloopt = ingevuld(verloopt);
-    client(&state).await?.deel_met_gebruiker(&doctype, &id, &gebruiker, &rechten, verloopt.as_deref()).await?;
-    Ok(())
+    let deling = client(&state).await?.deel_met_gebruiker(&doctype, &id, &gebruiker, &rechten, verloopt.as_deref()).await?;
+    Ok(deling.uitnodiging)
 }
 
 /// Een link maken (`lezen`, of `uploaden` voor een map) en meteen op het klembord zetten; geeft de link terug.

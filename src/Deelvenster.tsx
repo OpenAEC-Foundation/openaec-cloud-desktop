@@ -179,8 +179,15 @@ export default function Deelvenster() {
       setGedeeld("")
       if (!geldigEmail(wie)) return setCollegaFout({ code: "ongeldig_email", melding: "Vul een geldig e-mailadres in." })
       try {
-        await api.deelMetCollega(doel()!, wie, collegaRecht(), "")
-        setGedeeld(`Gedeeld met ${wie}: ${rechtenTekst("gebruiker", collegaRecht()).toLowerCase()}.`)
+        const uitnodiging = await api.deelMetCollega(doel()!, wie, collegaRecht(), "")
+        const recht = rechtenTekst("gebruiker", collegaRecht()).toLowerCase()
+        setGedeeld(
+          uitnodiging === "uitgenodigd"
+            ? `${wie} is uitgenodigd als gast en krijgt een mail om een OpenAEC-account aan te maken. Daarna ${recht}.`
+            : uitnodiging === "lid"
+              ? `${wie} heeft al een OpenAEC-account en is als gast toegevoegd: ${recht}.`
+              : `Gedeeld met ${wie}: ${recht}.`,
+        )
         setCollega("")
         laadDelingen()
       } catch (e) {
@@ -381,8 +388,8 @@ export default function Deelvenster() {
               <div class="extern">
                 <h3>Extern iemand uitnodigen</h3>
                 <p>
-                  <strong>{extern()}</strong> heeft geen account in deze omgeving. Mensen van buiten je organisatie uitnodigen, met een
-                  extra licentie, is nog in aanbouw.
+                  <strong>{extern()}</strong> kan in deze omgeving nog niet als gast worden uitgenodigd: de server kent uitnodigen met een
+                  OpenAEC-account hier nog niet.
                 </p>
                 <p>Wil je het nu al delen? Maak hierboven een link voor externen, eventueel met een wachtwoord en een vervaldatum, en stuur die zelf door.</p>
               </div>
