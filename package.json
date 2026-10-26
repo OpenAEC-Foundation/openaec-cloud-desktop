@@ -1,6 +1,6 @@
 {
   "name": "openaec-cloud",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "OpenAEC Desktop App — synchroniseren en delen, en OpenAEC-tools installeren (Tauri 2 + SolidJS)",
   "type": "module",
   "scripts": {
