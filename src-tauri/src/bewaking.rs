@@ -57,7 +57,7 @@ async fn markeer(app: &AppHandle, state: &AppState, k: Koppeling) {
     })
     .await;
     // Een map die nu een eigen sync-root is, heeft van Windows een item in het navigatiepaneel; het eigen item
-    // "OpenAEC" past zich daarop aan.
+    // "OpenAEC Cloud" past zich daarop aan.
     crate::werk_menu_bij(&state.instellingen.lock().unwrap());
 }
 
