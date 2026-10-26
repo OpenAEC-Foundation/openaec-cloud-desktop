@@ -19,6 +19,14 @@ fn ontbrekende_methode_wordt_herkend() {
 }
 
 #[test]
+fn een_kale_404_is_een_ontbrekende_methode() {
+    assert!(methode_ontbreekt(&Fout::Server { status: 404, tekst: String::new() }, "ruimte"));
+    // Een 404 met uitleg van Frappe (de ruimte bestaat niet) is een echte fout van de methode.
+    let niet_gevonden = server(404, json!({"exception": "frappe.exceptions.DoesNotExistError: Ruimte bestaat niet"}));
+    assert!(!methode_ontbreekt(&niet_gevonden, "ruimte"));
+}
+
+#[test]
 fn een_gewone_fout_is_geen_ontbrekende_methode() {
     let geen_recht = server(403, json!({"exception": "frappe.exceptions.PermissionError: Alleen een beheerder van de omgeving kan een ruimte aanmaken"}));
     assert!(!methode_ontbreekt(&geen_recht, "maak_ruimte"));

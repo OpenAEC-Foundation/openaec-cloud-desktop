@@ -422,6 +422,15 @@ struct Antwoord<T> {
 /// Kent de server deze methode van `openaec_storage.api` niet (een oudere versie)? Frappe meldt dan dat het de
 /// methode niet kon ophalen; een gewone fout van de methode zelf (geen recht, ongeldige invoer) telt niet.
 pub fn methode_ontbreekt(f: &Fout, methode: &str) -> bool {
+    // Een kale 404 zonder uitleg van Frappe (geen exception of melding): het adres van de methode bestaat niet.
+    if let Fout::Server { status: 404, tekst } = f {
+        let uitleg = serde_json::from_str::<Value>(tekst)
+            .ok()
+            .is_some_and(|v| v.get("exception").is_some() || v.get("_server_messages").is_some() || v.get("exc_type").is_some());
+        if !uitleg {
+            return true;
+        }
+    }
     let Some(tekst) = f.servermelding().or_else(|| if let Fout::Server { tekst, .. } = f { Some(tekst.clone()) } else { None }) else {
         return false;
     };
