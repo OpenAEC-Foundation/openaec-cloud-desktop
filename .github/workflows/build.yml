@@ -21,7 +21,8 @@ jobs:
         include:
           - os: windows-latest
             naam: windows
-            args: --config src-tauri/tauri.signing.conf.json
+            # tauri.verkenner.conf.json: de DLL's en pakketten van het moderne rechtermuismenu in de installers.
+            args: --config src-tauri/tauri.signing.conf.json --config src-tauri/tauri.verkenner.conf.json
             bundels: |
               src-tauri/target/release/bundle/nsis/*.exe
               src-tauri/target/release/bundle/nsis/*.sig
@@ -57,12 +58,14 @@ jobs:
         run: node scripts/versie.mjs --controleer "${{ github.ref_name }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          # Windows: ook ARM64 voor de DLL van het rechtermuismenu (de Verkenner laadt alleen zijn eigen architectuur).
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || runner.os == 'Windows' && 'x86_64-pc-windows-msvc,aarch64-pc-windows-msvc' || '' }}
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
             src-tauri
             crates/openaec-sync
+            crates/openaec-shellmenu
       - name: Systeembibliotheken (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -94,6 +97,27 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: crates/openaec-sync
         run: cargo build --release --features cli --bin openaec-storage
+      # Het moderne rechtermuismenu van Windows 11 (crates/openaec-shellmenu): de DLL voor x64 en ARM64, met de
+      # unit-tests en de rooktest (CoCreateInstance met een test-CLSID). Ondertekenen en verpakken gebeurt verderop.
+      - name: Verkenner-menu bouwen en testen (Windows)
+        if: runner.os == 'Windows'
+        working-directory: crates/openaec-shellmenu
+        shell: pwsh
+        run: |
+          cargo test --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo build --target x86_64-pc-windows-msvc --lib --examples
+          cargo run --target x86_64-pc-windows-msvc --example rooktest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo build --release --target x86_64-pc-windows-msvc --lib
+          cargo build --release --target aarch64-pc-windows-msvc --lib
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $doel = '../../src-tauri/shellmenu'
+          foreach ($arch in @(@('x64', 'x86_64'), @('arm64', 'aarch64'))) {
+            New-Item -ItemType Directory -Force "$doel/$($arch[0])" | Out-Null
+            Copy-Item "target/$($arch[1])-pc-windows-msvc/release/openaec_shellmenu.dll" "$doel/$($arch[0])/"
+          }
+          Copy-Item ../../src-tauri/icons/128x128.png "$doel/logo.png"
       - name: Opdrachtregel ondertekenen en signeergereedschap installeren (Windows)
         if: runner.os == 'Windows'
         uses: azure/trusted-signing-action@v1
@@ -142,8 +166,55 @@ jobs:
                      '/dlib', $dlib.FullName, '/dmdf', $metadata, '%1')
           } } } }
           $conf | ConvertTo-Json -Depth 10 | Set-Content -Path src-tauri/tauri.signing.conf.json -Encoding utf8
+          # Ook voor de stap Verkenner-menu ondertekenen.
+          "SIGNTOOL=$($signtool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SIGNTOOL_DLIB=$($dlib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SIGNTOOL_METADATA=$metadata" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Output "signtool: $($signtool.FullName)"
           Write-Output "dlib:     $($dlib.FullName)"
+
+      # Het pakket met identiteit voor het moderne rechtermuismenu (sparse package: alleen het manifest en het logo; de
+      # DLL staat in de installatiemap). De uitgever in het manifest moet precies het onderwerp van het certificaat
+      # zijn, anders weigert signtool het pakket: daarom komt hij uit de handtekening van de opdrachtregel. Eerst de
+      # DLL's ondertekenen, dan de pakketten maken en ondertekenen; Tauri neemt ze als resources mee in NSIS en MSI.
+      - name: Verkenner-menu ondertekenen en verpakken (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          function Teken([string[]] $bestanden) {
+            & $env:SIGNTOOL sign /v /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 `
+              /dlib $env:SIGNTOOL_DLIB /dmdf $env:SIGNTOOL_METADATA @bestanden
+            if ($LASTEXITCODE -ne 0) { Write-Error "ondertekenen mislukt: $bestanden"; exit 1 }
+          }
+          $map = (Resolve-Path src-tauri/shellmenu).Path
+          Teken @((Get-ChildItem $map -Recurse -Filter openaec_shellmenu.dll).FullName)
+          $uitgever = (Get-AuthenticodeSignature crates/openaec-sync/target/release/openaec-storage.exe).SignerCertificate.Subject
+          if (-not $uitgever) { Write-Error 'geen onderwerp van het certificaat gevonden'; exit 1 }
+          Write-Output "uitgever: $uitgever"
+          $versie = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" |
+            Sort-Object { [version]($_.Directory.Parent.Name) } | Select-Object -Last 1
+          if (-not $makeappx) { Write-Error 'makeappx.exe niet gevonden'; exit 1 }
+          $pakketten = @()
+          foreach ($arch in 'x64', 'arm64') {
+            $bron = Join-Path $env:RUNNER_TEMP "pakket-$arch"
+            New-Item -ItemType Directory -Force "$bron/shellmenu" | Out-Null
+            Copy-Item "$map/logo.png" "$bron/shellmenu/logo.png"
+            cargo run --release --manifest-path crates/openaec-shellmenu/Cargo.toml --target x86_64-pc-windows-msvc --example manifest -- `
+              --versie $versie --arch $arch --uitgever $uitgever --uit "$bron/AppxManifest.xml"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $msix = Join-Path $map "OpenAEC-Verkenner-$arch.msix"
+            # /nv: de app en de DLL waar het manifest naar wijst, staan niet in het pakket maar in de installatiemap.
+            & $makeappx.FullName pack /d $bron /p $msix /nv /o
+            if ($LASTEXITCODE -ne 0) { Write-Error "makeappx mislukt ($arch)"; exit 1 }
+            $pakketten += $msix
+          }
+          Teken $pakketten
+          Get-ChildItem $map -Recurse -File | ForEach-Object { Write-Output $_.FullName }
 
       # Bij een v*-tag: conceptrelease met de installers; anders als workflow-artefact.
       # Automatische updates: met de updater-sleutel krijgt elke installer (en de AppImage en de .app.tar.gz) een .sig,
@@ -207,10 +278,24 @@ jobs:
           $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
           $inhoud = Join-Path $env:RUNNER_TEMP 'nsis-inhoud'
           7z x -y "-o$inhoud" $setup.FullName | Out-Null
-          $binnen = @(Get-ChildItem $inhoud -Recurse -Include *.exe, *.dll -ErrorAction SilentlyContinue)
+          $binnen = @(Get-ChildItem $inhoud -Recurse -Include *.exe, *.dll, *.msix -ErrorAction SilentlyContinue)
           if (-not ($binnen | Where-Object { $_.Name -match '^(openaec-cloud|OpenAEC Storage|OpenAEC Desktop App)\.exe$' })) {
             Write-Error "de app zit niet in de installer: $($binnen.Name -join ', ')"; exit 1
           }
+          # Het moderne rechtermuismenu: de DLL voor x64 en ARM64 en de twee pakketten, in de installer en in de MSI
+          # (uitgepakt met een administratieve installatie, zonder iets te installeren).
+          $msi = Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
+          $msiInhoud = Join-Path $env:RUNNER_TEMP 'msi-inhoud'
+          Start-Process msiexec.exe -Wait -ArgumentList @('/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$msiInhoud`"")
+          $menu = @(Get-ChildItem $msiInhoud -Recurse -Include openaec_shellmenu.dll, *.msix -ErrorAction SilentlyContinue)
+          $nodig = 'x64/openaec_shellmenu.dll', 'arm64/openaec_shellmenu.dll', 'shellmenu/OpenAEC-Verkenner-x64.msix', 'shellmenu/OpenAEC-Verkenner-arm64.msix'
+          foreach ($set in @(@{ naam = 'installer'; bestanden = $binnen }, @{ naam = 'MSI'; bestanden = $menu })) {
+            $namen = @($set.bestanden | ForEach-Object { "$($_.Directory.Name)/$($_.Name)" })
+            foreach ($n in $nodig) {
+              if ($namen -notcontains $n) { Write-Error "$n ontbreekt in de $($set.naam): $($namen -join ', ')"; exit 1 }
+            }
+          }
+          $binnen += $menu
           $bestanden = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe, src-tauri/target/release/bundle/msi/*.msi,
             crates/openaec-sync/target/release/openaec-storage.exe -ErrorAction SilentlyContinue) + $binnen
           if ($bestanden.Count -lt 4) { Write-Error "niet alle Windows-bestanden gevonden: $($bestanden.Name -join ', ')"; exit 1 }

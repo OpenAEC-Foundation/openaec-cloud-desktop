@@ -660,10 +660,11 @@ pub fn menu_versturen(state: tauri::State<'_, AppState>) -> bool {
 /// "Versturen met OpenAEC" in het rechtermuismenu aan- of uitzetten.
 #[tauri::command]
 pub async fn zet_menu_versturen(state: tauri::State<'_, AppState>, aan: bool) -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::rechtermuis::werk_bij(aan)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || crate::menupakket::werk_klassiek_bij(aan)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
     let mut inst = state.instellingen.lock().unwrap();
     inst.menu_versturen = Some(aan);
     inst.bewaar().map_err(|e| e.to_string())?;
+    crate::menupakket::schrijf_menu(&inst);
     Ok(aan)
 }
 

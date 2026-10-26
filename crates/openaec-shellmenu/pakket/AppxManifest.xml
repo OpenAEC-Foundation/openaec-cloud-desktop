@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pakket met identiteit voor het moderne rechtermuismenu van Windows 11 (sparse package, "packaging with external
+  location"). Alleen dit manifest en het logo zitten in het pakket; de app, de DLL en het logo staan in de
+  installatiemap, die bij het registreren als ExternalLocation wordt meegegeven. De velden tussen dubbele accolades vult
+  logica::manifest in (zie examples/manifest.rs).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap10 desktop4 desktop5 com rescap">
+  <Identity Name="{{NAAM}}" Publisher="{{UITGEVER}}" Version="{{VERSIE}}" ProcessorArchitecture="{{ARCHITECTUUR}}" />
+  <Properties>
+    <DisplayName>{{WEERGAVENAAM}}</DisplayName>
+    <PublisherDisplayName>Impertio Studio B.V.</PublisherDisplayName>
+    <Logo>{{LOGO}}</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+  <Resources>
+    <Resource Language="nl-nl" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+  <Applications>
+    <Application Id="OpenAEC" Executable="{{EXE}}" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
+      <!-- Geen eigen tegel of item in Start: de app heeft die al via de installer. -->
+      <uap:VisualElements
+        DisplayName="{{WEERGAVENAAM}}"
+        Description="OpenAEC in het rechtermuismenu van de Verkenner"
+        BackgroundColor="transparent"
+        Square150x150Logo="{{LOGO}}"
+        Square44x44Logo="{{LOGO}}"
+        AppListEntry="none" />
+      <Extensions>
+        <!-- Het item "OpenAEC" (met Delen… en Versturen met OpenAEC) op elk bestand en elke map. -->
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="OpenAEC" Clsid="{{CLSID}}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="OpenAEC" Clsid="{{CLSID}}" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+        <!-- De COM-server: de DLL in de installatiemap, die de Verkenner in zijn eigen proces laadt. -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="{{WEERGAVENAAM}}">
+              <com:Class Id="{{CLSID}}" Path="{{DLL}}" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

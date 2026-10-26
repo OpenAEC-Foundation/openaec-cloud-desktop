@@ -9,3 +9,5 @@ target/
 
 # Alleen in de bouwstraat aangemaakt (signCommand voor Windows).
 src-tauri/tauri.signing.conf.json
+# Alleen in de bouwstraat aangemaakt: de ondertekende DLL's en pakketten van het moderne rechtermuismenu.
+src-tauri/shellmenu/
