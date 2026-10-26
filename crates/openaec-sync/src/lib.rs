@@ -2,6 +2,7 @@
 //! API-client, blokhashes en delta-upload/-download. Geen UI; de Tauri-app gebruikt deze crate,
 //! en later ook de WebDAV-gateway en een macOS/Linux-client.
 
+pub mod ai;
 pub mod api;
 pub mod bewaking;
 pub mod blokken;
