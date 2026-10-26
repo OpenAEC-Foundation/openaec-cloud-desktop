@@ -4,7 +4,7 @@
 import { createSignal } from "solid-js"
 import { api, type Gedeeld, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
 
-export type Scherm = "overzicht" | "ruimtes" | "delen" | "tools" | "instellingen"
+export type Scherm = "overzicht" | "ruimtes" | "delen" | "assistent" | "tools" | "instellingen"
 
 export const [scherm, setScherm] = createSignal<Scherm>("overzicht")
 export const [basis, setBasis] = createSignal("")
@@ -26,6 +26,8 @@ export const [stand, setStand] = createSignal<Stand | null>(null)
 export const [quotum, setQuotum] = createSignal<Quotum | null>(null)
 /** Bestand of map in het deelscherm. */
 export const [bestand, setBestand] = createSignal("")
+/** Bestanden voor de assistent (rechtermuismenu "Vragen aan de assistent"); het scherm Assistent neemt ze over. */
+export const [voorAssistent, setVoorAssistent] = createSignal<string[]>([])
 
 /** Voer een actie uit met een melding in de statusbalk; fouten komen daar ook. */
 export const doe = async (wat: string, f: () => Promise<unknown>) => {
