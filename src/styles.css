@@ -275,6 +275,9 @@ fieldset.keuze legend { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
 
 .bestanden { border-top: 1px solid var(--lijn); padding-top: 14px; }
 .bestanden-kop { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.bestanden-kop .knoppen { display: flex; gap: 8px; }
+.nieuwe-map { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.nieuwe-map input { flex: 1; }
 .kruimels { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 13px; min-width: 0; }
 .kruimel { border: none; background: none; padding: 3px 6px; border-radius: 4px; font-size: 13px; color: var(--steen); }
 .kruimel:last-child { color: var(--inkt); font-weight: 600; }

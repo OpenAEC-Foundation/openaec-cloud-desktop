@@ -126,7 +126,7 @@ pub struct Inhoud {
     pub bestanden: Vec<BestandItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NieuweMap {
     pub map: String,
     pub nieuw: bool,
@@ -689,6 +689,20 @@ impl Client {
 
     pub async fn maak_map(&self, ruimte: &str, naam: &str, bovenliggende: Option<&str>) -> Result<NieuweMap, Fout> {
         self.roep("maak_map", json!({"ruimte": ruimte, "naam": naam, "bovenliggende": bovenliggende})).await
+    }
+
+    /// Als [`Client::maak_map`]; met `deling` binnen een map die met mij gedeeld is (`bovenliggende` None = die map).
+    pub async fn maak_map_in(
+        &self,
+        ruimte: &str,
+        deling: Option<&str>,
+        naam: &str,
+        bovenliggende: Option<&str>,
+    ) -> Result<NieuweMap, Fout> {
+        match deling {
+            Some(d) => self.roep("maak_map", json!({"deling": d, "naam": naam, "bovenliggende": bovenliggende})).await,
+            None => self.maak_map(ruimte, naam, bovenliggende).await,
+        }
     }
 
     /// Naar de prullenbak; de server bewaart het bestand nog 30 dagen.

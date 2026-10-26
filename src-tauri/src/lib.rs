@@ -469,6 +469,25 @@ struct MapInhoud {
 /// Hoeveel vergrendelingen tegelijk worden opgevraagd bij het bladeren.
 const GELIJKTIJDIG: usize = 8;
 
+/// Een nieuwe map op de server, in `map` (None = hoofdniveau van de ruimte of de gedeelde map). Bestaat er op die plek
+/// al een map met die naam, dan geeft de server die terug (`nieuw` false).
+#[tauri::command]
+async fn maak_map(
+    state: tauri::State<'_, AppState>,
+    ruimte: String,
+    map: Option<String>,
+    deling: Option<String>,
+    naam: String,
+) -> Result<openaec_sync::api::NieuweMap, String> {
+    let naam = naam.trim().to_string();
+    if naam.is_empty() {
+        return Err("geef de map een naam".into());
+    }
+    let client = client(&state).await?;
+    let map = map.filter(|m| !m.is_empty());
+    client.maak_map_in(&ruimte, deling.as_deref(), &naam, map.as_deref()).await.map_err(fout)
+}
+
 /// Inhoud van een map in een ruimte op de server (`map` None = hoofdniveau), met per bestand de actieve vergrendeling.
 /// Met `deling` in een map die met mij gedeeld is (hoofdniveau = de gedeelde map).
 #[tauri::command]
@@ -1250,6 +1269,7 @@ pub fn run() {
             hoofdmap::koppel_gedeeld_in_hoofdmap,
             hoofdmap::verplaats_naar_hoofdmap,
             bladeren,
+            maak_map,
             overzicht,
             open_map,
             open_beheer,

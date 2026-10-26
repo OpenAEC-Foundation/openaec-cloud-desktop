@@ -55,6 +55,23 @@ function Bestandsweergave(props: { plek: Plek }) {
 
   const leeg = () => inhoud() && !inhoud()!.mappen.length && !inhoud()!.bestanden.length
 
+  // Nieuwe map op deze plek: een invoerveld onder de kop, Enter maakt hem aan, Esc breekt af.
+  const [nieuweMap, setNieuweMap] = createSignal<string | null>(null)
+  const [mapFout, setMapFout] = createSignal("")
+  const maakMap = async () => {
+    const naam = (nieuweMap() ?? "").trim()
+    if (!naam) return
+    setMapFout("")
+    try {
+      const uit = await api.maakMap(props.plek.ruimte, hier(), naam, props.plek.deling)
+      setNieuweMap(null)
+      if (!uit.nieuw) setMelding(`De map "${naam}" bestond hier al.`)
+      await laad()
+    } catch (e) {
+      setMapFout(String(e))
+    }
+  }
+
   /** Het deelvenster openen voor een map of bestand op deze plek (de klik opent de map niet). */
   const deel = (e: MouseEvent, doctype: Deeldoel["doctype"], id: string, naam: string) => {
     e.stopPropagation()
@@ -82,10 +99,55 @@ function Bestandsweergave(props: { plek: Plek }) {
             )}
           </For>
         </nav>
-        <button class="klein" disabled={laden()} onClick={laad} title="Opnieuw ophalen van de server">
-          {laden() ? "Bezig…" : "Vernieuwen"}
-        </button>
+        <span class="knoppen">
+          <button class="klein" disabled={nieuweMap() !== null} onClick={() => setNieuweMap("")} title="Een nieuwe map op deze plek">
+            Nieuwe map…
+          </button>
+          <button class="klein" disabled={laden()} onClick={laad} title="Opnieuw ophalen van de server">
+            {laden() ? "Bezig…" : "Vernieuwen"}
+          </button>
+        </span>
       </div>
+
+      <Show when={nieuweMap() !== null}>
+        <form
+          class="nieuwe-map"
+          onSubmit={(e) => {
+            e.preventDefault()
+            maakMap()
+          }}
+        >
+          <input
+            ref={(el) => setTimeout(() => el.focus())}
+            value={nieuweMap() ?? ""}
+            maxLength={240}
+            placeholder="Naam van de nieuwe map"
+            onInput={(e) => setNieuweMap(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setNieuweMap(null)
+                setMapFout("")
+              }
+            }}
+          />
+          <button class="primair klein" type="submit" disabled={!(nieuweMap() ?? "").trim()}>
+            Maken
+          </button>
+          <button
+            class="klein"
+            type="button"
+            onClick={() => {
+              setNieuweMap(null)
+              setMapFout("")
+            }}
+          >
+            Annuleren
+          </button>
+        </form>
+        <Show when={mapFout()}>
+          <p class="hint fout">{mapFout()}</p>
+        </Show>
+      </Show>
 
       <Show when={!fout()} fallback={<p class="foutvlak">Ophalen mislukt: {fout()}</p>}>
         <Show

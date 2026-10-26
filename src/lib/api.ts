@@ -347,6 +347,8 @@ export const api = {
   opSync: (f: (r: MapRapport[]) => void) => listen<MapRapport[]>("sync", (e) => f(e.payload)),
   bladeren: (ruimte: string, map: string | null, deling?: string | null) =>
     invoke<MapInhoud>("bladeren", { ruimte, map, deling: deling ?? null }),
+  maakMap: (ruimte: string, map: string | null, naam: string, deling?: string | null) =>
+    invoke<{ map: string; nieuw: boolean }>("maak_map", { ruimte, map, naam, deling: deling ?? null }),
   overzicht: () => invoke<Overzicht>("overzicht"),
   openMap: (pad: string) => invoke<void>("open_map", { pad }),
   openBeheer: () => invoke<void>("open_beheer"),
