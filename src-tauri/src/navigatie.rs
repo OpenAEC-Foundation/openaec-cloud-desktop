@@ -344,6 +344,8 @@ mod tests {
         assert_eq!(doel(None, &[k("OpenAEC Studio", "D:\\Werk\\Studio")]), Doel::Map(PathBuf::from("D:\\Werk\\Studio")));
     }
 
+    // Windows-paden: de mapnaam uit "F:\Archief" leest alleen Windows zo (elders is het één naam).
+    #[cfg(windows)]
     #[test]
     fn meer_losse_koppelingen_met_unieke_namen() {
         let d = doel(None, &[k("Project A", "D:\\A"), k("project a", "E:\\A"), k("", "F:\\Archief"), k("a/b:c", "G:\\X")]);
