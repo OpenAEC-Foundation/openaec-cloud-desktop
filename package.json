@@ -1,6 +1,6 @@
 {
   "name": "openaec-cloud",
-  "version": "2026.44.6",
+  "version": "2026.44.7",
   "description": "OpenAEC Desktop App — synchroniseren en delen, en OpenAEC-tools installeren (Tauri 2 + SolidJS)",
   "type": "module",
   "scripts": {
