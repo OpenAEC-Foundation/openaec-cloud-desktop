@@ -223,6 +223,9 @@ pub struct Vergrendeling {
 pub struct BestandInfo {
     pub bestand: String,
     pub naam: String,
+    /// De map waar het bestand in staat (None: het hoofdniveau van de ruimte).
+    #[serde(default)]
+    pub map: Option<String>,
     #[serde(default)]
     pub huidige_versie: u64,
     #[serde(default)]
@@ -254,6 +257,12 @@ pub struct Mogelijkheden {
     /// De parameter `deling` (een gedeelde map als bovenste map) bij `boom`, `maak_mappen`, `upload_klein` enz.
     #[serde(default)]
     pub deling: bool,
+    /// `zoek_pad`: een pad in één verzoek naar het id van een map of bestand.
+    #[serde(default)]
+    pub zoek_pad: bool,
+    /// `overdracht.voeg_toe_van_opslag` en `maak_van_opslag`: versturen wat al in de opslag staat, zonder upload.
+    #[serde(default)]
+    pub overdracht_van_opslag: bool,
 }
 
 /// Iets dat een ander met mij deelde (`gedeeld_met_mij`): een map (te koppelen) of een bestand (te openen).

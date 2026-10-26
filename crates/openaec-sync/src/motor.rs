@@ -358,6 +358,43 @@ pub fn bekende_bestanden(root: &Path) -> Vec<BekendBestand> {
         .collect()
 }
 
+/// Hoe `pad` (een bestand of map, met '/' ten opzichte van `root`) er hier voor staat ten opzichte van de laatste
+/// ronde: de bestanden die in sync zijn (in de toestand en lokaal ongewijzigd sinds die ronde) en de lokale bestanden
+/// die dat niet zijn (nieuw of gewijzigd); bestanden op de negeerlijst tellen niet mee. Leest alleen de toestand en de
+/// bestanden onder `pad`. Voor versturen: wat helemaal in sync is, staat al op de server.
+pub fn stand_onder(root: &Path, pad: &str) -> (Vec<BekendBestand>, Vec<String>) {
+    let toestand = laad(root);
+    let negeer = Negeerlijst::laad(root);
+    let pad = pad.trim_matches('/');
+    let plek = lokaal_pad(root, pad);
+    let lokaal: Vec<(String, (u64, u128))> = match std::fs::metadata(&plek) {
+        Ok(m) if m.is_dir() => lokale_bestanden(&plek)
+            .into_iter()
+            .map(|(rel, k)| (if pad.is_empty() { rel } else { format!("{pad}/{rel}") }, k))
+            .collect(),
+        Ok(_) => kenmerk(&plek).map(|k| vec![(pad.to_string(), k)]).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let (mut in_sync, mut anders) = (Vec::new(), Vec::new());
+    for (hier, k) in lokaal {
+        let sleutel = toestand.sleutel(&hier);
+        if negeer.negeert(&sleutel) || hier.split('/').next() == Some(TOESTANDSMAP) {
+            continue;
+        }
+        match toestand.bestanden.get(&sleutel) {
+            Some(b) if (b.grootte, b.mtime_ns) == k => in_sync.push(BekendBestand {
+                pad: hier,
+                bestand: b.bestand.clone(),
+                versie: b.versie,
+                grootte: b.grootte,
+                mtime_ns: b.mtime_ns,
+            }),
+            _ => anders.push(hier),
+        }
+    }
+    (in_sync, anders)
+}
+
 /// De overgeslagen bestanden van de laatste ronde (leeg als er geen waren of de map nog nooit is gesynchroniseerd).
 pub fn overgeslagen(root: &Path) -> Vec<Overgeslagen> {
     laad(root).overgeslagen

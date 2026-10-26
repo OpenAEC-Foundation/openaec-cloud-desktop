@@ -52,6 +52,59 @@ fn samen(map: &str, naam: &str) -> String {
     if map.is_empty() { naam.to_string() } else { format!("{map}/{naam}") }
 }
 
+/// Een naam zoals de server hem vergelijkt: zonder spaties eromheen en zonder hoofdletters.
+fn vergelijkbaar(naam: &str) -> String {
+    naam.trim().to_lowercase()
+}
+
+/// De ids (in volgorde) van de mappen waarvan de naam bij `deel` past; staat er een met precies deze schrijfwijze bij,
+/// dan alleen die (en eventuele dubbele met dezelfde naam).
+fn passend(mappen: &[(String, String)], deel: &str) -> Vec<String> {
+    let exact: Vec<String> = mappen.iter().filter(|(naam, _)| naam.trim() == deel.trim()).map(|(_, id)| id.clone()).collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+    let gezocht = vergelijkbaar(deel);
+    mappen.iter().filter(|(naam, _)| vergelijkbaar(naam) == gezocht).map(|(_, id)| id.clone()).collect()
+}
+
+/// Waar een lokale map op de server staat ([`ClientOpslag::map_van_lokaal`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mapplek {
+    /// Het id van de map (of de nieuw aangemaakte lege map).
+    Gevonden(String),
+    /// Er staan bestanden in die nog niet gesynchroniseerd zijn.
+    NogNietGesynchroniseerd,
+    /// De bestanden erin zijn gesynchroniseerd, maar de map is op de server niet te vinden.
+    NietGevonden,
+    /// Leeg (alleen lege mappen of genegeerde bestanden), en niet aangemaakt.
+    Leeg,
+}
+
+/// Antwoord van `zoek_pad`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct GevondenPad {
+    #[serde(default)]
+    pub map: Option<String>,
+    #[serde(default)]
+    pub bestand: Option<String>,
+    #[serde(default)]
+    pub gevonden: bool,
+}
+
+impl Client {
+    /// Het id van een map (`soort` "map") of bestand ("bestand") bij een pad met '/' in de ruimte, of met `deling` in
+    /// de gedeelde map; een pad dat niet bestaat geeft `gevonden` false. Alleen op een server met
+    /// [`Mogelijkheden::zoek_pad`].
+    pub async fn zoek_pad(&self, ruimte: &str, deling: Option<&str>, pad: &str, soort: &str) -> Result<GevondenPad, Fout> {
+        let mut gegevens = serde_json::json!({"ruimte": ruimte, "pad": pad, "soort": soort});
+        if let Some(d) = deling {
+            gegevens["deling"] = d.into();
+        }
+        self.roep_op("/api/method/openaec_storage.api.", "zoek_pad", gegevens).await
+    }
+}
+
 impl ClientOpslag {
     pub fn new(client: Client, ruimte: &str) -> Self {
         Self {
@@ -106,17 +159,82 @@ impl ClientOpslag {
         Ok(mappen)
     }
 
-    /// Map-id voor een bestaand mappad (zonder iets aan te maken); None als de map niet (meer) bestaat.
+    /// Map-id voor een bestaand mappad (zonder iets aan te maken); None als de map niet (meer) bestaat. Een leeg pad
+    /// is het hoofdniveau (None bij een hele ruimte, de gedeelde map bij een deling).
+    ///
+    /// Een nieuwere server zoekt het pad in één verzoek (`zoek_pad`); anders bladert de app map voor map. Namen worden
+    /// vergeleken zoals de server ze aanmaakt: hoofdletters en spaties eromheen maken niet uit (een precieze
+    /// schrijfwijze gaat voor). Staan er op één plek twee mappen met dezelfde naam (van vóór de controle op dubbele
+    /// mappen op de server), dan zoekt de app in allebei verder, en wint aan het eind de map met inhoud.
     pub async fn zoek_map(&self, mappad: &str) -> Result<Option<String>, Fout> {
-        let mut map: Option<String> = self.wortel();
-        for deel in mappad.split('/').filter(|d| !d.is_empty()) {
-            let inhoud = self.client.bladeren(&self.ruimte, map.as_deref()).await?;
-            match inhoud.mappen.into_iter().find(|m| m.naam == deel) {
-                Some(m) => map = Some(m.name),
-                None => return Ok(None),
+        let delen: Vec<&str> = mappad.split(['/', '\\']).filter(|d| !d.trim().is_empty()).collect();
+        if delen.is_empty() {
+            return Ok(self.wortel());
+        }
+        if self.mogelijkheden().await.zoek_pad {
+            let r = self.client.zoek_pad(&self.ruimte, self.deling(), &delen.join("/"), "map").await?;
+            return Ok(r.map.filter(|_| r.gevonden));
+        }
+        let mut kandidaten: Vec<Option<String>> = vec![self.wortel()];
+        for deel in &delen {
+            let mut gevonden = Vec::new();
+            for map in &kandidaten {
+                let inhoud = self.client.bladeren(&self.ruimte, map.as_deref()).await?;
+                gevonden.extend(inhoud.mappen.into_iter().map(|m| (m.naam, m.name)));
+            }
+            kandidaten = passend(&gevonden, deel).into_iter().map(Some).collect();
+            if kandidaten.is_empty() {
+                return Ok(None);
             }
         }
-        Ok(map)
+        if kandidaten.len() > 1 {
+            for map in &kandidaten {
+                let inhoud = self.client.bladeren(&self.ruimte, map.as_deref()).await?;
+                if !inhoud.mappen.is_empty() || !inhoud.bestanden.is_empty() {
+                    return Ok(map.clone());
+                }
+            }
+        }
+        Ok(kandidaten.swap_remove(0))
+    }
+
+    /// Het id op de server van de lokale map `rel` (met '/') in de gekoppelde map `root`. Staat hij er niet, dan zegt
+    /// de lokale toestand waarom: er staan bestanden in die nog gesynchroniseerd worden, of de map is hier leeg (de
+    /// sync neemt alleen mappen met bestanden mee). Een lege map maakt de app met `maak_leeg` alsnog aan (behalve in
+    /// een map die alleen te bekijken is). Een gesynchroniseerd bestand direct in de map weet ook in welke map het staat.
+    pub async fn map_van_lokaal(&self, root: &Path, rel: &str, maak_leeg: bool) -> Result<Mapplek, Fout> {
+        if let Some(id) = self.zoek_map(rel).await? {
+            return Ok(Mapplek::Gevonden(id));
+        }
+        let (root2, rel2) = (root.to_path_buf(), rel.to_string());
+        let (in_sync, anders) = tokio::task::spawn_blocking(move || crate::motor::stand_onder(&root2, &rel2))
+            .await
+            .map_err(|e| Fout::Controle(e.to_string()))?;
+        let map = rel.trim_matches('/');
+        for b in in_sync.iter().filter(|b| splits(&b.pad).0 == map) {
+            if let Ok(Some(id)) = self.client.info(&b.bestand).await.map(|i| i.map) {
+                return Ok(Mapplek::Gevonden(id));
+            }
+        }
+        Ok(match (in_sync.is_empty(), anders.is_empty()) {
+            (false, _) => Mapplek::NietGevonden,
+            (true, false) => Mapplek::NogNietGesynchroniseerd,
+            (true, true) if maak_leeg && !self.alleen_lezen() => match self.maak_mappad(map).await? {
+                Some(id) => Mapplek::Gevonden(id),
+                None => Mapplek::Leeg,
+            },
+            (true, true) => Mapplek::Leeg,
+        })
+    }
+
+    /// Een map (met wat erboven ontbreekt) op de server aanmaken, of de bestaande teruggeven: voor een lege map die
+    /// gedeeld wordt (de sync neemt alleen mappen met bestanden mee). Niet bij een map die alleen te bekijken is.
+    pub async fn maak_mappad(&self, mappad: &str) -> Result<Option<String>, Fout> {
+        if self.alleen_lezen() {
+            return Err(Fout::Controle("deze map is met je gedeeld om te bekijken; aanmaken kan niet".into()));
+        }
+        let pad: Vec<&str> = mappad.split(['/', '\\']).filter(|d| !d.trim().is_empty()).collect();
+        self.zorg_voor_map(&pad.join("/")).await
     }
 
     /// Map-id voor een mappad ("" = hoofdniveau), mappen die nog ontbreken worden aangemaakt.

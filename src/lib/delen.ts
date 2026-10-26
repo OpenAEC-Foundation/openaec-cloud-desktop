@@ -51,6 +51,12 @@ export const linkRechten = (isMap: boolean): Keuze[] => [
   ...(isMap ? [{ waarde: "uploaden" as const, tekst: "Bestanden opvragen" }] : []),
 ]
 
+/** Uitleg bij de link voor externen: wat de ontvanger kan, zonder account en zonder toegang tot de rest van de ruimte. */
+export const linkUitleg = (isMap: boolean, rechten: string) =>
+  rechten === "uploaden"
+    ? "Wie de link opent, kan bestanden in deze map zetten zonder account, maar ziet de inhoud niet."
+    : `Iedereen met de link kan ${isMap ? "deze map en alles erin" : "dit bestand"} bekijken en downloaden, zonder account en zonder toegang tot de rest van de ruimte.`
+
 /** Wat een lid van de ruimte al mag, volgens zijn rol. */
 export const rolTekst = (rol: string) =>
   ({ beheerder: "Beheerder", schrijver: "Kan bewerken", lezer: "Kan bekijken", gast: "Gast (kan bekijken)" })[rol] ?? rol

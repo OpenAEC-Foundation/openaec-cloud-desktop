@@ -4,7 +4,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   collegaTekst, controleerVervaldatum, datumTekst, datumWaarde, delingDetails, delingVerlopen, geldigEmail, isVerlopen, leesFout,
-  gedeeldMeta, linkRechten, rang, rechtenTekst, rolTekst, toegestaneRechten, vervaldatumTekst,
+  gedeeldMeta, linkRechten, linkUitleg, rang, rechtenTekst, rolTekst, toegestaneRechten, vervaldatumTekst,
 } from "./delen.ts"
 
 const nu = new Date(2026, 9, 23, 14, 30)
@@ -19,6 +19,11 @@ describe("rechten", () => {
   it("biedt bestanden opvragen alleen bij een map", () => {
     assert.deepEqual(linkRechten(false).map((k) => k.waarde), ["lezen"])
     assert.deepEqual(linkRechten(true).map((k) => k.waarde), ["lezen", "uploaden"])
+  })
+  it("legt de link voor externen uit: zonder account en zonder de rest van de ruimte", () => {
+    assert.match(linkUitleg(true, "lezen"), /deze map en alles erin.*zonder account en zonder toegang tot de rest van de ruimte/)
+    assert.match(linkUitleg(false, "lezen"), /dit bestand/)
+    assert.match(linkUitleg(true, "uploaden"), /bestanden in deze map zetten/)
   })
   it("vertaalt de rol van een lid", () => {
     assert.equal(rolTekst("schrijver"), "Kan bewerken")
