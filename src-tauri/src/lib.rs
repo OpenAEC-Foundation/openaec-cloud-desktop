@@ -9,6 +9,7 @@ mod instellingen;
 mod itemstatus;
 mod opaanvraag;
 mod opruimen;
+mod schatting;
 mod sloten;
 mod systeemvak;
 mod tools;

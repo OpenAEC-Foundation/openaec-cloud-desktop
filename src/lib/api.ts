@@ -188,7 +188,7 @@ export interface RondeStand {
   bytes_totaal: number
   /** Bytes per seconde, voortschrijdend gemiddelde. */
   snelheid: number
-  /** Geschatte resterende tijd in seconden. */
+  /** Geschatte resterende tijd in seconden (gedempt, op bytes en bestanden); null zolang er niets te schatten valt. */
   resterend: number | null
   /** Bytes die door blokhergebruik niet over de lijn hoefden. */
   bespaard: number

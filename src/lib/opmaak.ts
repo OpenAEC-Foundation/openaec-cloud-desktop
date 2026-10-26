@@ -36,12 +36,30 @@ export const quotumTekst = (gebruikt: number, limiet: number | null) =>
     ? `${gb(gebruikt)} gebruikt (geen limiet)`
     : `${gb(gebruikt)} van ${gb(limiet)} gebruikt (${gb(Math.max(0, limiet - gebruikt))} vrij)`
 
-/** Lopende ronde: "nog 3 bestanden, 1,2 GB van 4 GB · 12,5 MB/s · nog 4 min". */
+/**
+ * Resterende tijd van een ronde, grof afgerond zodat hij rustig blijft: "nog minder dan een minuut", "nog ongeveer
+ * 3 minuten", "nog ongeveer 25 minuten" (per 5), "nog ongeveer een uur", "nog ruim een uur", "nog ongeveer 3 uur".
+ * Zonder schatting (net begonnen, nog te weinig gemeten): "bezig met voorbereiden…". De schatting zelf (op bytes én
+ * bestanden, gedempt) maakt de app; zie `src-tauri/src/schatting.rs`.
+ */
+export const resterendTekst = (sec: number | null | undefined) => {
+  if (sec === null || sec === undefined || !Number.isFinite(sec)) return "bezig met voorbereiden…"
+  if (sec < 60) return "nog minder dan een minuut"
+  const min = Math.round(sec / 60)
+  if (min < 10) return `nog ongeveer ${min} ${min === 1 ? "minuut" : "minuten"}`
+  if (min < 45) return `nog ongeveer ${Math.round(min / 5) * 5} minuten`
+  if (min < 75) return "nog ongeveer een uur"
+  if (min < 120) return "nog ruim een uur"
+  if (min < 24 * 60) return `nog ongeveer ${Math.round(min / 60)} uur`
+  return "nog meer dan een dag"
+}
+
+/** Lopende ronde: "nog 3 bestanden, 1,2 GB van 4 GB · 12,5 MB/s · nog ongeveer 4 minuten". */
 export const rondeTekst = (r: { nog: number; bytes_gedaan: number; bytes_totaal: number; snelheid: number; resterend: number | null }) =>
   [
     `nog ${r.nog} bestand${r.nog === 1 ? "" : "en"}, ${gb(r.bytes_gedaan)} van ${gb(r.bytes_totaal)}`,
     snelheid(r.snelheid),
-    r.resterend !== null && r.snelheid > 0 ? `nog ${duur(r.resterend)}` : "",
+    resterendTekst(r.resterend),
   ]
     .filter(Boolean)
     .join(" · ")

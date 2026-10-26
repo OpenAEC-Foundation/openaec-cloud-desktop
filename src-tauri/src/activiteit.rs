@@ -11,6 +11,7 @@ use openaec_sync::voortgang::{Actie, Gebeurtenis, Richting, Waarnemer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::schatting::Schatter;
 use crate::{systeemvak, AppState, MapRapport};
 
 /// Zoveel regels laatste activiteit worden onthouden.
@@ -71,7 +72,7 @@ pub struct RondeStand {
     bytes_totaal: u64,
     /// Bytes per seconde over de laatste seconden (voortschrijdend gemiddelde).
     snelheid: f64,
-    /// Geschatte resterende tijd in seconden (onbekend zolang er geen snelheid is).
+    /// Geschatte resterende tijd in seconden; None zolang er nog niets te schatten valt (zie `schatting`).
     resterend: Option<u64>,
     /// Wat blokhergebruik deze ronde scheelde (bytes die niet over de lijn hoefden).
     bespaard: u64,
@@ -84,8 +85,13 @@ struct Ronde {
     bytes_klaar: u64,
     verstuurd_klaar: u64,
     bespaard: u64,
+    /// Bestanden in de ronde (uploads en downloads) en hoeveel daarvan af zijn (gelukt of mislukt).
+    bestanden: u64,
+    bestanden_klaar: u64,
     /// (tijd, totaal verstuurd tot dan) voor de voortschrijdende snelheid.
     metingen: VecDeque<(f64, u64)>,
+    /// Resterende tijd, op bytes én bestanden en gedempt.
+    schatter: Schatter,
 }
 
 /// Gemiddelde snelheid (bytes/s) over het venster: van de oudste meting binnen het venster tot nu.
@@ -98,11 +104,6 @@ fn voortschrijdend(metingen: &VecDeque<(f64, u64)>, nu: f64, verstuurd_nu: u64) 
         return 0.0;
     }
     verstuurd_nu.saturating_sub(b0) as f64 / dt
-}
-
-/// Resterende tijd in hele seconden, of None zonder snelheid.
-fn resterend(rest: u64, snelheid: f64) -> Option<u64> {
-    (snelheid > 0.0).then(|| (rest as f64 / snelheid).ceil() as u64)
 }
 
 /// Seconden sinds de eerste aanroep: de klok voor de rondetellers.
@@ -159,6 +160,9 @@ impl Binnen {
         while m.len() > 1 && m.front().is_some_and(|(t, _)| nu - t > SNELHEIDSVENSTER) {
             m.pop_front();
         }
+        let bytes_gedaan = self.bytes_gedaan();
+        let r = &mut self.ronde;
+        r.schatter.meet(nu, bytes_gedaan, r.bestanden_klaar, r.bytes, r.bestanden);
     }
 
     fn ronde_stand(&self, nu: f64) -> Option<RondeStand> {
@@ -173,7 +177,7 @@ impl Binnen {
             bytes_gedaan,
             bytes_totaal: self.ronde.bytes,
             snelheid,
-            resterend: resterend(self.ronde.bytes - bytes_gedaan, snelheid),
+            resterend: self.ronde.schatter.resterend(nu),
             bespaard: self.ronde.bespaard,
         })
     }
@@ -257,6 +261,7 @@ impl Activiteit {
                 b.uploaden += uploaden;
                 b.downloaden += downloaden;
                 b.ronde.bytes += bytes;
+                b.ronde.bestanden += u64::from(uploaden + downloaden);
                 b.meet(nu);
             }
             Gebeurtenis::Start { pad, richting, totaal } => {
@@ -284,6 +289,9 @@ impl Activiteit {
                     Actie::Gedownload => b.downloaden = b.downloaden.saturating_sub(1),
                     Actie::Verwijderd => {}
                 }
+                if !matches!(actie, Actie::Verwijderd) {
+                    b.ronde.bestanden_klaar += 1;
+                }
                 b.meet(nu);
                 let (grootte, verstuurd) = (o.as_ref().map(|o| o.grootte), o.as_ref().map(|o| o.totaal));
                 let g = Gebeurd { lokaal: lokaal.to_string(), pad, actie: actie_tekst(actie), tijd: nu_ms(), fout: None, grootte, verstuurd };
@@ -293,6 +301,7 @@ impl Activiteit {
                 if let Some(o) = b.actief.remove(&(lokaal.to_string(), pad.clone())) {
                     b.ronde.bytes_klaar += o.grootte;
                     b.ronde.verstuurd_klaar += o.gedaan;
+                    b.ronde.bestanden_klaar += 1;
                     match o.richting {
                         Richting::Upload => b.uploaden = b.uploaden.saturating_sub(1),
                         Richting::Download => b.downloaden = b.downloaden.saturating_sub(1),
@@ -415,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn snelheid_voortschrijdend_en_resterende_tijd() {
+    fn snelheid_voortschrijdend() {
         let mut m = VecDeque::new();
         assert_eq!(voortschrijdend(&m, 10.0, 0), 0.0);
         m.push_back((0.0, 0));
@@ -424,9 +433,6 @@ mod tests {
         assert_eq!(voortschrijdend(&m, 5.0, 50 * MB), 10.0 * MB as f64);
         // Metingen buiten het venster tellen niet mee: van t=4 (40 MB) tot t=12 (60 MB) is 2,5 MB/s.
         assert_eq!(voortschrijdend(&m, 12.0, 60 * MB), 2.5 * MB as f64);
-        assert_eq!(resterend(100 * MB, 10.0 * MB as f64), Some(10));
-        assert_eq!(resterend(1, 3.0), Some(1));
-        assert_eq!(resterend(100, 0.0), None);
     }
 
     #[test]
@@ -450,7 +456,8 @@ mod tests {
         assert_eq!(r.bytes_gedaan, 500 * MB);
         // 8 MB over de lijn in de 2 seconden sinds de eerste meting.
         assert_eq!(r.snelheid, 4.0 * MB as f64);
-        assert_eq!(r.resterend, Some(200));
+        // Na 2 seconden en zonder afgeronde bestanden nog geen schatting: "bezig met voorbereiden…".
+        assert_eq!(r.resterend, None);
         a.verwerk_op(m, stap(16 * MB), 3.0);
         a.verwerk_op(m, Gebeurtenis::Klaar { pad: "groot.ifc".into(), actie: Actie::Geupload }, 3.0);
         let r = ronde(&a, 3.0);

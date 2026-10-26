@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { besparingTekst, duur, gb, quotumTekst, rondeTekst } from "./opmaak.ts"
+import { besparingTekst, duur, gb, quotumTekst, resterendTekst, rondeTekst } from "./opmaak.ts"
 
 const MB = 1048576
 const GB = 1073741824
@@ -35,8 +35,27 @@ describe("opslag", () => {
 describe("ronde en besparing", () => {
   it("vat de ronde samen met snelheid en resterende tijd", () => {
     const r = { nog: 3, bytes_gedaan: 1.2 * GB, bytes_totaal: 4 * GB, snelheid: 12.5 * MB, resterend: 240 }
-    assert.equal(rondeTekst(r), "nog 3 bestanden, 1,2 GB van 4 GB · 12,5 MB/s · nog 4 min")
-    assert.equal(rondeTekst({ ...r, nog: 1, snelheid: 0, resterend: null }), "nog 1 bestand, 1,2 GB van 4 GB")
+    assert.equal(rondeTekst(r), "nog 3 bestanden, 1,2 GB van 4 GB · 12,5 MB/s · nog ongeveer 4 minuten")
+    assert.equal(rondeTekst({ ...r, nog: 1, snelheid: 0, resterend: null }), "nog 1 bestand, 1,2 GB van 4 GB · bezig met voorbereiden…")
+  })
+  it("rondt de resterende tijd grof af", () => {
+    assert.equal(resterendTekst(null), "bezig met voorbereiden…")
+    assert.equal(resterendTekst(0), "nog minder dan een minuut")
+    assert.equal(resterendTekst(59), "nog minder dan een minuut")
+    assert.equal(resterendTekst(60), "nog ongeveer 1 minuut")
+    assert.equal(resterendTekst(185), "nog ongeveer 3 minuten")
+    assert.equal(resterendTekst(9 * 60 + 20), "nog ongeveer 9 minuten")
+    assert.equal(resterendTekst(23 * 60), "nog ongeveer 25 minuten")
+    assert.equal(resterendTekst(41 * 60), "nog ongeveer 40 minuten")
+    assert.equal(resterendTekst(50 * 60), "nog ongeveer een uur")
+    assert.equal(resterendTekst(80 * 60), "nog ruim een uur")
+    assert.equal(resterendTekst(150 * 60), "nog ongeveer 3 uur")
+    assert.equal(resterendTekst(30 * 3600), "nog meer dan een dag")
+  })
+  it("verandert niet bij kleine verschuivingen", () => {
+    // Binnen dezelfde stap blijft de tekst gelijk, ook als de schatting een halve minuut verschuift.
+    assert.equal(resterendTekst(23 * 60), resterendTekst(26 * 60))
+    assert.equal(resterendTekst(80 * 60), resterendTekst(110 * 60))
   })
   it("meldt alleen een besparing als er minder verstuurd is dan het bestand groot is", () => {
     assert.equal(besparingTekst(1.2 * GB, 16 * MB), "alleen 16,0 MB van 1,20 GB verstuurd")
