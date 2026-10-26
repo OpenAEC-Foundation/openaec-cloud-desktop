@@ -353,3 +353,20 @@ fn foutteksten_voor_mensen_zonder_ruwe_json() {
         assert!(!t.contains('{') && !t.contains("exc_type"), "{status}: {t}");
     }
 }
+
+/// Een groep kleine bestanden in één multipart-verzoek: na de 401 gaat het hele formulier nog één keer, met het nieuwe
+/// token.
+#[tokio::test]
+async fn groep_kleine_bestanden_gaat_na_een_401_opnieuw_met_het_hele_formulier() {
+    let t = Toestand::nieuw(&[], None, false);
+    let server = nepserver(&t).await;
+    let (sessie, _) = nieuwe_sessie(&server, tokens("A1", "R1", 900));
+    let client = Client::met_bron(&server.uri(), sessie, openaec_sync::api::nieuwe_http());
+    let bestanden: Vec<_> = (0..3)
+        .map(|i| openaec_sync::api::KleinBestand { naam: format!("k{i}.txt"), map: None, pad: None, basis_versie: None, inhoud: vec![b'x'; i + 1] })
+        .collect();
+    let r = client.upload_klein("R1", &bestanden).await.unwrap();
+    let namen: Vec<String> = r.into_iter().map(|b| b.unwrap().0.naam).collect();
+    assert_eq!(namen, ["k0.txt", "k1.txt", "k2.txt"]);
+    assert_eq!((t.geweigerd.load(Ordering::SeqCst), t.vernieuwingen.load(Ordering::SeqCst)), (1, 1));
+}
