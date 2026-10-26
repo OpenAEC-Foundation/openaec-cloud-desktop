@@ -50,6 +50,11 @@ jobs:
         with:
           # 22: `npm test` draait de TypeScript-tests rechtstreeks met node --test.
           node-version: 22
+      # Versienummer (jaar.week): de tag vJJJJ.W.N moet gelijk zijn aan de versie in alle bestanden. Zet hem vóór het
+      # taggen met `node scripts/versie.mjs`.
+      - name: Versienummer tegen de tag controleren
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/versie.mjs --controleer "${{ github.ref_name }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}

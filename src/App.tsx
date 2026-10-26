@@ -11,6 +11,7 @@ import Ruimtes from "./schermen/Ruimtes"
 import Delen, { toonVersies, wisDeelresultaat } from "./schermen/Delen"
 import Instellingen from "./schermen/Instellingen"
 import Tools, { aantalToolUpdates } from "./schermen/Tools"
+import Titelbalk from "./Titelbalk"
 
 const schermen: { id: Scherm; titel: string; icoon: string }[] = [
   { id: "overzicht", titel: "Overzicht", icoon: "M3 12h4l3-8 4 16 3-8h4" },
@@ -139,17 +140,16 @@ export default function App() {
 
   return (
     <div class="app">
-      <header class="kopbalk" data-tauri-drag-region>
-        <div class="woordmerk" data-tauri-drag-region>
-          Open<span>AEC</span> Desktop <em>App</em>
-        </div>
-        <Show when={verbonden()}>
-          <div class="omgeving" title="Verbonden omgeving">
-            <span class="stip bijgewerkt" />
-            {basis().replace(/^https?:\/\//, "")}
-          </div>
-        </Show>
-      </header>
+      <Titelbalk
+        rechts={
+          <Show when={verbonden()}>
+            <div class="omgeving" title="Verbonden omgeving" data-tauri-drag-region>
+              <span class="stip bijgewerkt" />
+              {basis().replace(/^https?:\/\//, "")}
+            </div>
+          </Show>
+        }
+      />
 
       {/* De zijbalk staat er altijd: het tabblad Tools werkt ook zonder verbinding met een omgeving. */}
       <div class="werkvlak">

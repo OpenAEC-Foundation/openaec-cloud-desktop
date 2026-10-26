@@ -1,12 +1,13 @@
 import { createSignal, onMount, Show } from "solid-js"
 import { api, type Gereserveerd, type SyncInstellingen } from "../lib/api"
+import { useAppVersie, versieLabel } from "../lib/appversie"
 import {
   basis, bezig, doe, koppelingen, setMelding, setRuimtes, setRuimtesOpgehaald, setScherm, setVerbonden, stand,
 } from "../lib/winkel"
 
 export default function Instellingen() {
   const [autostart, setAutostart] = createSignal(false)
-  const [versie, setVersie] = createSignal("")
+  const versie = useAppVersie()
   const [update, setUpdate] = createSignal<"" | "zoeken" | "actueel" | string>("")
   const [updateFout, setUpdateFout] = createSignal("")
   const [sync, setSync] = createSignal<SyncInstellingen | null>(null)
@@ -14,7 +15,6 @@ export default function Instellingen() {
 
   onMount(() => {
     api.autostart().then(setAutostart).catch(() => {})
-    api.versie().then(setVersie).catch(() => {})
     api.syncInstellingen().then(setSync).catch(() => {})
     api.menuVersturen().then(setMenuVersturen).catch(() => {})
   })
@@ -167,7 +167,7 @@ export default function Instellingen() {
         <dl class="gegevens">
           <div>
             <dt>Versie</dt>
-            <dd>{versie() || "–"}</dd>
+            <dd>{versieLabel(versie()) || "–"}</dd>
           </div>
         </dl>
         <div class="knoppen">
