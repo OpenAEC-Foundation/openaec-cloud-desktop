@@ -1,4 +1,4 @@
-/* Huisstijl OpenAEC: donkere kopbalk, oranje accent, warm-lichte achtergrond. Licht thema. */
+/* Huisstijl OpenAEC: donkere titelbalk met amberlijn, amber accent, warm-lichte achtergrond. Licht thema. */
 :root {
   --inkt: #1c1917;
   --steen: #57534e;
@@ -10,6 +10,15 @@
   --lijn-hover: #d6d3d1;
   --nacht: #2a2a32;
   --nacht-lijn: #3f3f46;
+  /* Balken (titelbalk en de kop van de kleine vensters): Deep Forge met een amberlijn. */
+  --balk: #36363e;
+  --balk-tekst: #fafaf9;
+  --balk-tekst-zacht: #bdbab5;
+  --balk-lijn: #d97706;
+  --balk-hover: rgba(250, 250, 249, 0.1);
+  --balk-actief: rgba(250, 250, 249, 0.18);
+  --balk-hoogte: 32px;
+  --aec-op-donker: #f59e0b;
   --tekst-op-donker: #d4d4d8;
   --amber: #d97706;
   --amber-fel: #f59e0b;
@@ -108,14 +117,38 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 /* ---------- hoofdvenster ---------- */
 .app { display: flex; flex-direction: column; height: 100vh; }
 
-.kopbalk {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  background: var(--nacht); color: #f5f5f4; padding: 0 20px; height: 48px; flex: none; user-select: none;
+/* Titelbalk volgens de OpenAEC-standaardschil: 32 px, symbool links, naam en versie in het midden, vensterknoppen
+   rechts. Donker (Deep Forge) met een amberlijn eronder, zoals de andere OpenAEC-tools. */
+.titelbalk {
+  position: relative; display: flex; align-items: center; justify-content: space-between;
+  height: var(--balk-hoogte); flex: none; user-select: none; -webkit-user-select: none; cursor: default;
+  background: var(--balk); color: var(--balk-tekst); border-bottom: 1px solid var(--balk-lijn);
 }
-.woordmerk { font-family: var(--f-kop); font-weight: 700; letter-spacing: -0.3px; font-size: 16px; }
-.woordmerk span { color: var(--amber); }
+.titelbalk-links { display: flex; align-items: center; height: 100%; padding-left: 10px; }
+.titelbalk-symbool { width: 18px; height: 18px; pointer-events: none; }
+.titelbalk-titel {
+  position: absolute; left: 50%; top: 0; transform: translateX(-50%); height: 100%;
+  display: flex; align-items: center; gap: 6px; white-space: nowrap; pointer-events: none;
+}
+.titelbalk-titel .woordmerk { font-size: 13px; }
+.titelbalk-versie { font-size: 11px; color: var(--balk-tekst-zacht); font-variant-numeric: tabular-nums; }
+.titelbalk-rechts { display: flex; align-items: center; gap: 12px; height: 100%; min-width: 0; }
+.vensterknoppen { display: flex; height: 100%; flex: none; }
+.vensterknop {
+  width: 46px; height: 100%; padding: 0; border: none; border-radius: 0; background: transparent;
+  color: var(--balk-tekst); display: flex; align-items: center; justify-content: center; cursor: default;
+}
+.vensterknop svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; shape-rendering: crispEdges; }
+.vensterknop:hover:not(:disabled) { background: var(--balk-hover); border: none; }
+.vensterknop:active:not(:disabled) { background: var(--balk-actief); }
+.vensterknop.sluiten:hover:not(:disabled) { background: #c42b1c; color: #ffffff; }
+.vensterknop:focus-visible { outline: 2px solid var(--amber-fel); outline-offset: -2px; }
+
+/* Woordmerk: "Open" licht, "AEC" in Warm Gold (amber als tekst op donker haalt het contrast niet). */
+.woordmerk { font-family: var(--f-kop); font-weight: 700; letter-spacing: -0.3px; font-size: 16px; color: var(--balk-tekst); }
+.woordmerk span { color: var(--aec-op-donker); }
 .woordmerk em { font-style: normal; font-weight: 500; color: var(--tekst-op-donker); }
-.omgeving { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tekst-op-donker); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omgeving { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tekst-op-donker); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 .werkvlak { flex: 1; display: flex; min-height: 0; }
 
@@ -467,3 +500,7 @@ body.deelvenster { background: var(--papier); }
   .koppelingen { grid-template-columns: 1fr; }
   .zoekveld { width: 180px; }
 }
+
+/* ---------- kop van de kleine vensters (status, delen, versturen) ----------
+   Dezelfde balkkleuren als de titelbalk van het hoofdvenster, via de gedeelde variabelen. */
+.status-kop, .deel-kop { background: var(--balk); color: var(--balk-tekst); border-bottom: 1px solid var(--balk-lijn); }
