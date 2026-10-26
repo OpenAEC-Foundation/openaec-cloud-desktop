@@ -18,6 +18,34 @@ use crate::Fout;
 pub const CLIENT_ID: &str = "openaec-cloud-desktop";
 pub const POORT: u16 = 47613;
 pub const REDIRECT: &str = "http://127.0.0.1:47613/callback";
+
+/// Wie inlogt: de OAuth-client met zijn loopback-adres en de gevraagde scopes. Het token-endpoint en de
+/// autorisatiepagina zijn bij elke Frappe-site dezelfde paden; alleen de site (`basis`) verschilt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Aanvrager {
+    pub client_id: &'static str,
+    pub poort: u16,
+    /// Het pad op het loopback-adres waar de browser met de code terugkomt.
+    pub terugpad: &'static str,
+    pub redirect: &'static str,
+    pub scope: &'static str,
+}
+
+/// De sync-client op de klantomgeving (scopes `all openid`, precies zoals `openaec_storage` hem registreert: Frappe
+/// weigert een aanvraag met een scope die de client niet heeft).
+pub const DESKTOP: Aanvrager =
+    Aanvrager { client_id: CLIENT_ID, poort: POORT, terugpad: "/callback", redirect: REDIRECT, scope: "all openid" };
+
+/// De client `tools` van de cloud (tools op de computer; publiek, PKCE verplicht): een toegangstoken (RS256-JWT) met
+/// scope `ai` voor de AI-gateway. De cloud registreert standaard dit loopback-adres (`inrichten.sh tools`). Alleen wat
+/// de gateway nodig heeft, nooit `all`.
+pub const TOOLS: Aanvrager = Aanvrager {
+    client_id: "tools",
+    poort: 8765,
+    terugpad: "/terug",
+    redirect: "http://localhost:8765/terug",
+    scope: "openid email profile ai",
+};
 const TOKEN: &str = "/api/method/frappe.integrations.oauth2.get_token";
 const AUTORISEER: &str = "/api/method/frappe.integrations.oauth2.authorize";
 /// Zoveel seconden voor het verlopen wordt het token al vernieuwd: ruim, zodat een verzoek dat net begint niet halverwege
@@ -73,12 +101,16 @@ pub fn challenge(verifier: &str) -> String {
 }
 
 pub fn autorisatie_url(basis: &str, challenge: &str, state: &str) -> String {
+    autorisatie_url_voor(&DESKTOP, basis, challenge, state)
+}
+
+pub fn autorisatie_url_voor(aanvrager: &Aanvrager, basis: &str, challenge: &str, state: &str) -> String {
     let mut url = reqwest::Url::parse(&format!("{}{AUTORISEER}", basis.trim_end_matches('/'))).expect("geldige basis-url");
     url.query_pairs_mut()
-        .append_pair("client_id", CLIENT_ID)
+        .append_pair("client_id", aanvrager.client_id)
         .append_pair("response_type", "code")
-        .append_pair("scope", "all openid")
-        .append_pair("redirect_uri", REDIRECT)
+        .append_pair("scope", aanvrager.scope)
+        .append_pair("redirect_uri", aanvrager.redirect)
         .append_pair("code_challenge", challenge)
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", state);
@@ -98,13 +130,18 @@ fn pagina(tekst: &str) -> String {
 
 /// Wacht op de redirect van de browser en geeft de code terug als `state` klopt.
 pub async fn wacht_op_code(listener: TcpListener, state: String) -> Result<String, Fout> {
+    wacht_op_code_op(listener, state, DESKTOP.terugpad).await
+}
+
+/// Als [`wacht_op_code`], met de browser terug op `terugpad` (zie [`Aanvrager::terugpad`]).
+pub async fn wacht_op_code_op(listener: TcpListener, state: String, terugpad: &str) -> Result<String, Fout> {
     loop {
         let (mut verbinding, _) = listener.accept().await?;
         let mut buffer = vec![0u8; 8192];
         let n = verbinding.read(&mut buffer).await?;
         let verzoek = String::from_utf8_lossy(&buffer[..n]);
         let doel = verzoek.lines().next().and_then(|r| r.split_whitespace().nth(1)).unwrap_or("");
-        if !doel.starts_with("/callback") {
+        if !doel.starts_with(terugpad) {
             // bijv. /favicon.ico: negeren en blijven wachten
             let _ = verbinding.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
             continue;
@@ -147,13 +184,17 @@ async fn token_verzoek(basis: &str, velden: &[(&str, &str)], oud_refresh: Option
 }
 
 pub async fn wissel_code(basis: &str, code: &str, verifier: &str) -> Result<Tokens, Fout> {
+    wissel_code_voor(&DESKTOP, basis, code, verifier).await
+}
+
+pub async fn wissel_code_voor(aanvrager: &Aanvrager, basis: &str, code: &str, verifier: &str) -> Result<Tokens, Fout> {
     token_verzoek(
         basis,
         &[
             ("grant_type", "authorization_code"),
             ("code", code),
-            ("redirect_uri", REDIRECT),
-            ("client_id", CLIENT_ID),
+            ("redirect_uri", aanvrager.redirect),
+            ("client_id", aanvrager.client_id),
             ("code_verifier", verifier),
         ],
         None,
@@ -162,9 +203,13 @@ pub async fn wissel_code(basis: &str, code: &str, verifier: &str) -> Result<Toke
 }
 
 pub async fn vernieuw(basis: &str, tokens: &Tokens) -> Result<Tokens, Fout> {
+    vernieuw_voor(&DESKTOP, basis, tokens).await
+}
+
+pub async fn vernieuw_voor(aanvrager: &Aanvrager, basis: &str, tokens: &Tokens) -> Result<Tokens, Fout> {
     token_verzoek(
         basis,
-        &[("grant_type", "refresh_token"), ("refresh_token", &tokens.refresh_token), ("client_id", CLIENT_ID)],
+        &[("grant_type", "refresh_token"), ("refresh_token", &tokens.refresh_token), ("client_id", aanvrager.client_id)],
         Some(&tokens.refresh_token),
     )
     .await

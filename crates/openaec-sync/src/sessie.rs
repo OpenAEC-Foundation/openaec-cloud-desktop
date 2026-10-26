@@ -12,7 +12,7 @@
 use futures_util::future::BoxFuture;
 use tokio::sync::Mutex;
 
-use crate::oauth::{self, Tokens};
+use crate::oauth::{self, Aanvrager, Tokens};
 use crate::Fout;
 
 /// Levert de Authorization-header voor elk verzoek naar de API.
@@ -100,6 +100,8 @@ struct Stand {
 /// De autorisatie van één omgeving, gedeeld door alle clients (rondes, bewaking, vensters, bestanden op aanvraag).
 pub struct Sessie {
     basis: String,
+    /// De OAuth-client waarmee vernieuwd wordt (de sync-client op de klantomgeving, of `tools` op de cloud).
+    aanvrager: Aanvrager,
     bewaring: Box<dyn Bewaring>,
     /// Ook het slot voor vernieuwen: hoogstens één vernieuwing tegelijk.
     stand: Mutex<Stand>,
@@ -107,7 +109,17 @@ pub struct Sessie {
 
 impl Sessie {
     pub fn new(basis: &str, bewaring: impl Bewaring + 'static) -> Self {
-        Self { basis: basis.trim_end_matches('/').to_string(), bewaring: Box::new(bewaring), stand: Mutex::new(Stand::default()) }
+        Self::met_aanvrager(basis, bewaring, oauth::DESKTOP)
+    }
+
+    /// Een sessie bij een andere OAuth-client, bijv. [`oauth::TOOLS`] op de cloud voor de AI-gateway.
+    pub fn met_aanvrager(basis: &str, bewaring: impl Bewaring + 'static, aanvrager: Aanvrager) -> Self {
+        Self {
+            basis: basis.trim_end_matches('/').to_string(),
+            aanvrager,
+            bewaring: Box::new(bewaring),
+            stand: Mutex::new(Stand::default()),
+        }
     }
 
     pub fn basis(&self) -> &str {
@@ -145,7 +157,7 @@ impl Sessie {
     /// de sessie verlopen. Een netwerk- of serverfout bij een token dat nog geldig is (alleen `geforceerd` niet): dan
     /// gewoon het huidige token gebruiken.
     async fn vernieuw(&self, stand: &mut Stand, tokens: Tokens, geforceerd: bool) -> Result<String, Fout> {
-        match oauth::vernieuw(&self.basis, &tokens).await {
+        match oauth::vernieuw_voor(&self.aanvrager, &self.basis, &tokens).await {
             Ok(nieuw) => {
                 // Het oude refresh-token is nu ongeldig: het nieuwe paar moet bewaard blijven, ook als de bewaring even
                 // niet lukt (dan in elk geval in het geheugen).
