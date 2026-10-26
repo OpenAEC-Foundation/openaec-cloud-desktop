@@ -1,6 +1,6 @@
 [package]
 name = "openaec-sync"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Kern van de OpenAEC Storage-sync: API-client, blokhashes en delta-upload/-download"
 license = "AGPL-3.0-only"
