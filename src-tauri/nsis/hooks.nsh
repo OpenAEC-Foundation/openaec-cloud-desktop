@@ -14,6 +14,8 @@
 !define OUDE_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${OUDE_NAAM}"
 !define RUNKEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define STARTUPAPPROVEDKEY "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+; Vaste CLSID van het item "OpenAEC" in het navigatiepaneel (gelijk aan navigatie::CLSID).
+!define NAVIGATIE_CLSID "{A1046B79-4B13-4993-B03B-4D94B67DDB65}"
 ; Let op: dit bestand wordt bovenaan het installatiescript ingevoegd, vóór de defines van Tauri (MANUFACTURER,
 ; PRODUCTNAME, ...). Die mogen daarom alleen binnen de macro's gebruikt worden.
 
@@ -75,5 +77,12 @@ Var OudeMap
     ; Het rechtermuismenu in de Verkenner (verkenner.rs) wijst naar de verwijderde exe.
     DeleteRegKey HKCU "Software\Classes\*\shell\OpenAECStorage"
     DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenAECStorage"
+    ; Het item "OpenAEC" in het navigatiepaneel voor losse koppelingen (navigatie.rs, vaste CLSID), en de map met
+    ; mapsnelkoppelingen die het toont. Daarna het navigatiepaneel laten verversen (SHCNE_ASSOCCHANGED).
+    DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\${NAVIGATIE_CLSID}"
+    DeleteRegKey HKCU "Software\Classes\CLSID\${NAVIGATIE_CLSID}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" "${NAVIGATIE_CLSID}"
+    RMDir /r "$LOCALAPPDATA\OpenAEC Storage\Verkenner"
+    System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ${EndIf}
 !macroend

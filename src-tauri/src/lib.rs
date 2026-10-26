@@ -8,6 +8,7 @@ mod hoofdmap;
 mod instellingen;
 mod itemstatus;
 mod opaanvraag;
+mod navigatie;
 mod opruimen;
 mod schatting;
 mod sloten;
@@ -166,7 +167,7 @@ fn voeg_koppeling_toe(state: &AppState, k: Koppeling) -> Result<Vec<Koppeling>, 
     }
     inst.koppelingen.push(k);
     inst.bewaar().map_err(fout)?;
-    werk_menu_bij(&inst.koppelingen);
+    werk_menu_bij(&inst);
     Ok(inst.koppelingen.clone())
 }
 
@@ -238,7 +239,7 @@ fn stop_koppeling(app: &AppHandle, lokaal: &str, tekst: &str) {
         if let Err(e) = inst.bewaar() {
             log::warn!("instellingen bewaren mislukt: {e}");
         }
-        werk_menu_bij(&inst.koppelingen);
+        werk_menu_bij(&inst);
     }
     let lokaal = lokaal.to_string();
     let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::ontkoppel(&lokaal));
@@ -247,11 +248,51 @@ fn stop_koppeling(app: &AppHandle, lokaal: &str, tekst: &str) {
     let _ = app.emit("koppelingen", &koppelingen);
 }
 
-fn werk_menu_bij(koppelingen: &[Koppeling]) {
-    let mappen: Vec<String> = koppelingen.iter().map(|k| k.lokaal.clone()).collect();
+/// Het rechtermuismenu en het item "OpenAEC" in het navigatiepaneel bijwerken (bij het starten en na elke
+/// (ont)koppeling of een nieuwe hoofdmap).
+fn werk_menu_bij(inst: &Instellingen) {
+    let mappen: Vec<String> = inst.koppelingen.iter().map(|k| k.lokaal.clone()).collect();
     if let Err(e) = verkenner::registreer(&mappen) {
         log::warn!("rechtermuismenu bijwerken mislukt: {e}");
     }
+    let koppelingen: Vec<(String, String)> = inst.koppelingen.iter().map(|k| (k.ruimte_naam.clone(), k.lokaal.clone())).collect();
+    werk_navigatie_bij(inst.hoofdmap.clone(), koppelingen);
+}
+
+/// Het item in het navigatiepaneel op de achtergrond bijwerken (een snelkoppeling maken gaat via COM, en dat hoort
+/// niet onder het slot van de instellingen). Komen er snel na elkaar wijzigingen, dan wint de laatste. Mappen die
+/// zelf als sync-root geregistreerd zijn, hebben van Windows al een item (zie `navigatie`).
+fn werk_navigatie_bij(hoofdmap: Option<String>, koppelingen: Vec<(String, String)>) {
+    #[cfg(windows)]
+    {
+        type Wens = (Option<String>, Vec<(String, String)>);
+        static GEWENST: std::sync::Mutex<Option<Wens>> = std::sync::Mutex::new(None);
+        static BEZIG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        *GEWENST.lock().unwrap() = Some((hoofdmap, koppelingen));
+        std::thread::spawn(|| {
+            let _bezig = BEZIG.lock().unwrap_or_else(|e| e.into_inner());
+            let Some((hoofdmap, koppelingen)) = GEWENST.lock().unwrap().take() else { return };
+            let koppelingen: Vec<navigatie::Koppeling> = koppelingen
+                .into_iter()
+                .map(|(naam, lokaal)| {
+                    let eigen = cloudfilter::eigen_sync_root(&lokaal);
+                    (naam, lokaal, eigen)
+                })
+                .collect();
+            let hoofdmap = hoofdmap.as_deref().map(|h| (h, cloudfilter::eigen_sync_root(h)));
+            let doel = navigatie::doel(hoofdmap, &koppelingen);
+            let icoon = match std::env::current_exe() {
+                Ok(exe) => format!("{},0", exe.display()),
+                Err(e) => return log::warn!("navigatiepaneel: {e}"),
+            };
+            let map = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("OpenAEC Storage").join("Verkenner");
+            if let Err(e) = navigatie::pas_toe(navigatie::CLSID, hoofdmap::NAAM, &icoon, &doel, &map) {
+                log::warn!("item in het navigatiepaneel bijwerken mislukt: {e}");
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = (hoofdmap, koppelingen);
 }
 
 /// Een map van een ruimte voor de mapselectie, met wat erin staat (alles eronder samen).
@@ -556,7 +597,7 @@ fn ontkoppel(app: AppHandle, state: tauri::State<'_, AppState>, lokaal: String) 
     let mut inst = state.instellingen.lock().unwrap();
     inst.koppelingen.retain(|k| k.lokaal != lokaal);
     inst.bewaar().map_err(fout)?;
-    werk_menu_bij(&inst.koppelingen);
+    werk_menu_bij(&inst);
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
         let _slot = state.bezig.lock().await;
@@ -1044,7 +1085,7 @@ pub fn run() {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
             updates::start(app.handle().clone());
-            werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
+            werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap());
             activiteit::meld(app.handle());
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();

@@ -165,6 +165,8 @@ pub async fn zet_hoofdmap(app: AppHandle, state: tauri::State<'_, AppState>, pad
     let mut inst = state.instellingen.lock().unwrap();
     inst.hoofdmap = Some(pad);
     inst.bewaar().map_err(fout)?;
+    // De hoofdmap heeft nu het item van zijn sync-root; het eigen item voor losse koppelingen gaat weg.
+    werk_menu_bij(&inst);
     drop(inst);
     Ok(status_van(&state))
 }
@@ -225,7 +227,7 @@ pub fn koppel_in_hoofdmap(state: tauri::State<'_, AppState>, ruimte: String, rui
     std::fs::create_dir_all(&lokaal).map_err(fout)?;
     inst.koppelingen.push(Koppeling::ruimte(ruimte, ruimte_naam, lokaal));
     inst.bewaar().map_err(fout)?;
-    werk_menu_bij(&inst.koppelingen);
+    werk_menu_bij(&inst);
     Ok(inst.koppelingen.clone())
 }
 
@@ -272,7 +274,7 @@ pub async fn verplaats_naar_hoofdmap(state: tauri::State<'_, AppState>, lokaal: 
         k.lokaal = doel.to_string_lossy().to_string();
     }
     inst.bewaar().map_err(fout)?;
-    werk_menu_bij(&inst.koppelingen);
+    werk_menu_bij(&inst);
     Ok(inst.koppelingen.clone())
 }
 
