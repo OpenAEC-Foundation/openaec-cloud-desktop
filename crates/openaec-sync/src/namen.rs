@@ -125,6 +125,23 @@ pub fn veilige_naam(naam: &str) -> String {
     uit
 }
 
+/// De naam zoals de server hem bewaart: zonder witruimte vooraan en achteraan (de server haalt die weg). Een spatie
+/// vooraan kan hier gewoon; achteraan is het al een [`Probleem::PuntOfSpatie`].
+pub fn servernaam(naam: &str) -> &str {
+    naam.trim()
+}
+
+/// [`servernaam`] voor elk deel van een pad (met '/').
+pub fn serverpad(pad: &str) -> String {
+    pad.split('/').map(servernaam).collect::<Vec<_>>().join("/")
+}
+
+/// Moet deze (geldige) naam letterlijk geopend worden ([`lang_pad`])? Bij witruimte vooraan: zo blijft die in elke
+/// laag van Windows staan.
+pub fn letterlijk_nodig(naam: &str) -> bool {
+    naam.starts_with(char::is_whitespace)
+}
+
 /// [`veilige_naam`] voor elk deel van een pad (met '/').
 pub fn veilig_pad(pad: &str) -> String {
     pad.split('/').map(veilige_naam).collect::<Vec<_>>().join("/")

@@ -157,9 +157,9 @@ async fn fouten_per_bestand_stoppen_de_parallelle_rest_niet() {
     fout.sort();
     assert_eq!(fout, vec!["2.txt", "5.txt"]);
     assert_eq!(r.geupload, 6);
-    // De mislukte komen de volgende ronde opnieuw aan bod; de geslaagde niet.
+    // De mislukte wachten de volgende ronde (geen nieuwe poging, geen nieuwe fout); de geslaagde zijn klaar.
     let r2 = sync_eenmalig(&opslag, dir.path()).await.unwrap();
-    assert_eq!((r2.geupload, r2.fouten.len()), (0, 2));
+    assert_eq!((r2.geupload, r2.fouten.len(), r2.wachtend.len()), (0, 0, 2));
 }
 
 #[tokio::test]

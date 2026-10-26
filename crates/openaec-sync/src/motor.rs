@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -205,6 +205,8 @@ pub struct Rapport {
     /// al gedaan was, is bewaard; de rest volgt in een ronde na opnieuw inloggen. Die bestanden staan niet in
     /// [`Rapport::fouten`].
     pub sessie_verlopen: bool,
+    /// Bestanden die eerder steeds mislukten en deze ronde wachten (geen nieuwe poging, geen nieuwe fout).
+    pub wachtend: Vec<Mislukt>,
 }
 
 impl Rapport {
@@ -232,6 +234,43 @@ struct Toestand {
     /// Overgeslagen bestanden van de laatste ronde.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     overgeslagen: Vec<Overgeslagen>,
+    /// Per pad op de server: een overdracht die steeds mislukt. Pas na de wachttijd opnieuw (zie [`wachttijd`]), of
+    /// eerder als het bestand hier of op de server veranderde.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    mislukt: BTreeMap<String, Poging>,
+}
+
+/// Een mislukte overdracht van één bestand: hoe vaak, tot wanneer er gewacht wordt, en hoe het bestand er toen bij stond.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Poging {
+    keer: u32,
+    /// Unix-tijd in seconden.
+    tot: u64,
+    reden: String,
+    /// Grootte en wijzigingstijd hier, en de versie op de server, bij de laatste poging.
+    lokaal: Option<(u64, u128)>,
+    server: Option<u64>,
+}
+
+/// Een bestand dat steeds niet lukt en deze ronde niet opnieuw geprobeerd is (wacht tot [`Mislukt::opnieuw_om`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mislukt {
+    /// Pad hier (met '/').
+    pub pad: String,
+    pub reden: String,
+    /// Zo vaak mislukt.
+    pub keer: u32,
+    /// Unix-tijd in seconden van de volgende poging.
+    pub opnieuw_om: u64,
+}
+
+/// Wachttijd na de `keer`-ste mislukte poging: 2 minuten, daarna steeds twee keer zo lang, hoogstens 6 uur.
+pub fn wachttijd(keer: u32) -> u64 {
+    (120u64 << keer.saturating_sub(1).min(16)).min(6 * 3600)
+}
+
+fn nu_seconden() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 impl Toestand {
@@ -274,7 +313,7 @@ fn lokaal_pad(root: &Path, pad: &str) -> PathBuf {
 /// er een apparaat of een andere naam van maken.
 fn lokaal_bestand(root: &Path, rel: &str) -> PathBuf {
     let pad = lokaal_pad(root, rel);
-    if namen::padprobleem(rel).is_some() { namen::lang_pad(&pad) } else { pad }
+    if namen::padprobleem(rel).is_some() || rel.split('/').any(namen::letterlijk_nodig) { namen::lang_pad(&pad) } else { pad }
 }
 
 fn kenmerk(pad: &Path) -> std::io::Result<(u64, u128)> {
@@ -295,7 +334,8 @@ fn lokale_bestanden(root: &Path) -> BTreeMap<String, (u64, u128)> {
             }
             let rel = if rel_map.is_empty() { naam.clone() } else { format!("{rel_map}/{naam}") };
             // Een lastige naam (ook van een map onderweg) letterlijk openen.
-            let pad = if namen::naamprobleem(&naam).is_some() { namen::lang_pad(&item.path()) } else { item.path() };
+            let letterlijk = namen::naamprobleem(&naam).is_some() || namen::letterlijk_nodig(&naam);
+            let pad = if letterlijk { namen::lang_pad(&item.path()) } else { item.path() };
             match item.file_type() {
                 Ok(t) if t.is_dir() => te_doen.push((pad, rel)),
                 Ok(t) if t.is_file() => {
@@ -459,6 +499,9 @@ struct Ronde<'a, O> {
     waarnemer: &'a dyn Waarnemer,
     toestand: Mutex<Toestand>,
     rapport: Mutex<Rapport>,
+    /// Lokale bestanden en de bestanden op de server bij het begin van de ronde (voor [`Poging`]).
+    lokaal: &'a BTreeMap<String, (u64, u128)>,
+    server: &'a BTreeMap<String, OpslagBestand>,
     /// De sessie is verlopen: geen nieuwe taken meer, en geen fout per bestand.
     gestopt: AtomicBool,
 }
@@ -584,12 +627,28 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Uitkomst van een taak melden; een fout komt in het rapport. Een verlopen sessie is geen fout van dit bestand:
     /// de ronde stopt (zie [`Rapport::sessie_verlopen`]).
-    fn meld(&self, pad: &str, uitkomst: Result<Actie, Fout>) {
-        let pad = &self.rel(pad);
+    /// Een mislukte overdracht wacht daarna een tijd (zie [`wachttijd`]); een gelukte wist de eerdere pogingen.
+    fn meld(&self, sleutel: &str, uitkomst: Result<Actie, Fout>) {
+        let pad = &self.rel(sleutel);
         match uitkomst {
-            Ok(actie) => self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie }),
+            Ok(actie) => {
+                self.toestand.lock().unwrap().mislukt.remove(sleutel);
+                self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie })
+            }
             Err(fout) if fout.sessie_verlopen() => self.gestopt.store(true, Ordering::SeqCst),
             Err(fout) => {
+                {
+                    let mut toestand = self.toestand.lock().unwrap();
+                    let keer = toestand.mislukt.get(sleutel).map_or(0, |p| p.keer) + 1;
+                    let poging = Poging {
+                        keer,
+                        tot: nu_seconden() + wachttijd(keer),
+                        reden: fout.to_string(),
+                        lokaal: self.lokaal.get(sleutel).copied(),
+                        server: self.server.get(sleutel).map(|s| s.versie),
+                    };
+                    toestand.mislukt.insert(sleutel.to_string(), poging);
+                }
                 self.waarnemer.melding(Gebeurtenis::Fout { pad: pad.to_string(), fout: fout.to_string() });
                 self.rapport.lock().unwrap().fout(pad, fout);
             }
@@ -799,6 +858,25 @@ pub async fn sync_met_opties<O: Opslag>(
         })
         .collect();
 
+    // Wat eerder steeds mislukte en sindsdien hier en op de server gelijk bleef, wacht tot de wachttijd om is: niet elke
+    // ronde dezelfde fout. Pogingen voor bestanden die nergens meer zijn, vervallen.
+    toestand.mislukt.retain(|pad, _| lokaal.contains_key(pad) || server.contains_key(pad));
+    let nu = nu_seconden();
+    let wacht = |pad: &str| {
+        toestand
+            .mislukt
+            .get(pad)
+            .filter(|p| p.tot > nu && p.lokaal == lokaal.get(pad).copied() && p.server == server.get(pad).map(|s| s.versie))
+    };
+    let (wachtend, wijzigingen): (Vec<_>, Vec<_>) = wijzigingen.into_iter().partition(|(pad, _, _)| wacht(pad).is_some());
+    rapport.wachtend = wachtend
+        .iter()
+        .filter_map(|(pad, _, _)| {
+            let p = wacht(pad)?;
+            Some(Mislukt { pad: toestand.hier(pad), reden: p.reden.clone(), keer: p.keer, opnieuw_om: p.tot })
+        })
+        .collect();
+
     // Vooraf melden hoeveel er over de lijn gaat (een verwijdering op de server telt niet mee). Alleen lezen: geen
     // uploads, en een lokaal verwijderd bestand komt terug.
     let alleen_lezen = opslag.alleen_lezen();
@@ -819,7 +897,16 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     waarnemer.melding(Gebeurtenis::Ronde { uploaden, downloaden, bytes });
 
-    let ronde = Ronde { opslag, root, waarnemer, toestand: Mutex::new(toestand), rapport: Mutex::new(rapport), gestopt: AtomicBool::new(false) };
+    let ronde = Ronde {
+        opslag,
+        root,
+        waarnemer,
+        toestand: Mutex::new(toestand),
+        rapport: Mutex::new(rapport),
+        lokaal: &lokaal,
+        server: &server,
+        gestopt: AtomicBool::new(false),
+    };
 
     // Beslissen per pad. Wat geen overdracht is (opnemen, vergeten, uitgesloten), gebeurt meteen.
     let mut overdrachten = Vec::new();
@@ -977,7 +1064,18 @@ fn vertaal_lokaal(
             continue;
         }
         let Some(probleem) = namen::padprobleem(rel) else {
-            uit.insert(rel.clone(), *kenmerk);
+            // Een naam met een spatie vooraan kan hier, maar de server haalt die spatie weg: op de server heet het
+            // bestand dus anders. Dat leggen we vast; anders zoekt de motor na de upload een bestand dat hier niet is.
+            let op_server = namen::serverpad(rel);
+            if op_server == *rel {
+                uit.insert(rel.clone(), *kenmerk);
+            } else if ruw.contains_key(&op_server) || uit.contains_key(&op_server) || toestand.lokale_namen.contains_key(&op_server) {
+                let reden = format!("op de server heet dit {op_server}, en die naam bestaat hier al");
+                rapport.overgeslagen.push(Overgeslagen { pad: rel.clone(), reden, opruimbaar: false });
+            } else {
+                toestand.lokale_namen.insert(op_server.clone(), rel.clone());
+                uit.insert(op_server, *kenmerk);
+            }
             continue;
         };
         // Waar de naam hier wel kan, en het bestand al op de server staat (van vóór de naamregels): gewoon bijhouden,
