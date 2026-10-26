@@ -153,6 +153,14 @@ pub fn versturenfout(f: &Fout) -> DeelFout {
     if let Fout::Netwerk(_) = f {
         return melding("geen_verbinding", "Geen verbinding met de server. Controleer je internetverbinding en probeer het opnieuw.");
     }
+    // Een server zonder overdrachten (oudere OpenAEC Storage): Frappe meldt dan dat de methode of module ontbreekt.
+    let servertekst = f.servermelding().unwrap_or_default();
+    if servertekst.contains("openaec_storage.overdracht") && (servertekst.contains("No module") || servertekst.contains("ophalen")) {
+        return melding(
+            "niet_op_server",
+            "Versturen is op deze omgeving nog niet beschikbaar: de server moet eerst bijgewerkt worden. Probeer het later opnieuw.",
+        );
+    }
     match f.status() {
         Some(401) => melding("niet_ingelogd", "Je sessie is verlopen. Log opnieuw in."),
         Some(403) => melding(
@@ -664,6 +672,14 @@ mod tests {
         assert_eq!(versturenfout(&server(401)).code, "niet_ingelogd");
         assert_eq!(versturenfout(&server(404)).code, "niet_gevonden");
         assert_eq!(versturenfout(&server(503)).code, "geen_verbinding");
+        // Een oudere server zonder overdrachten: een begrijpelijke melding in plaats van de Python-fout.
+        let oud = Fout::Server {
+            status: 404,
+            tekst: json!({"exception": "frappe.exceptions.DoesNotExistError: Methode ophalen voor commando openaec_storage.overdracht.grenzen mislukt met No module named 'openaec_storage.overdracht'"}).to_string(),
+        };
+        let fout = versturenfout(&oud);
+        assert_eq!(fout.code, "niet_op_server");
+        assert!(!fout.melding.contains("No module"));
         let grens = Fout::Server {
             status: 417,
             tekst: json!({"exception": "frappe.exceptions.ValidationError: Een overdracht kan hoogstens 100 GB groot zijn"}).to_string(),

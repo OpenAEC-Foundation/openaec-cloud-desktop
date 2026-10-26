@@ -276,7 +276,13 @@ export default function Verstuurvenster() {
           {(f) => (
             <section class="deel-sectie">
               <h2>
-                {f().code === "geen_recht" ? "Geen recht om te versturen" : f().code === "niet_ingelogd" ? "Niet ingelogd" : "Niet beschikbaar"}
+                {f().code === "geen_recht"
+                  ? "Geen recht om te versturen"
+                  : f().code === "niet_ingelogd"
+                    ? "Niet ingelogd"
+                    : f().code === "niet_op_server"
+                      ? "Nog niet beschikbaar op deze omgeving"
+                      : "Niet beschikbaar"}
               </h2>
               <p class="uitleg">{f().melding}</p>
               <div class="knoppen">
@@ -361,7 +367,7 @@ export default function Verstuurvenster() {
 
           <section class="deel-sectie">
             <h2>Versturen</h2>
-            <p class="uitleg">Je krijgt een downloadlink om zelf te delen. Vul je ontvangers in, dan krijgen zij de link ook per e-mail.</p>
+            <p class="uitleg">Je krijgt een downloadlink; ontvangers krijgen hem ook per e-mail.</p>
             <label>
               Naam
               <input
@@ -388,7 +394,7 @@ export default function Verstuurvenster() {
             </Show>
             <label>
               Bericht (optioneel)
-              <textarea rows="3" maxLength={5000} value={bericht()} onInput={(e) => setBericht(e.currentTarget.value)} />
+              <textarea rows="2" maxLength={5000} value={bericht()} onInput={(e) => setBericht(e.currentTarget.value)} />
             </label>
             <div class="velden">
               <label>
