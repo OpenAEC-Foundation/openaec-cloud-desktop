@@ -149,13 +149,41 @@ zet het bij elke start (het pad naar de app kan na een update veranderd zijn) en
   erbij). Een start die binnenkomt terwijl de eerste nog opstart, wacht tot die kan doorsturen. In de gekoppelde mappen
   staat het item ook in het submenu **OpenAEC Desktop App** (waar eerst "Verzenden…" stond). De uninstaller ruimt het
   op (`nsis/hooks.nsh`).
-  - **Windows 11** toont zulke items in het nieuwe, korte menu niet; ze staan onder **Meer opties weergeven**
-    (Shift+F10), en direct in het menu als het klassieke menu aan staat. Een item in het nieuwe menu vraagt een
-    `IExplorerCommand`: een COM-server (DLL) in een pakket met identiteit (een MSIX-*sparse package* met
-    `desktop4:FileExplorerContextMenus`), ondertekend met hetzelfde certificaat als de app en bij het installeren
-    geregistreerd met `Add-AppxPackage -ExternalLocation`. Dat is een eigen DLL, een tweede ondertekend pakket en een
-    stap in de installer (en bij elke update), en het is alleen te testen met een vertrouwd certificaat. Daarom nu de
-    registervariant; het nieuwe menu staat bij Nog te doen.
+  - **Windows 11** toont zulke registeritems alleen onder **Meer opties weergeven** (Shift+F10). In het nieuwe,
+    korte menu staat daarom een eigen item **OpenAEC** met het app-pictogram (zie hieronder); is dat er, dan vervalt
+    het klassieke werkwoord, zodat Versturen niet dubbel staat.
+
+**Het moderne rechtermuismenu van Windows 11** (`crates/openaec-shellmenu`, `src-tauri/src/menupakket.rs`): één item
+**OpenAEC** met een submenu:
+
+- **Delen…** alleen als alle geselecteerde paden in een gekoppelde map liggen;
+- **Versturen met OpenAEC** op elk bestand en elke map (uit te zetten onder Instellingen → Rechtermuismenu).
+
+Een keuze start `openaec-cloud --actie <delen|versturen> <paden…>`, net als de klassieke items (met alle paden in één
+keer; Delen… neemt het eerste). Zo werkt het:
+
+- Een COM-server in een DLL (`openaec_shellmenu.dll`, Rust/windows-rs) met `IExplorerCommand`,
+  `IEnumExplorerCommand`, `IClassFactory`, `DllGetClassObject` en `DllCanUnloadNow`, voor x64 en ARM64 (de Verkenner
+  laadt alleen een DLL van zijn eigen architectuur). De DLL leest alleen `%APPDATA%\OpenAEC Storage\menu.json`
+  (gekoppelde mappen, of Versturen aan staat, het pad van de app), dat de app bij het starten, na elke (ont)koppeling en
+  bij het aan- of uitzetten schrijft; geen netwerk in het proces van de Verkenner.
+- Een pakket met identiteit (MSIX *sparse package*, `crates/openaec-shellmenu/pakket/AppxManifest.xml`) met
+  `windows.fileExplorerContextMenus` voor `*` en `Directory` en een `windows.comServer` die naar de DLL wijst. In het
+  pakket zitten alleen het manifest en het logo; de app en de DLL staan in de installatiemap (`shellmenu\`), die bij het
+  registreren als *external location* wordt meegegeven. De uitgever in het manifest is precies het onderwerp van het
+  certificaat (`CN=Impertio Studio B.V., O=Impertio Studio B.V., …`); de bouwstraat neemt het over uit de handtekening
+  van de opdrachtregel, maakt de pakketten met `makeappx` en ondertekent DLL's en pakketten met Azure Trusted Signing.
+  Ze gaan als resources mee in de NSIS-installer en de MSI (`src-tauri/tauri.verkenner.conf.json`, alleen in de
+  bouwstraat).
+- Registreren: de NSIS-installer roept na het installeren `openaec-cloud --menupakket registreer` aan (PackageManager,
+  voor de gebruiker, zonder beheerdersrechten), en de app controleert het bij elke start (ook na een MSI-installatie of
+  als het in de installer mislukte). De uninstaller meldt het af (`--menupakket afmelden`). Een DLL die de Verkenner
+  nog geladen heeft, hernoemt de installer bij een update (`*.oud`), omdat hij niet overschreven kan worden.
+- Vereisten: Windows 11 (build 22000 of hoger) en een geldig ondertekend pakket. Geen Developer Mode nodig: het
+  certificaat van Trusted Signing is door Windows vertrouwd.
+- **Terugval:** op Windows 10, zonder pakket (een eigen build zonder `shellmenu\`) of als registreren mislukt, blijft
+  het klassieke werkwoord **Versturen met OpenAEC** staan, en altijd het klassieke submenu in de gekoppelde mappen
+  (onder **Meer opties weergeven**, met alle acties).
 - **Linux:** in `~/.local/share` van de gebruiker die de app start:
   - Nautilus (GNOME): `nautilus/scripts/Versturen met OpenAEC` (onder **Scripts** in het menu), of, als
     nautilus-python geïnstalleerd is, `nautilus-python/extensions/openaec_versturen.py` (direct in het menu; dan geen
@@ -286,6 +314,7 @@ cd src-tauri && cargo run --example vinkjes_smoke   # Windows: motor + statusvin
 cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigatiepaneel, bestanden op aanvraag
 cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC" voor losse koppelingen
 cd src-tauri && cargo run --example versturen_smoke # Windows: Versturen met OpenAEC in het rechtermuismenu
+cd crates/openaec-shellmenu && cargo test && cargo build && cargo run --example rooktest  # Windows: modern menu (COM)
 npm test                                            # hulpfuncties van de vensters
 ```
 
@@ -511,8 +540,9 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 
 - Bij het verwijderen van de app de registratie van gekoppelde mappen opruimen (nu: eerst ontkoppelen).
 - Statusvinkjes in de bestandsbeheerder op Linux en macOS (op macOS ook bestanden op aanvraag: File Provider).
-- "Versturen met OpenAEC" in het nieuwe, korte rechtermuismenu van Windows 11 (`IExplorerCommand` in een ondertekend
-  pakket met identiteit; nu onder "Meer opties weergeven").
+- Het moderne rechtermuismenu van Windows 11 op een echte installatie nalopen (ondertekend pakket, x64 en ARM64,
+  update terwijl de Verkenner de DLL geladen heeft). Na verwijderen van een MSI-installatie blijft het pakket
+  geregistreerd (zonder DLL toont de Verkenner het item niet); de MSI heeft nog geen stap om het af te melden.
 - De macOS-build en de menu's voor Linux en macOS zijn nog niet op een echte machine nagelopen (alleen de bouwstraat en
   de unit-tests).
 - Bestanden die alleen online staan, zijn niet te openen zolang de app niet draait.
