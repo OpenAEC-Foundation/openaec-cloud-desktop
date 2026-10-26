@@ -91,6 +91,12 @@ pub fn deelfout(f: &Fout) -> DeelFout {
         }
         Some("meer_dan_eigen_recht") => return melding("meer_dan_eigen_recht", "Je kunt niet meer rechten geven dan je zelf hebt."),
         Some("buiten_deling") => return melding("buiten_deling", "Dit valt buiten wat met je gedeeld is."),
+        Some("te_veel_uitnodigingen") => {
+            return melding(
+                "te_veel_uitnodigingen",
+                "Je hebt het afgelopen uur al veel mensen uitgenodigd. Probeer het later opnieuw, of vraag een beheerder van de omgeving.",
+            )
+        }
         _ => {}
     }
     let server = f.servermelding();
