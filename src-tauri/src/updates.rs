@@ -72,3 +72,24 @@ pub fn installeer(app: &AppHandle) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use semver::Version;
+
+    /// De updater (tauri-plugin-updater) installeert een release als `latest.json` een hogere semver-versie heeft dan
+    /// de app zelf. Na de overstap naar jaar.week (`JJJJ.W.N`) moet elke nieuwe versie dus hoger zijn dan 0.8.1.
+    #[test]
+    fn jaar_week_is_nieuwer_dan_oude_versies() {
+        let v = |s: &str| Version::parse(s).unwrap();
+        assert!(v("2026.44.0") > v("0.8.1"));
+        assert!(v("2026.44.1") > v("2026.44.0"));
+        assert!(v("2026.45.0") > v("2026.44.9"));
+        // Weeknummers zonder voorloopnul vergelijken als getal: week 10 komt na week 9.
+        assert!(v("2026.10.0") > v("2026.9.3"));
+        assert!(v("2027.1.0") > v("2026.53.2"));
+        // Geldige semver, geen pre-release (een streepje zou er een pre-release van maken).
+        assert!(v("2026.44.0").pre.is_empty());
+        assert!(Version::parse("2026.044.0").is_err());
+    }
+}
