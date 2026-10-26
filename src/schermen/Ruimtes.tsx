@@ -209,7 +209,7 @@ export default function Ruimtes() {
       api.syncNu().then(verwerkSync).catch(() => {})
     })
 
-  /** In de hoofdmap: een submap met de naam van de ruimte, als "OpenAEC" in het navigatiepaneel. */
+  /** In de hoofdmap: een submap met de naam van de ruimte, als "OpenAEC Cloud" in het navigatiepaneel. */
   const inDeHoofdmap = (r: Ruimte) =>
     doe("Synchroniseren in de hoofdmap", async () => {
       setKoppelingen(await api.koppelInHoofdmap(r.name, r.naam))

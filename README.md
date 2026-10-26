@@ -284,7 +284,7 @@ cd src-tauri && cargo test --lib               # app (unit-tests)
 cd src-tauri && cargo run --example status_smoke    # Windows: statusvinkjes (Cloud Filter API)
 cd src-tauri && cargo run --example vinkjes_smoke   # Windows: motor + statusvinkjes samen
 cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigatiepaneel, bestanden op aanvraag
-cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC" voor losse koppelingen
+cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC Cloud" voor losse koppelingen
 cd src-tauri && cargo run --example versturen_smoke # Windows: Versturen met OpenAEC in het rechtermuismenu
 npm test                                            # hulpfuncties van de vensters
 ```
@@ -299,7 +299,11 @@ zitten in de unit-tests; op Linux en macOS draaien de tests van de app in de bou
 De voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` (met een testnaam) en ruimen hun registratie,
 het item in het navigatiepaneel en de map altijd op. Met `OPENAEC_ROOKTEST_WACHT=<seconden>` blijft de registratie van
 `hoofdmap_smoke` en `navigatie_smoke` zo lang staan om in de Verkenner te kijken. `navigatie_smoke` gebruikt een
-tijdelijke CLSID en controleert dat de echte registratie van de app onveranderd blijft.
+tijdelijke CLSID en controleert dat de echte registratie van de app onveranderd blijft. Hij leest de weergavenaam van
+het item en van een kind terug via `IShellItem::GetDisplayName` (gewoon en zoals de boom hem toont), bladert via het item naar
+de echte map en maakt via de shell (`IFileOperation`) een bestand aan dat in de echte map moet landen. Staat er op de
+computer een sync-root van een andere app, dan zet hij daar ook een snelkoppeling naar (alleen lezen) en controleert hij
+dat het item en het kind hun eigen naam houden.
 
 Tegen een echte omgeving: `cargo run --example sync -- <basis-url> <ruimte> <map>` met
 `OPENAEC_AUTORISATIE="token <sleutel>:<geheim>"`.
@@ -357,11 +361,11 @@ Een map die met mij gedeeld is (Ruimtes → Gedeeld met mij → **In de hoofdmap
 `<hoofdmap>\Gedeeld met mij\<naam>`, met dezelfde statusiconen en bestanden op aanvraag. Is de map alleen te lezen
 gedeeld, dan gaat er ook vanuit de hoofdmap niets naar de server.
 
-De hoofdmap is één sync-root bij Windows en staat daardoor als eigen item **OpenAEC**, met het pictogram van de app,
-in het navigatiepaneel van de Verkenner. Wat Windows daarvoor nodig heeft (`cloudfilter::registreer_hoofdmap`):
+De hoofdmap is één sync-root bij Windows en staat daardoor als eigen item **OpenAEC Cloud**, met het pictogram van de
+app, in het navigatiepaneel van de Verkenner. Wat Windows daarvoor nodig heeft (`cloudfilter::registreer_hoofdmap`):
 
 - registratie via de shell (`StorageProviderSyncRootManager::Register`, niet alleen `CfRegisterSyncRoot`) met een id
-  `OpenAECStorage!<SID van de gebruiker>!<sleutel van de map>`, een `DisplayNameResource` ("OpenAEC") en een
+  `OpenAECStorage!<SID van de gebruiker>!<sleutel van de map>`, een `DisplayNameResource` ("OpenAEC Cloud") en een
   `IconResource` (`<pad naar de exe>,0`);
 - `HydrationPolicy` **Full** met **AutoDehydrationAllowed** (bestanden mogen alleen online staan, ook opslagbeheer van
   Windows mag ze vrijmaken), `PopulationPolicy` **AlwaysFull** (de app zet zelf alle placeholders neer),
@@ -380,26 +384,46 @@ hoofdmap…**: na bevestiging gaan de statusvinkjes eraf, verhuist de map met zi
 van de hoofdmap (dus zonder opnieuw te downloaden) en krijgt hij daar zijn status terug. Dat kan alleen binnen hetzelfde
 station; de app doet het nooit vanzelf.
 
-**Het item "OpenAEC" ook zonder hoofdmap** (`src-tauri/src/navigatie.rs`). Een map die als sync-root geregistreerd
-is, krijgt van Windows zelf een item in het navigatiepaneel. Dat lukt niet altijd: een gekoppelde map die binnen een
-map van een andere sync-app staat, kan geen tweede sync-root worden (dan zijn er ook geen statusvinkjes). Voor zulke
-mappen zet de app een eigen item **OpenAEC** met het pictogram van de app in het navigatiepaneel, als
+**Het item "OpenAEC Cloud" ook zonder hoofdmap** (`src-tauri/src/navigatie.rs`). Een map die als sync-root
+geregistreerd is, krijgt van Windows zelf een item in het navigatiepaneel. Dat lukt niet altijd: een gekoppelde map die
+binnen een map van een andere sync-app staat, kan geen tweede sync-root worden (dan zijn er ook geen statusvinkjes).
+Voor zulke mappen zet de app een eigen item **OpenAEC Cloud** met het pictogram van de app in het navigatiepaneel, als
 shell-naamruimte-item in HKCU met een vaste CLSID `{A1046B79-4B13-4993-B03B-4D94B67DDB65}`:
 
-- `HKCU\Software\Classes\CLSID\{…}` met `System.IsPinnedToNameSpaceTree = 1`, `SortOrderIndex = 0x42`,
-  `DefaultIcon` (de exe), `Instance\InitPropertyBag\TargetFolderPath` en `ShellFolder`;
+- `HKCU\Software\Classes\CLSID\{…}` met de naam als standaardwaarde, `LocalizedString` en `InfoTip`,
+  `System.IsPinnedToNameSpaceTree = 1`, `SortOrderIndex = 0x42`, `DefaultIcon` (de exe),
+  `Instance\InitPropertyBag\TargetFolderPath` en `ShellFolder`;
 - `HKCU\…\Explorer\Desktop\NameSpace\{…}`;
 - `HKCU\…\Explorer\HideDesktopIcons\NewStartPanel`, waarde `{…}` = 1 (geen pictogram op het bureaublad).
+
+**Het doel is altijd een eigen map**, nooit een gekoppelde map zelf: `%LOCALAPPDATA%\OpenAEC Storage\Verkenner`. Wijst
+`TargetFolderPath` naar een map binnen de map van een andere sync-app, dan neemt de shell de weergavenaam en het
+pictogram van die sync-root over, wat er ook als naam in het register staat (zo heette het item in 0.8.1 naar de
+bovenliggende map van die andere app). In de eigen map staat per gekoppelde ruimte of gedeelde map een
+mapsnelkoppeling (een map met `desktop.ini` + `target.lnk`, zoals "Netwerklocaties" die maakt) met de naam van de
+ruimte zoals de server hem geeft, niet de lokale mapnaam (tekens die in een mapnaam niet kunnen worden `_`; dubbele
+namen krijgen ` (2)`). Een mapsnelkoppeling houdt zijn eigen naam; in de boom klapt hij uit als de echte map, en
+openen, opslaan en "Nieuw" gebeuren in de echte map. De indeling is dus altijd:
+
+```
+OpenAEC Cloud
+└── OpenAEC Studio          (de ruimte)
+    ├── Tekeningen
+    └── …
+```
 
 Wat het item toont:
 
 | situatie | item |
 | --- | --- |
-| hoofdmap, geregistreerd | geen eigen item: Windows toont al "OpenAEC" voor de hoofdmap |
-| hoofdmap, registreren mislukt | het eigen item toont de hoofdmap |
-| geen hoofdmap, één koppeling zonder eigen sync-root | het item toont die map |
-| geen hoofdmap, meer zulke koppelingen | het item toont `%LOCALAPPDATA%\OpenAEC Storage\Verkenner`, met per koppeling een mapsnelkoppeling (`desktop.ini` + `target.lnk`) die in de boom uitklapt als de echte map |
-| geen koppelingen | geen item |
+| hoofdmap actief (als sync-root geregistreerd) | geen eigen item: de sync-root van de hoofdmap heeft het item **OpenAEC Cloud** van Windows, met de ruimtes als submappen |
+| anders, één of meer koppelingen zonder eigen sync-root | het eigen item op de eigen map, met per koppeling een mapsnelkoppeling (ook bij één) |
+| geen koppelingen (zonder eigen sync-root) | geen item |
+
+Een losse koppeling die wel een eigen sync-root is, heeft van Windows al een item ("OpenAEC Storage – <ruimte>") en
+krijgt geen snelkoppeling. Mislukt het registreren van de hoofdmap (bijvoorbeeld omdat hij binnen de map van een andere
+sync-app ligt), dan krijgen ook de ruimtes in de hoofdmap een snelkoppeling in de eigen map. Een bestaande registratie
+van de hoofdmap met een andere naam of een ander pictogram (een oudere versie) werkt de app bij het starten bij.
 
 Zo staan er nooit twee items voor dezelfde map, en wordt er niets verplaatst. De overstap naar de hoofdmap blijft een
 keuze: het Overzicht stelt bij de eerste start een hoofdmap voor, en **Naar de hoofdmap…** verhuist een losse map. De
