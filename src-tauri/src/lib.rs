@@ -13,6 +13,7 @@ mod navigatie;
 mod opruimen;
 pub mod rechtermuis;
 mod schatting;
+mod serverplek;
 mod sloten;
 mod systeemvak;
 mod tools;
@@ -876,17 +877,10 @@ async fn sync_nu(app: AppHandle) -> Result<Vec<MapRapport>, String> {
     Ok(r)
 }
 
-/// Koppeling en pad (met '/') voor een lokaal bestand.
+/// Koppeling en pad (met '/') voor een lokaal bestand (zie `serverplek`: ook met andere hoofdletters of een kort pad).
 fn zoek(state: &AppState, bestand: &str) -> Result<(Koppeling, String), String> {
-    let pad = PathBuf::from(bestand);
-    let inst = state.instellingen.lock().unwrap();
-    for k in &inst.koppelingen {
-        if let Ok(rel) = pad.strip_prefix(&k.lokaal) {
-            let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/");
-            return Ok((k.clone(), rel));
-        }
-    }
-    Err("dit bestand staat niet in een gekoppelde map".into())
+    let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
+    serverplek::zoek_in(&koppelingen, bestand).ok_or_else(|| "dit bestand staat niet in een gekoppelde map".into())
 }
 
 fn bestand_id(state: &AppState, bestand: &str) -> Result<String, String> {
@@ -925,12 +919,8 @@ async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, 
     let client = client(state).await?;
     let (doctype, id) = if Path::new(pad).is_dir() {
         let (k, rel) = zoek(state, pad)?;
-        let id = opslag_voor(client.clone(), &k)
-            .zoek_map(&rel)
-            .await
-            .map_err(fout)?
-            .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
-        ("Opslagmap", id)
+        let opslag = opslag_voor(client.clone(), &k);
+        ("Opslagmap", serverplek::map_op_server(&opslag, Path::new(&k.lokaal), &rel, true).await.map_err(|f| f.melding)?)
     } else {
         ("Opslagbestand", bestand_id(state, pad)?)
     };
@@ -945,11 +935,8 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
     }
     let client = client(state).await?;
     let (k, rel) = zoek(state, pad)?;
-    let id = opslag_voor(client.clone(), &k)
-        .zoek_map(&rel)
-        .await
-        .map_err(fout)?
-        .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
+    let opslag = opslag_voor(client.clone(), &k);
+    let id = serverplek::map_op_server(&opslag, Path::new(&k.lokaal), &rel, true).await.map_err(|f| f.melding)?;
     let deling = client.vraag_bestanden(&id, None, None).await.map_err(fout)?;
     Ok(deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default())))
 }

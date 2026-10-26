@@ -10,7 +10,7 @@ import { datumTekst, datumWaarde, leesFout, type Deelfout } from "./lib/delen"
 import { grootte, naamVan } from "./lib/opmaak"
 import {
   controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, overdrachtMeta,
-  samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen,
+  opslagTekst, samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen,
   type Fase, type Lopend, type OverdrachtRegel, type Overdrachtgrenzen, type VerstuurItem, type VerstuurStap, type Voltooid,
 } from "./lib/versturen"
 
@@ -131,6 +131,20 @@ export default function Verstuurvenster() {
     setFase("bezig")
     setFout(null)
     setOnderbroken(null)
+    // Al klaar voordat het venster de overdracht kende (de server kopieerde alles meteen).
+    if (vroeg?.overdracht === l.overdracht) klaar(vroeg)
+    vroeg = null
+  }
+
+  /** Een melding "klaar" die binnenkwam voordat het venster de overdracht kende. */
+  let vroeg: Voltooid | null = null
+
+  const klaar = (v: Voltooid) => {
+    setStappen((oud) => oud.map((s) => ({ ...s, status: "klaar", gedaan: s.totaal })))
+    setUitkomst(v)
+    setFase("klaar")
+    setMelding("Link staat op het klembord")
+    laadMijn()
   }
 
   const versturen = async () => {
@@ -228,11 +242,11 @@ export default function Verstuurvenster() {
         setStappen((oud) => oud.map((x, i) => (i === s.index ? s : x)))
       }),
       await api.opVersturenKlaar((v) => {
-        if (v.overdracht !== lopend()?.overdracht) return
-        setUitkomst(v)
-        setFase("klaar")
-        setMelding("Link staat op het klembord")
-        laadMijn()
+        if (v.overdracht !== lopend()?.overdracht) {
+          vroeg = v
+          return
+        }
+        klaar(v)
       }),
       await api.opVersturenFout(({ overdracht, fout }) => {
         if (overdracht !== lopend()?.overdracht) return
@@ -345,8 +359,8 @@ export default function Verstuurvenster() {
                       <span class="meta">
                         {i.fout ??
                           (i.map
-                            ? `map, ${i.bestanden} ${i.bestanden === 1 ? "bestand" : "bestanden"} · ${grootte(i.grootte)} · gaat mee als zip`
-                            : grootte(i.grootte))}
+                            ? `map, ${i.bestanden} ${i.bestanden === 1 ? "bestand" : "bestanden"} · ${grootte(i.grootte)} · ${i.in_opslag ? "staat al in OpenAEC" : "gaat mee als zip"}`
+                            : `${grootte(i.grootte)}${i.in_opslag ? " · staat al in OpenAEC" : ""}`)}
                       </span>
                     </div>
                     <button class="klein" aria-label={`${i.naam} weghalen`} onClick={() => haalWeg(i.pad)}>
@@ -356,6 +370,9 @@ export default function Verstuurvenster() {
                 )}
               </For>
             </ul>
+            <Show when={opslagTekst(items())}>
+              <p class="hint">{opslagTekst(items())}</p>
+            </Show>
             <Show when={grenzen()}>
               {(g) => (
                 <p class="hint" classList={{ fout: !!grootteFout() }}>
@@ -453,8 +470,11 @@ export default function Verstuurvenster() {
                             {o.naam}
                           </span>
                           <span class="balk">
-                            {/* Inpakken duurt onbepaald lang: dan de heen-en-weer-balk (zonder eigen breedte). */}
-                            <Show when={stap()?.status === "inpakken"} fallback={<span style={{ width: `${breedte()}%` }} />}>
+                            {/* Inpakken en kopiëren op de server duren onbepaald lang: dan de heen-en-weer-balk. */}
+                            <Show
+                              when={stap()?.status === "inpakken" || stap()?.status === "kopieren"}
+                              fallback={<span style={{ width: `${breedte()}%` }} />}
+                            >
                               <span class="onbepaald" />
                             </Show>
                           </span>

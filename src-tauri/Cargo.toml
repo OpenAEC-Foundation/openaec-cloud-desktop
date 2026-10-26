@@ -81,6 +81,8 @@ windows = { version = "0.61", features = [
   "Win32_System_SystemInformation",
 ] }
 
-# Test: de updater vergelijkt versies met semver; jaar.week moet nieuwer zijn dan de oude 0.x-versies.
+# Tests: de updater vergelijkt versies met semver (jaar.week moet nieuwer zijn dan de oude 0.x-versies), en
+# Versturen draait tegen een nagebootste server (versturen.rs).
 [dev-dependencies]
 semver = "1"
+wiremock = "0.6"

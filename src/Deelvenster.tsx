@@ -8,7 +8,7 @@ import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from "s
 import { api, type Collega, type Deeldoel, type Deelverzoek, type DelingRegel, type Ruimtelid, type Toegang } from "./lib/api"
 import {
   collegaTekst, controleerVervaldatum, datumWaarde, delingDetails, delingVerlopen, geldigEmail, leesFout,
-  linkRechten, rang, rechtenTekst, rolTekst, toegestaneRechten,
+  linkRechten, linkUitleg, rang, rechtenTekst, rolTekst, toegestaneRechten,
   vervaldatumTekst, type Deelfout,
 } from "./lib/delen"
 import { naamVan, servertijd } from "./lib/opmaak"
@@ -281,6 +281,51 @@ export default function Deelvenster() {
         </Show>
 
         <Show when={doel() && magDelen()}>
+          <section class="deel-sectie snelle-link">
+            <h2>Link voor externen (zonder account)</h2>
+            <p class="uitleg">{linkUitleg(isMap(), linkRecht())}</p>
+            <p class="hint">Staat al in OpenAEC: er wordt niets geüpload.</p>
+            <Show when={isMap()}>
+              <div class="keuzeknoppen" role="radiogroup" aria-label="Rechten van de link">
+                <For each={linkRechten(true)}>
+                  {(k) => (
+                    <button
+                      role="radio"
+                      aria-checked={linkRecht() === k.waarde}
+                      classList={{ gekozen: linkRecht() === k.waarde }}
+                      onClick={() => setLinkRecht(k.waarde)}
+                    >
+                      {k.tekst}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <div class="velden">
+              <label>
+                Wachtwoord (optioneel)
+                <input type="password" autocomplete="new-password" value={wachtwoord()} onInput={(e) => setWachtwoord(e.currentTarget.value)} />
+              </label>
+              <label>
+                Geldig tot (optioneel)
+                <input type="date" min={datumWaarde(new Date())} value={verloopt()} onInput={(e) => setVerloopt(e.currentTarget.value)} />
+              </label>
+            </div>
+            <Show when={datumFout()}>
+              <p class="hint fout">{datumFout()}</p>
+            </Show>
+            <button class="primair" disabled={!!bezig() || !!datumFout()} onClick={maakLink}>
+              {bezig() === "link" ? "Bezig…" : "Link maken en kopiëren"}
+            </button>
+            <Foutmelding fout={linkFout()} />
+            <Show when={link()}>
+              <div class="deellink">
+                <input readOnly value={link()} onFocus={(e) => e.currentTarget.select()} />
+                <button onClick={() => kopieer(link())}>Kopiëren</button>
+              </div>
+            </Show>
+          </section>
+
           <section class="deel-sectie">
             <h2>Met een collega</h2>
             <p class="uitleg">
@@ -339,55 +384,7 @@ export default function Deelvenster() {
                   <strong>{extern()}</strong> heeft geen account in deze omgeving. Mensen van buiten je organisatie uitnodigen, met een
                   extra licentie, is nog in aanbouw.
                 </p>
-                <p>Wil je het nu al delen? Maak hieronder een link, eventueel met een wachtwoord en een vervaldatum, en stuur die zelf door.</p>
-              </div>
-            </Show>
-          </section>
-
-          <section class="deel-sectie">
-            <h2>Met een link</h2>
-            <p class="uitleg">
-              {linkRecht() === "uploaden"
-                ? "Wie de link opent, kan bestanden in deze map zetten zonder account, maar ziet de inhoud niet."
-                : `Iedereen met de link kan ${isMap() ? "de map" : "het bestand"} bekijken en downloaden, zonder account.`}
-            </p>
-            <Show when={isMap()}>
-              <div class="keuzeknoppen" role="radiogroup" aria-label="Rechten van de link">
-                <For each={linkRechten(true)}>
-                  {(k) => (
-                    <button
-                      role="radio"
-                      aria-checked={linkRecht() === k.waarde}
-                      classList={{ gekozen: linkRecht() === k.waarde }}
-                      onClick={() => setLinkRecht(k.waarde)}
-                    >
-                      {k.tekst}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-            <div class="velden">
-              <label>
-                Wachtwoord (optioneel)
-                <input type="password" autocomplete="new-password" value={wachtwoord()} onInput={(e) => setWachtwoord(e.currentTarget.value)} />
-              </label>
-              <label>
-                Geldig tot (optioneel)
-                <input type="date" min={datumWaarde(new Date())} value={verloopt()} onInput={(e) => setVerloopt(e.currentTarget.value)} />
-              </label>
-            </div>
-            <Show when={datumFout()}>
-              <p class="hint fout">{datumFout()}</p>
-            </Show>
-            <button class="primair" disabled={!!bezig() || !!datumFout()} onClick={maakLink}>
-              {bezig() === "link" ? "Bezig…" : "Link maken en kopiëren"}
-            </button>
-            <Foutmelding fout={linkFout()} />
-            <Show when={link()}>
-              <div class="deellink">
-                <input readOnly value={link()} onFocus={(e) => e.currentTarget.select()} />
-                <button onClick={() => kopieer(link())}>Kopiëren</button>
+                <p>Wil je het nu al delen? Maak hierboven een link voor externen, eventueel met een wachtwoord en een vervaldatum, en stuur die zelf door.</p>
               </div>
             </Show>
           </section>

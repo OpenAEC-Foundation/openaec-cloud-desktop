@@ -15,7 +15,7 @@ use openaec_sync::Fout;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{bestand_id, client, opslag_voor, systeemvak, zoek, AppState};
+use crate::{bestand_id, client, opslag_voor, serverplek, systeemvak, zoek, AppState};
 
 pub const VENSTER: &str = "delen";
 
@@ -198,11 +198,8 @@ pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<
                 melding: "De gekoppelde map is de hele ruimte. Deel een map of bestand daarin, of laat een beheerder je collega lid van de ruimte maken.".into(),
             });
         }
-        let id = opslag_voor(client(&state).await?, &k)
-            .zoek_map(&rel)
-            .await?
-            .ok_or("deze map staat nog niet op de server; wacht tot hij gesynchroniseerd is")?;
-        ("Opslagmap", id)
+        let opslag = opslag_voor(client(&state).await?, &k);
+        ("Opslagmap", serverplek::map_op_server(&opslag, Path::new(&k.lokaal), &rel, true).await?)
     } else {
         ("Opslagbestand", bestand_id(&state, &pad)?)
     };

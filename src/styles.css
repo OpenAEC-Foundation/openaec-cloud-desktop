@@ -429,6 +429,9 @@ body.deelvenster { background: var(--papier); }
 .deel-inhoud { flex: 1; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .deel-sectie { background: var(--wit); border: 1px solid var(--lijn); border-radius: var(--rond); padding: 16px 18px; box-shadow: var(--schaduw); }
 .deel-sectie .uitleg { margin-bottom: 12px; }
+.deel-sectie.snelle-link { border-color: var(--amber); }
+.deel-sectie.snelle-link .uitleg { margin-bottom: 4px; }
+.deel-sectie.snelle-link .hint { margin: 0 0 12px; }
 .deel-sectiekop { display: flex; justify-content: space-between; align-items: baseline; }
 .deel-sectiekop .tekstknop { font-size: 12px; color: var(--steen); }
 .deel-rij { display: flex; gap: 10px; align-items: flex-end; }
