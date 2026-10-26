@@ -20,7 +20,11 @@ fn main() {
 }
 
 #[cfg(windows)]
-const NAAM: &str = "OpenAEC (rooktest)";
+const NAAM: &str = "OpenAEC Cloud (rooktest)";
+
+/// Naam van een eerdere versie: een bestaande registratie met deze naam moet naar [`NAAM`] gaan.
+#[cfg(windows)]
+const OUDE_NAAM: &str = "OpenAEC (rooktest)";
 
 #[cfg(windows)]
 fn main() {
@@ -134,8 +138,13 @@ fn proef(dir: &std::path::Path, sleutel: &mut Option<windows::Win32::Storage::Cl
 
     // --- registreren en het navigatiepaneel ---
     let icoon = format!("{},0", std::env::current_exe()?.display());
-    cloudfilter::registreer_hoofdmap(&pad, NAAM, env!("CARGO_PKG_VERSION"), &icoon)?;
+    cloudfilter::registreer_hoofdmap(&pad, OUDE_NAAM, env!("CARGO_PKG_VERSION"), &icoon)?;
     controleer(cloudfilter::eigen_sync_root(&pad), "registreer_hoofdmap (en teruggelezen als eigen sync-root)")?;
+    controleer(cloudfilter::weergave(&pad).is_some_and(|(n, _)| n == OUDE_NAAM), "weergavenaam van de registratie teruggelezen")?;
+    cloudfilter::registreer_hoofdmap(&pad, NAAM, env!("CARGO_PKG_VERSION"), &icoon)?;
+    let weergave = cloudfilter::weergave(&pad);
+    println!("  (info) na registreren met een nieuwe naam: {weergave:?}");
+    controleer(weergave.is_some_and(|(n, i)| n == NAAM && i == icoon), "een andere naam werkt de bestaande registratie bij")?;
     cloudfilter::registreer_hoofdmap(&pad, NAAM, env!("CARGO_PKG_VERSION"), &icoon)?;
     controleer(true, "nogmaals registreren gaat goed")?;
     let reg = registratie(&pad);

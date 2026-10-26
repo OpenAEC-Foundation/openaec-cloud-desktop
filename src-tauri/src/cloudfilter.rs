@@ -615,14 +615,28 @@ pub fn attributen(pad: &Path) -> Option<u32> {
     std::fs::symlink_metadata(pad).ok().map(|m| m.file_attributes())
 }
 
+/// De naam en het pictogram waarmee de sync-root `path` bij de shell geregistreerd is (None als dat niet te lezen is).
+pub fn weergave(path: &str) -> Option<(String, String)> {
+    // Uit de registratie in het register: de WinRT-functies om een registratie terug te lezen werken alleen voor een
+    // app met een pakket.
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    let id = registratie_id(path).ok()?.to_string();
+    let k = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\SyncRootManager\\{id}"))
+        .ok()?;
+    Some((k.get_value("DisplayNameResource").ok()?, k.get_value("IconResource").ok()?))
+}
+
 /// Registreer de hoofdmap als sync-root met bestanden op aanvraag. Herhaalbaar; een map die al onder een andere
-/// sync-provider valt, wordt geweigerd. `naam` is wat het navigatiepaneel toont ("OpenAEC").
+/// sync-provider valt, wordt geweigerd. `naam` is wat het navigatiepaneel toont ("OpenAEC Cloud"); is de map al
+/// geregistreerd met een andere naam of een ander pictogram (een oudere versie), dan wordt de registratie bijgewerkt.
 pub fn registreer_hoofdmap(path: &str, naam: &str, version: &str, icoon: &str) -> Result<()> {
     if naam.is_empty() || icoon.is_empty() {
         return Err(anyhow!("registreren van {path}: naam en pictogram zijn verplicht"));
     }
     match sync_root(path) {
-        SyncRoot::Eigen => return Ok(()),
+        SyncRoot::Eigen if weergave(path).is_none_or(|(n, i)| n == naam && i == icoon) => return Ok(()),
+        SyncRoot::Eigen => {}
         SyncRoot::Vreemd(provider) => return Err(anyhow!("{path} valt al onder een andere sync-provider ({provider})")),
         SyncRoot::Geen => {}
     }
