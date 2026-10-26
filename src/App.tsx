@@ -2,14 +2,15 @@ import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "soli
 import { api } from "./lib/api"
 import {
   basis, bezig, doe, koppelingen, melding, ruimtes, scherm, setBasis, setBestand, setKoppelingen, setMelding,
-  setQuotum, setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setVerbonden, stand, verbonden, verwerkSync, ververs,
-  type Scherm,
+  setQuotum, setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setVerbonden, setVoorAssistent, stand, verbonden,
+  verwerkSync, ververs, voorAssistent, type Scherm,
 } from "./lib/winkel"
 import { naamVan, procent, rondeTekst } from "./lib/opmaak"
 import Overzicht from "./schermen/Overzicht"
 import Ruimtes from "./schermen/Ruimtes"
 import Delen, { toonVersies, wisDeelresultaat } from "./schermen/Delen"
 import Instellingen from "./schermen/Instellingen"
+import Assistent from "./schermen/Assistent"
 import Tools, { aantalToolUpdates } from "./schermen/Tools"
 import Titelbalk from "./Titelbalk"
 
@@ -17,6 +18,7 @@ const schermen: { id: Scherm; titel: string; icoon: string }[] = [
   { id: "overzicht", titel: "Overzicht", icoon: "M3 12h4l3-8 4 16 3-8h4" },
   { id: "ruimtes", titel: "Ruimtes", icoon: "M3 6h6l2 2h10v11H3z" },
   { id: "delen", titel: "Delen", icoon: "M18 8a3 3 0 1 0-3-3M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 22a3 3 0 1 0-3-3M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" },
+  { id: "assistent", titel: "Assistent", icoon: "M4 5h16v11H9l-5 4zM8 9h8M8 12h5" },
   { id: "tools", titel: "Tools", icoon: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" },
   { id: "instellingen", titel: "Instellingen", icoon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4 7 17M17 17l1.4 1.4M5.6 5.6 7 7" },
 ]
@@ -110,6 +112,12 @@ export default function App() {
     // een eigen venster).
     const stoppers = [
       await api.opActie(({ actie, pad }) => {
+        // "Vragen aan de assistent": het bestand gaat als bijlage naar het scherm Assistent.
+        if (actie === "assistent") {
+          setVoorAssistent([...voorAssistent(), pad])
+          setScherm("assistent")
+          return
+        }
         setBestand(pad)
         wisDeelresultaat()
         setScherm("delen")
@@ -122,6 +130,8 @@ export default function App() {
       await api.opQuotum(setQuotum),
       // Het venster komt (weer) in beeld vanuit het systeemvak: ruimtes en overzicht verversen.
       await api.opVensterOpen(() => verbonden() && ververs()),
+      // Het menu van het systeemvak opent een scherm (Assistent).
+      await api.opScherm((s) => setScherm(s as Scherm)),
     ]
     const bijFocus = () => verbonden() && ververs()
     window.addEventListener("focus", bijFocus)
@@ -194,6 +204,9 @@ export default function App() {
             </Match>
             <Match when={scherm() === "delen"}>
               <Delen />
+            </Match>
+            <Match when={scherm() === "assistent"}>
+              <Assistent />
             </Match>
           </Switch>
         </main>

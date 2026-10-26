@@ -1,5 +1,6 @@
-import { invoke } from "@tauri-apps/api/core"
+import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import type { Bijlage, Gebeurtenis, Gesprek, Model, Samenvatting } from "./assistent.ts"
 import type { GeinstalleerdeTool, ReleaseInfo } from "./tools.ts"
 import type { Lopend, OverdrachtRegel, Overdrachtgrenzen, VerstuurItem, VerstuurStap, Voltooid } from "./versturen.ts"
 
@@ -421,4 +422,31 @@ export const api = {
   toolStarten: (exePad: string) => invoke<void>("tool_starten", { exePad }),
   toolVerwijderen: (query: ToolVraag) => invoke<"ranUninstaller" | "removed">("tool_verwijderen", { query }),
   opToolDownload: (f: (v: DownloadVoortgang) => void) => listen<DownloadVoortgang>("tool-download", (e) => f(e.payload)),
+  // Assistent (src-tauri/src/assistent); fouten van de AI-dienst komen als { soort, melding, retry_na } (zie alsFout).
+  assistentStatus: () => invoke<AssistentStatus>("assistent_status"),
+  assistentLogIn: () => invoke<void>("assistent_log_in"),
+  assistentModellen: () => invoke<Model[]>("assistent_modellen"),
+  assistentVraag: (gesprek: Gesprek, bij: (g: Gebeurtenis) => void) => {
+    const kanaal = new Channel<Gebeurtenis>()
+    kanaal.onmessage = bij
+    return invoke<{ afgebroken: boolean; vraag_id: string | null }>("assistent_vraag", { gesprek, kanaal })
+  },
+  assistentStop: (gesprek: string) => invoke<void>("assistent_stop", { gesprek }),
+  assistentBijlage: (pad: string, alTekst: number) => invoke<Bijlage>("assistent_bijlage", { pad, alTekst }),
+  assistentBijlageData: (naam: string, data: string, alTekst: number) =>
+    invoke<Bijlage>("assistent_bijlage_data", { naam, data, alTekst }),
+  assistentGesprekken: () => invoke<Samenvatting[]>("assistent_gesprekken"),
+  assistentGesprek: (id: string) => invoke<Gesprek>("assistent_gesprek", { id }),
+  assistentBewaar: (gesprek: Gesprek) => invoke<void>("assistent_bewaar", { gesprek }),
+  assistentVerwijder: (id: string) => invoke<void>("assistent_verwijder", { id }),
+  assistentOpenBeheer: () => invoke<void>("assistent_open_beheer"),
+  /** Het systeemvak (menu Assistent) vraagt om een scherm. */
+  opScherm: (f: (scherm: string) => void) => listen<string>("scherm", (e) => f(e.payload)),
+}
+
+export interface AssistentStatus {
+  ingelogd: boolean
+  omgeving: string | null
+  gateway: string
+  cloud: string
 }

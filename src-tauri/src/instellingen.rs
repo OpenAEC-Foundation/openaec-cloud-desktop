@@ -97,6 +97,12 @@ pub struct Instellingen {
     /// "Versturen met OpenAEC" in het rechtermuismenu van de bestandsbeheerder (zie `rechtermuis`); None = aan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub menu_versturen: Option<bool>,
+    /// De AI-gateway voor de assistent; None: de gateway van OpenAEC (alleen voor ontwikkelen en testen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistent_gateway: Option<String>,
+    /// De cloud die de tokens voor de assistent uitgeeft; None: afgeleid van de omgeving (zie `assistent::cloud_voor`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistent_cloud: Option<String>,
 }
 
 /// Voorstel voor de hoofdmap: `OpenAEC` in de gebruikersmap.

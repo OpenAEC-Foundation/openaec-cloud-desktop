@@ -89,3 +89,52 @@ async fn code_inwisselen_en_vernieuwen() {
     let t2 = vernieuw(&server.uri(), &t).await.unwrap();
     assert_eq!(t2.access_token, "A2");
 }
+
+#[test]
+fn tools_client_van_de_cloud_vraagt_alleen_ai() {
+    use openaec_sync::oauth::{autorisatie_url_voor, TOOLS};
+    let url = autorisatie_url_voor(&TOOLS, "https://cloud.open-aec.eu", "abc", "xyz");
+    assert!(url.starts_with("https://cloud.open-aec.eu/api/method/frappe.integrations.oauth2.authorize?"));
+    for deel in [
+        "client_id=tools",
+        "scope=openid+email+profile+ai",
+        "redirect_uri=http%3A%2F%2Flocalhost%3A8765%2Fterug",
+        "code_challenge_method=S256",
+    ] {
+        assert!(url.contains(deel), "{deel} ontbreekt in {url}");
+    }
+    // Nooit `all` voor de gateway; de sync-client houdt precies zijn eigen scopes.
+    assert!(!TOOLS.scope.split(' ').any(|s| s == "all"));
+    assert!(autorisatie_url("https://klant.cloud.open-aec.eu", "a", "b").contains("scope=all+openid&"));
+}
+
+#[tokio::test]
+async fn loopback_op_een_ander_terugpad() {
+    use openaec_sync::oauth::wacht_op_code_op;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let poort = listener.local_addr().unwrap().port();
+    let wacht = tokio::spawn(wacht_op_code_op(listener, "s".to_string(), "/terug"));
+    // Een ander pad (bijv. /favicon.ico of /callback) wordt genegeerd.
+    assert!(browser(poort, "/callback?code=X&state=s").await.contains("404"));
+    browser(poort, "/terug?code=C9&state=s").await;
+    assert_eq!(wacht.await.unwrap().unwrap(), "C9");
+}
+
+#[tokio::test]
+async fn sessie_van_de_tools_client_vernieuwt_met_client_tools() {
+    use openaec_sync::oauth::TOOLS;
+    use openaec_sync::sessie::{Geheugen, Sessie, Tokenbron};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .and(body_string_contains("client_id=tools"))
+        .and(body_string_contains("refresh_token=R1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "J2", "refresh_token": "R2", "expires_in": 900})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let verlopen = Tokens { access_token: "J1".into(), refresh_token: "R1".into(), verloopt: 0 };
+    let sessie = Sessie::met_aanvrager(&server.uri(), Geheugen::met(serde_json::to_string(&verlopen).unwrap()), TOOLS);
+    assert_eq!(sessie.geef().await.unwrap(), "Bearer J2");
+}

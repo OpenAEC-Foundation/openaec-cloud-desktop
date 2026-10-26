@@ -2,6 +2,7 @@
 //! sync-motor uit de crate `openaec-sync`.
 
 mod activiteit;
+mod assistent;
 mod bewaking;
 mod delen;
 mod hoofdmap;
@@ -221,6 +222,8 @@ async fn verbreek(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(
     if let Some(b) = basis {
         sessie(&b).vergeet().await;
     }
+    // Ook de assistent meldt zich af (zijn tokens horen bij hetzelfde account).
+    assistent::log_uit(&state).await;
     state.activiteit.zet_sessie_verlopen(false);
     activiteit::meld(&app);
     Ok(())
@@ -1347,7 +1350,19 @@ pub fn run() {
             tools::tools_releases,
             tools::tool_installeren,
             tools::tool_starten,
-            tools::tool_verwijderen
+            tools::tool_verwijderen,
+            assistent::assistent_status,
+            assistent::assistent_log_in,
+            assistent::assistent_modellen,
+            assistent::assistent_vraag,
+            assistent::assistent_stop,
+            assistent::assistent_bijlage,
+            assistent::assistent_bijlage_data,
+            assistent::assistent_gesprekken,
+            assistent::assistent_gesprek,
+            assistent::assistent_bewaar,
+            assistent::assistent_verwijder,
+            assistent::assistent_open_beheer
         ])
         .run(tauri::generate_context!())
         .expect("fout bij het starten van OpenAEC Desktop App");

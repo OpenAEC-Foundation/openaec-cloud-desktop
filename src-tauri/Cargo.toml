@@ -42,6 +42,12 @@ sha2 = "0.10"
 hex = "0.4"
 log = "0.4"
 env_logger = "0.11"
+# Assistent: bijlagen voorbereiden. Afbeeldingen verkleinen (alleen png, jpeg en webp), tekst uit PDF halen, en DOCX
+# en XLSX lezen (zip met deflate); afbeeldingen gaan als data-URL (base64) naar de AI-gateway.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+pdf-extract = "0.9"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+base64 = "0.22"
 
 # Windows Cloud Filter API (Verkenner-overlays + files-on-demand) — Fase 2.
 [target.'cfg(windows)'.dependencies]

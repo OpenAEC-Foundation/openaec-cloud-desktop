@@ -526,3 +526,102 @@ body.deelvenster { background: var(--papier); }
 .nieuwe-ruimte { margin-top: 12px; }
 .nieuwe-ruimte form { display: flex; flex-direction: column; gap: 10px; }
 .nieuwe-ruimte label { display: flex; flex-direction: column; gap: 4px; }
+
+/* ---------- assistent ---------- */
+.inhoud > .assistent { height: 100%; }
+.assistent { display: grid; grid-template-columns: 232px minmax(0, 1fr); height: 100%; min-height: 0; position: relative; }
+.gesprekken { display: flex; flex-direction: column; gap: 6px; padding: 16px 12px; border-right: 1px solid var(--lijn); background: var(--papier); min-height: 0; }
+.gesprekken .lijstkop { margin-top: 12px; }
+.gesprekkenlijst { list-style: none; display: flex; flex-direction: column; gap: 2px; overflow: auto; min-height: 0; }
+.gesprekken-leeg { font-size: 12px; color: var(--steen-licht); padding: 6px 4px; }
+.gesprekregel { display: flex; align-items: center; border-radius: 6px; }
+.gesprekregel:hover { background: var(--beton); }
+.gesprekregel.actief { background: var(--wit); box-shadow: var(--schaduw), inset 3px 0 0 var(--amber); }
+.gesprekknop { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: none; background: none; padding: 7px 4px 7px 10px; text-align: left; }
+.gesprek-titel { font-size: 13px; color: var(--inkt); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gesprekregel.actief .gesprek-titel { font-weight: 600; }
+.gesprek-datum { font-size: 11px; color: var(--steen-licht); font-weight: 400; }
+.gesprek-weg { flex: none; border: none; background: none; padding: 4px 8px; color: var(--steen-licht); font-size: 16px; line-height: 1; visibility: hidden; }
+.gesprekregel:hover .gesprek-weg, .gesprekregel.actief .gesprek-weg { visibility: visible; }
+.gesprek-weg:hover:not(:disabled) { color: var(--rood); }
+
+.gesprek { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.gesprek-kop { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-bottom: 1px solid var(--lijn); background: var(--wit); flex: none; }
+.gesprek-kop-titel { font-size: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modelkeuze { margin: 0; flex: none; }
+.modelkeuze select { margin: 0; width: auto; min-width: 200px; padding: 6px 10px; font-size: 13px; }
+.verborgen { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.gesprek > .foutvlak, .assistent-inloggen { margin: 12px 24px 0; flex: none; }
+
+.gesprek-vlak { flex: 1; overflow: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.gesprek-leeg { margin: auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 48ch; }
+.gesprek-leeg p { color: var(--steen); line-height: 1.55; }
+.gesprek-leeg h2 { margin: 4px 0 0; font-size: 18px; }
+.gesprek-leeg .privacy-regel { font-size: 12px; color: var(--steen-licht); margin-top: 6px; }
+
+.bericht { max-width: 860px; width: 100%; line-height: 1.55; overflow-wrap: anywhere; }
+.bericht.vraag { align-self: flex-end; width: auto; max-width: min(720px, 85%); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.vraag-tekst { background: var(--amber-vlak); color: var(--inkt); border-radius: 12px 12px 4px 12px; padding: 9px 14px; white-space: pre-wrap; }
+.bericht.antwoord { align-self: flex-start; }
+.antwoord-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 11px; color: var(--steen-licht); font-variant-numeric: tabular-nums; }
+.antwoord-fout { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 0; }
+.antwoord-fout button { flex: none; }
+.typt { display: inline-flex; gap: 4px; padding: 8px 0; }
+.typt i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); animation: puls 1.2s ease-in-out infinite; }
+.typt i:nth-child(2) { animation-delay: 0.2s; }
+.typt i:nth-child(3) { animation-delay: 0.4s; }
+
+/* markdown in een antwoord */
+.md { font-size: 14px; color: var(--inkt); }
+.md > * + * { margin-top: 10px; }
+.md p, .md li { line-height: 1.6; }
+.md .md-kop { font-family: var(--f-kop); font-weight: 600; margin-top: 16px; margin-bottom: 0; }
+.md h3.md-kop { font-size: 17px; }
+.md h4.md-kop { font-size: 15px; }
+.md h5.md-kop, .md h6.md-kop { font-size: 14px; }
+.md ul, .md ol { padding-left: 22px; display: flex; flex-direction: column; gap: 4px; }
+.md li > * + * { margin-top: 6px; }
+.md li::marker { color: var(--amber); }
+.md code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12.5px; background: var(--beton); border: 1px solid var(--lijn); border-radius: 4px; padding: 0 4px; }
+.md a { color: var(--amber-tekst); text-underline-offset: 2px; cursor: pointer; }
+.md a:hover { color: var(--oranje); }
+.md blockquote { border-left: 3px solid var(--amber); padding: 2px 0 2px 12px; color: var(--steen); }
+.md hr { border: none; border-top: 1px solid var(--lijn); }
+.md-code { border: 1px solid var(--nacht-lijn); border-radius: 6px; overflow: hidden; background: var(--nacht); }
+.md-code-kop { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 4px 12px; font-size: 11px; color: var(--balk-tekst-zacht); border-bottom: 1px solid var(--nacht-lijn); }
+.md-code-kop button { background: transparent; border-color: var(--nacht-lijn); color: var(--balk-tekst-zacht); padding: 3px 8px; font-size: 11px; }
+.md-code-kop button:hover:not(:disabled) { border-color: var(--amber); color: var(--balk-tekst); }
+.md-code pre { margin: 0; padding: 10px 12px; overflow: auto; max-height: 480px; }
+.md-code pre code { background: none; border: none; padding: 0; color: var(--papier); font-size: 12.5px; font-weight: 400; line-height: 1.5; white-space: pre; }
+.md-tabel { overflow: auto; border: 1px solid var(--lijn); border-radius: 6px; }
+.md-tabel table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.md-tabel th, .md-tabel td { padding: 6px 10px; border-bottom: 1px solid var(--lijn); text-align: left; vertical-align: top; }
+.md-tabel th { background: var(--beton); font-weight: 600; white-space: nowrap; }
+.md-tabel tr:last-child td { border-bottom: none; }
+.md-tabel td { font-variant-numeric: tabular-nums; }
+
+/* invoer: privacymelding, bijlagen als chips, het invoervak en Versturen/Stoppen */
+.opsteller { flex: none; border-top: 1px solid var(--lijn); background: var(--wit); padding: 12px 24px 14px; display: flex; flex-direction: column; gap: 8px; }
+.privacy { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.5; color: var(--blauw-tekst); background: var(--blauw-vlak); border-radius: 6px; padding: 8px 10px 8px 12px; }
+.privacy button { flex: none; }
+.bijlage-fout { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bericht.vraag .chips { justify-content: flex-end; }
+.chip { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; padding: 3px 4px 3px 6px; border: 1px solid var(--lijn-hover); border-radius: 6px; background: var(--wit); font-size: 12px; }
+.chip-beeld { width: 22px; height: 22px; object-fit: cover; border-radius: 3px; flex: none; }
+.chip-icoon { width: 14px; height: 17px; border: 1.5px solid var(--steen-licht); border-radius: 2px; flex: none; margin: 0 3px; }
+.chip-naam { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--inkt); }
+.chip-grootte { color: var(--steen-licht); white-space: nowrap; font-variant-numeric: tabular-nums; padding-right: 2px; }
+.chip-weg { border: none; background: none; padding: 0 5px; font-size: 15px; line-height: 1; color: var(--steen-licht); }
+.chip-weg:hover:not(:disabled) { color: var(--rood); }
+.invoerregel { display: flex; align-items: flex-end; gap: 8px; }
+.invoerregel textarea { margin: 0; flex: 1; min-height: 44px; max-height: 200px; resize: none; field-sizing: content; }
+.invoerregel > button { flex: none; height: 40px; }
+.bijlageknop { width: 40px; padding: 0; display: grid; place-items: center; }
+.bijlageknop svg { width: 18px; height: 18px; fill: none; stroke: var(--steen); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.stopknop { border-color: var(--rood); color: var(--rood-tekst); }
+.stopknop:hover:not(:disabled) { background: var(--rood-vlak); border-color: var(--rood); }
+
+.sleepvlak { display: none; position: absolute; inset: 8px; border: 2px dashed var(--amber); border-radius: var(--rond); background: rgba(254, 243, 199, 0.85); place-items: center; z-index: 5; pointer-events: none; }
+.sleepvlak span { font-family: var(--f-kop); font-size: 16px; font-weight: 600; color: var(--amber-tekst); }
+.assistent.sleept .sleepvlak { display: grid; }

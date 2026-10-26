@@ -5,13 +5,14 @@
 //! kopiëren" blijft als snelle optie (leeslink meteen op het klembord). "Versturen met OpenAEC…" opent het venster
 //! Versturen; dat staat ook als eigen item in het hoofdmenu, op elk bestand en elke map (zie `rechtermuis`).
 
-pub const BESTANDSACTIES: [(&str, &str); 6] = [
+pub const BESTANDSACTIES: [(&str, &str); 7] = [
     ("delen", "Delen…"),
     ("deel", "Deellink kopiëren"),
     ("versturen", "Versturen met OpenAEC…"),
     ("vergrendel", "Vergrendelen (ik bewerk dit)"),
     ("ontgrendel", "Ontgrendelen"),
     ("versies", "Versies bekijken"),
+    ("assistent", "Vragen aan de assistent…"),
 ];
 pub const MAPACTIES: [(&str, &str); 4] = [
     ("delen", "Delen…"),
@@ -67,13 +68,14 @@ pub fn registreer(_mappen: &[String]) -> std::io::Result<()> {
 }
 
 /// Welk venster een actie opent: "delen" het deelvenster, "versturen" (en "verzend" uit het menu van een oudere
-/// versie) het venster Versturen, "versies" het hoofdvenster (deelscherm); de rest (deellink, uploadlink,
+/// versie) het venster Versturen, "versies" het hoofdvenster (deelscherm) en "assistent" het hoofdvenster (de
+/// assistent, met het bestand als bijlage); de rest (deellink, uploadlink,
 /// vergrendelen) gebeurt op de achtergrond met een melding.
 pub fn venster_voor(actie: &str) -> Option<&'static str> {
     match actie {
         "delen" => Some("delen"),
         "versturen" | "verzend" => Some("versturen"),
-        "versies" => Some("main"),
+        "versies" | "assistent" => Some("main"),
         _ => None,
     }
 }
@@ -130,6 +132,8 @@ mod tests {
         assert_eq!(venster_voor("versturen"), Some("versturen"));
         assert_eq!(venster_voor("verzend"), Some("versturen"));
         assert_eq!(venster_voor("versies"), Some("main"));
+        assert_eq!(venster_voor("assistent"), Some("main"));
+        assert!(BESTANDSACTIES.contains(&("assistent", "Vragen aan de assistent…")));
         assert_eq!(venster_voor("deel"), None);
         assert_eq!(venster_voor("opvragen"), None);
     }
