@@ -65,9 +65,10 @@ fn wissel_status(app: &AppHandle, klik: PhysicalPosition<f64>) {
 
 pub fn maak(app: &mut App) -> tauri::Result<()> {
     let openen = MenuItem::with_id(app, "openen", "OpenAEC Desktop App openen", true, None::<&str>)?;
+    let assistent = MenuItem::with_id(app, "assistent", "Assistent", true, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "Nu synchroniseren", true, None::<&str>)?;
     let afsluiten = MenuItem::with_id(app, "afsluiten", "Afsluiten", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&openen, &sync, &afsluiten])?;
+    let menu = Menu::with_items(app, &[&openen, &assistent, &sync, &afsluiten])?;
     app.manage(Vakmenu(menu.clone()));
 
     let mut vak = TrayIconBuilder::with_id(VAK)
@@ -76,6 +77,11 @@ pub fn maak(app: &mut App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, gebeurtenis| match gebeurtenis.id.as_ref() {
             "openen" => toon(app),
+            // Het hoofdvenster op het scherm Assistent.
+            "assistent" => {
+                toon(app);
+                let _ = app.emit("scherm", "assistent");
+            }
             "sync" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
