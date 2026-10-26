@@ -429,9 +429,23 @@ impl Client {
     }
 
     async fn verstuur(&self, methode: &str, gegevens: Value) -> Result<reqwest::Response, Fout> {
+        self.verstuur_naar(API, methode, gegevens).await
+    }
+
+    /// Als `roep`, voor een methode in een andere module van de server (`voorvoegsel` zoals [`API`]).
+    pub(crate) async fn roep_op<T: DeserializeOwned>(&self, voorvoegsel: &str, methode: &str, gegevens: Value) -> Result<T, Fout> {
+        Ok(self.verstuur_naar(voorvoegsel, methode, gegevens).await?.json::<Antwoord<T>>().await?.message)
+    }
+
+    /// Als `roep_leeg`, voor een methode in een andere module van de server.
+    pub(crate) async fn roep_leeg_op(&self, voorvoegsel: &str, methode: &str, gegevens: Value) -> Result<(), Fout> {
+        self.verstuur_naar(voorvoegsel, methode, gegevens).await.map(|_| ())
+    }
+
+    async fn verstuur_naar(&self, voorvoegsel: &str, methode: &str, gegevens: Value) -> Result<reqwest::Response, Fout> {
         let antwoord = self
             .http
-            .post(format!("{}{}{}", self.basis, API, methode))
+            .post(format!("{}{}{}", self.basis, voorvoegsel, methode))
             .header("Authorization", &self.autorisatie)
             .json(&gegevens)
             .send()
