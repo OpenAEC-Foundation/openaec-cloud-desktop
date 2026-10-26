@@ -60,8 +60,9 @@ Var OudeMap
   ; installatiemap als external location (de app doet hetzelfde bij het starten als het ontbreekt). Lukt het niet,
   ; dan blijft het klassieke menu.
   ${If} ${FileExists} "$INSTDIR\shellmenu\*.msix"
-    nsExec::Exec '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket registreer'
-    Pop $R9
+    ; ExecWait (ingebouwd) in plaats van de plugin nsExec: die zit niet ondertekend in de installer. De app heeft
+    ; geen console, dus er verschijnt geen venster.
+    ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket registreer' $R9
     DetailPrint "Rechtermuismenu van Windows 11: $R9"
   ${EndIf}
   ${If} $OudeMap != ""
@@ -93,8 +94,7 @@ Var OudeMap
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     ; Het pakket van het moderne rechtermuismenu afmelden, zolang de app er nog is (menupakket.rs).
-    nsExec::Exec '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket afmelden'
-    Pop $R9
+    ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket afmelden' $R9
   ${EndIf}
 !macroend
 
