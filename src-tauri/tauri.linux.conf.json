@@ -18,7 +18,8 @@
         ],
         "provides": [
           "open-aec-storage"
-        ]
+        ],
+        "postRemoveScript": "linux/postrm"
       }
     }
   }

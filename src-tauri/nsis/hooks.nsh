@@ -84,5 +84,8 @@ Var OudeMap
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" "${NAVIGATIE_CLSID}"
     RMDir /r "$LOCALAPPDATA\OpenAEC Storage\Verkenner"
     System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+    ; "Versturen met OpenAEC" op elk bestand en elke map (rechtermuis.rs).
+    DeleteRegKey HKCU "Software\Classes\*\shell\OpenAECVersturen"
+    DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenAECVersturen"
   ${EndIf}
 !macroend

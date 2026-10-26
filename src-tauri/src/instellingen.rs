@@ -94,6 +94,9 @@ pub struct Instellingen {
     pub koppelingen: Vec<Koppeling>,
     #[serde(default)]
     pub sync: SyncInstellingen,
+    /// "Versturen met OpenAEC" in het rechtermuismenu van de bestandsbeheerder (zie `rechtermuis`); None = aan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_versturen: Option<bool>,
 }
 
 /// Voorstel voor de hoofdmap: `OpenAEC` in de gebruikersmap.
@@ -121,6 +124,11 @@ pub fn submapnaam(ruimte_naam: &str, bestaand: &[String]) -> String {
 pub const GEDEELD_MET_MIJ: &str = "Gedeeld met mij";
 
 impl Instellingen {
+    /// Staat "Versturen met OpenAEC" in het rechtermuismenu? Standaard wel.
+    pub fn menu_versturen_aan(&self) -> bool {
+        self.menu_versturen != Some(false)
+    }
+
     /// Staat deze koppeling in de hoofdmap (bestanden op aanvraag)? Een ruimte direct eronder, een gedeelde map onder
     /// [`GEDEELD_MET_MIJ`].
     pub fn in_hoofdmap(&self, k: &Koppeling) -> bool {
@@ -182,6 +190,10 @@ mod tests {
         assert!(k.bekende_mappen.is_empty() && k.uitgesloten.is_empty());
         let inst: Instellingen = serde_json::from_str(r#"{"basis":null}"#).unwrap();
         assert!(inst.hoofdmap.is_none());
+        // Versturen met OpenAEC staat standaard in het rechtermuismenu, ook bij een nieuwe installatie.
+        assert!(inst.menu_versturen_aan() && Instellingen::default().menu_versturen_aan());
+        let uit: Instellingen = serde_json::from_str(r#"{"basis":null,"menu_versturen":false}"#).unwrap();
+        assert!(!uit.menu_versturen_aan());
     }
 
     #[test]

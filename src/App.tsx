@@ -105,7 +105,8 @@ export default function App() {
     }
     api.activiteit().then(setStand).catch(() => {})
 
-    // Rechtermuismenu in de Verkenner: "Verzenden…" en "Versies bekijken" komen in het deelscherm binnen.
+    // Rechtermuismenu in de Verkenner: "Versies bekijken" komt in het deelscherm binnen ("Versturen met OpenAEC" heeft
+    // een eigen venster).
     const stoppers = [
       await api.opActie(({ actie, pad }) => {
         setBestand(pad)

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { GeinstalleerdeTool, ReleaseInfo } from "./tools.ts"
+import type { Lopend, OverdrachtRegel, Overdrachtgrenzen, VerstuurItem, VerstuurStap, Voltooid } from "./versturen.ts"
 
 export interface Ruimte {
   name: string
@@ -356,6 +357,32 @@ export const api = {
   ruimteleden: (ruimte: string) => invoke<Ruimtelid[]>("ruimteleden", { ruimte }),
   collegas: (ruimte: string, tekst: string) => invoke<Collega[]>("collegas", { ruimte, tekst }),
   kopieer: (tekst: string) => invoke<void>("kopieer", { tekst }),
+  // Venster Versturen (src-tauri/src/versturen.rs); fouten komen als { code, melding }, net als bij het deelvenster.
+  openVersturen: (paden?: string[]) => invoke<void>("open_versturen", { paden: paden ?? null }),
+  sluitVersturen: () => invoke<void>("sluit_versturen"),
+  versturenVerzoek: () => invoke<string[]>("versturen_verzoek"),
+  opVersturenVerzoek: (f: (paden: string[]) => void) => listen<string[]>("versturen-verzoek", (e) => f(e.payload)),
+  versturenItems: (paden: string[]) => invoke<VerstuurItem[]>("versturen_items", { paden }),
+  versturenGrenzen: () => invoke<Overdrachtgrenzen>("versturen_grenzen"),
+  startVersturen: (opdracht: {
+    paden: string[]
+    naam: string
+    bericht: string | null
+    verloopt_op: string | null
+    wachtwoord: string | null
+    ontvangers: string[]
+  }) => invoke<Lopend>("start_versturen", { opdracht }),
+  onderbrokenVersturen: () => invoke<Lopend | null>("onderbroken_versturen"),
+  hervatVersturen: () => invoke<Lopend>("hervat_versturen"),
+  stopVersturen: (intrekken: boolean) => invoke<void>("stop_versturen", { intrekken }),
+  mijnOverdrachten: () => invoke<OverdrachtRegel[]>("mijn_overdrachten"),
+  trekOverdrachtIn: (overdracht: string) => invoke<string>("trek_overdracht_in", { overdracht }),
+  opVersturenStap: (f: (s: VerstuurStap) => void) => listen<VerstuurStap>("versturen-stap", (e) => f(e.payload)),
+  opVersturenKlaar: (f: (v: Voltooid) => void) => listen<Voltooid>("versturen-klaar", (e) => f(e.payload)),
+  opVersturenFout: (f: (v: { overdracht: string; fout: { code: string; melding: string } }) => void) =>
+    listen<{ overdracht: string; fout: { code: string; melding: string } }>("versturen-fout", (e) => f(e.payload)),
+  menuVersturen: () => invoke<boolean>("menu_versturen"),
+  zetMenuVersturen: (aan: boolean) => invoke<boolean>("zet_menu_versturen", { aan }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
   toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>

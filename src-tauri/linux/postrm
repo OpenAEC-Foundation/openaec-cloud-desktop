@@ -1,0 +1,31 @@
+#!/bin/sh
+# Na het verwijderen van het pakket: "Versturen met OpenAEC" uit het rechtermuismenu van de bestandsbeheerders halen.
+# De app zet die items per gebruiker in ~/.local/share (zie src-tauri/src/rechtermuis.rs); hier gaan alleen de items
+# weg die naar dit pakket wijzen (/usr/bin/openaec-cloud), niet die van een AppImage. Bij een upgrade blijven ze staan.
+set -e
+
+case "$1" in
+  remove|purge) ;;
+  *) exit 0 ;;
+esac
+
+for thuis in /root /home/*; do
+  data="$thuis/.local/share"
+  [ -d "$data" ] || continue
+  for item in \
+    "nautilus/scripts/Versturen met OpenAEC" \
+    "nautilus-python/extensions/openaec_versturen.py" \
+    "kio/servicemenus/openaec-versturen.desktop" \
+    "nemo/actions/openaec-versturen.nemo_action"; do
+    if grep -qs "/usr/bin/openaec-cloud" "$data/$item"; then
+      rm -f "$data/$item"
+    fi
+  done
+  # Het pictogram alleen als geen enkel item er nog naar kan wijzen.
+  if [ ! -e "$data/kio/servicemenus/openaec-versturen.desktop" ] && [ ! -e "$data/nemo/actions/openaec-versturen.nemo_action" ]; then
+    rm -f "$data/openaec-cloud/versturen.png"
+    rmdir "$data/openaec-cloud" 2>/dev/null || true
+  fi
+done
+
+exit 0

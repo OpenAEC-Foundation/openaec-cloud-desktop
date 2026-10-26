@@ -6,3 +6,6 @@
 *.png binary
 *.ico binary
 *.icns binary
+
+# Onderhoudsscripts van de .deb draaien onder sh: altijd LF.
+src-tauri/linux/* text eol=lf

@@ -16,6 +16,8 @@ base64 = "0.22"
 rand = "0.8"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "net", "rt-multi-thread", "macros", "time", "sync", "signal"] }
+# Een map versturen: als zip zonder compressie (overdracht.rs); geen extra compressiebibliotheken nodig.
+zip = { version = "4", default-features = false }
 # Alleen voor het opdrachtregelprogramma (feature "cli").
 clap = { version = "4", features = ["derive"], optional = true }
 dirs = { version = "5", optional = true }

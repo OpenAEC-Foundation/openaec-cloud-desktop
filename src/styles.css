@@ -59,11 +59,12 @@ button.tekstknop { border: none; background: none; padding: 0; color: var(--ambe
 button.tekstknop:hover:not(:disabled) { color: var(--oranje); }
 
 label { display: block; font-size: 12px; font-weight: 500; color: var(--steen); margin-bottom: 14px; }
-input, select {
+input, select, textarea {
   display: block; width: 100%; margin-top: 5px; padding: 8px 10px; font: inherit; font-size: 14px;
   border: 1px solid var(--lijn-hover); border-radius: 6px; background: var(--wit); color: var(--inkt);
 }
-input:focus, select:focus { outline: 2px solid var(--amber); outline-offset: -1px; border-color: var(--amber); }
+textarea { resize: vertical; min-height: 64px; line-height: 1.4; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--amber); outline-offset: -1px; border-color: var(--amber); }
 label.smal input, label.smal select { width: auto; min-width: 96px; }
 label.vinkje { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; color: var(--inkt); margin: 0 0 8px; cursor: pointer; }
 label.vinkje input { width: auto; margin: 0; accent-color: var(--amber); }
@@ -423,6 +424,27 @@ body.deelvenster { background: var(--papier); }
 .leden li { display: flex; justify-content: space-between; gap: 12px; }
 .deel-voet { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-top: 1px solid var(--lijn); background: var(--wit); flex: none; }
 .deel-voet .melding { flex: 1; font-size: 12px; color: var(--groen-tekst); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- venster Versturen (zelfde schil als het deelvenster) ---------- */
+.deel-icoon.versturen::before { content: ""; position: absolute; left: 9px; top: 12px; width: 22px; height: 16px; border-radius: 2px; border: 2px solid var(--amber-fel); }
+.deel-icoon.versturen::after { content: ""; position: absolute; left: 13px; top: 12px; width: 10px; height: 10px; border-right: 2px solid var(--amber-fel); border-bottom: 2px solid var(--amber-fel); transform: rotate(45deg); }
+.deel-sectiekop .knoppen { gap: 14px; font-size: 12px; }
+.verstuurlijst { list-style: none; display: flex; flex-direction: column; margin-bottom: 4px; }
+.verstuurlijst li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--beton); }
+.verstuurlijst li:last-child { border-bottom: none; }
+.verstuurlijst li.fout .meta { color: var(--rood-tekst); }
+.verstuurlijst li.klaar .stap { color: var(--groen-tekst); }
+.verstuurlijst .balk { margin-top: 4px; }
+.verstuurlijst .stap { flex: none; max-width: 40%; font-size: 12px; color: var(--steen); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.klein-icoon { flex: none; width: 26px; height: 26px; border-radius: 6px; background: var(--beton); position: relative; }
+.klein-icoon.map::before { content: ""; position: absolute; left: 6px; top: 9px; width: 14px; height: 10px; border-radius: 2px; background: var(--amber); }
+.klein-icoon.bestand::before { content: ""; position: absolute; left: 8px; top: 6px; width: 10px; height: 14px; border: 1.5px solid var(--steen-licht); border-radius: 2px; }
+.deel-sectie.onderbroken { border-color: var(--amber); background: var(--amber-vlak); }
+.deel-sectie.onderbroken .uitleg { color: var(--amber-tekst); }
+.statuslabel { flex: none; min-width: 92px; text-align: center; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 10px; background: var(--grijs-vlak); color: var(--grijs-tekst); }
+.statuslabel.actief { background: var(--groen-vlak); color: var(--groen-tekst); }
+.statuslabel.concept { background: var(--amber-vlak); color: var(--amber-tekst); }
+.statuslabel.ingetrokken { background: var(--rood-vlak); color: var(--rood-tekst); }
 
 /* smaller venster (900–1000 px) */
 @media (max-width: 1000px) {

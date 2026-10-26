@@ -10,6 +10,7 @@ pub mod motor;
 pub mod namen;
 pub mod oauth;
 pub mod opslag;
+pub mod overdracht;
 pub mod selectie;
 pub mod voortgang;
 

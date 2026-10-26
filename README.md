@@ -23,6 +23,8 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
     (zie Lastige namen en negeerlijst).
   - `voortgang` — meldingen van de motor per bestand (start, bytevoortgang, klaar, fout) voor het statusvenster,
     hoogstens vier keer per seconde per bestand; de app kan de sync hiermee ook pauzeren.
+  - `overdracht` — client voor `openaec_storage.overdracht.*` (bestanden versturen met een downloadlink, zie
+    Versturen met OpenAEC): in delen uploaden, hervatten, en een map als zip (`pak_map`).
 - **`src-tauri`** — de app: verbinden (sleutel in de sleutelbos van het besturingssysteem), ruimtes
   koppelen aan mappen, synchroniseren zodra er lokaal iets verandert (bestandswachter) of de wijzigingenlijst
   van de server iets nieuws meldt (controle elke 30 s, eens per 10 minuten een volledige ronde), vergrendelen, deellinks, automatische
@@ -102,6 +104,74 @@ meer dan je zelf hebt), en de knoppen om te delen, een rol te wijzigen (`wijzig_
 bewerkt, ziet zijn eigen rol en de uitleg dat verder delen mag wie het beheert. Foutcodes in het venster:
 `geen_beheerrecht`, `meer_dan_eigen_recht` en `buiten_deling`, naast de bestaande. Een oudere server zonder
 `toegang`: zoals vroeger, delen tot en met bewerken.
+
+## Versturen met OpenAEC
+
+Een of meer bestanden of mappen versturen als **overdracht**: de ontvanger krijgt een downloadlink
+(`/overdracht/<token>` op de server), en als je ontvangers invult ook een e-mail. Dat werkt voor elk bestand en elke
+map, ook buiten de gekoppelde mappen: de bestanden komen niet in een ruimte. Serverkant: `openaec_storage.overdracht`
+(zie de README van openaec-storage, "Overdrachten").
+
+**Het venster Versturen** (`versturen.html`, `src/Verstuurvenster.tsx`, `src-tauri/src/versturen.rs`) opent vanuit het
+rechtermuismenu (of via **Instellingen → Venster Versturen openen**):
+
+- de gekozen bestanden en mappen, met **Bestanden toevoegen…**, **Map toevoegen…** en **Weghalen**. Een map gaat met al
+  zijn inhoud mee als `<map>.zip` (zonder compressie): een naam op de server kan geen pad bevatten. De app pakt hem in
+  de cachemap in en gooit de zip weg als de overdracht klaar is;
+- optioneel **ontvangers** (komma's of spaties ertussen), een **bericht**, **Geldig tot** en een **wachtwoord**, binnen
+  de grenzen van de server (`grenzen`: grootste overdracht, hoogste aantal ontvangers, langste termijn; zonder datum
+  geldt de standaardtermijn). Het wachtwoord gaat niet mee in de mail;
+- **Versturen**: de bestanden gaan parallel (vier tegelijk, hun delen samen binnen "Overdrachten tegelijk" uit de
+  instellingen), elk in delen met een PUT naar een ondertekende link, altijd met `Content-Length` (ook bij een leeg
+  bestand), met opnieuw proberen bij een tijdelijke fout en nieuwe links als een link verlopen is. De voortgang staat
+  per bestand in het venster;
+- **hervatten**: de stand staat in `versturen.json` (naast `instellingen.json`). Valt de verbinding weg, pauzeer je of
+  start je de app opnieuw, dan toont het venster **Onderbroken overdracht** met **Hervatten**: de app legt zijn stand
+  naast `info` van de server en stuurt per bestand alleen de delen die nog ontbreken (`bestand_stand`). Is een bestand
+  lokaal veranderd, dan gaat het eruit en opnieuw. Een nieuwe overdracht starten trekt de onderbroken in;
+- daarna de **link** met **Kopiëren** (hij staat ook al op het klembord, met een melding);
+- **Mijn overdrachten** (`mijn`): status, aantal bestanden, grootte, downloads, vervaldatum, wachtwoord en ontvangers,
+  met **Kopiëren** en **Intrekken** (twee klikken).
+
+Zonder omgeving of inlog toont het venster een melding met **Inloggen** (opent het hoofdvenster); wie geen recht heeft
+om te versturen (de server geeft 403: alleen wie schrijver of beheerder is in een ruimte, of een rol uit de
+site_config), krijgt dat te horen.
+
+**Het rechtermuismenu** (`src-tauri/src/rechtermuis.rs`) roept `openaec-cloud --actie versturen <paden…>` aan. De app
+zet het bij elke start (het pad naar de app kan na een update veranderd zijn) en het staat aan of uit onder
+**Instellingen → Rechtermuismenu**.
+
+- **Windows:** een eigen item **Versturen met OpenAEC** in het hoofdmenu van de Verkenner, op alle bestanden (`*`) en
+  mappen (`Directory`), met het app-pictogram (`HKCU\Software\Classes\*\shell\OpenAECVersturen` en
+  `Directory\shell\OpenAECVersturen`, zonder beheerdersrechten). Met `MultiSelectModel=Player` werkt het ook bij een
+  selectie van meerdere items: de Verkenner start de app dan per item, de single-instance-plugin stuurt de paden door en
+  wat binnen 0,4 s binnenkomt, gaat samen naar het venster (en tijdens het samenstellen komt een volgende selectie
+  erbij). Een start die binnenkomt terwijl de eerste nog opstart, wacht tot die kan doorsturen. In de gekoppelde mappen
+  staat het item ook in het submenu **OpenAEC Desktop App** (waar eerst "Verzenden…" stond). De uninstaller ruimt het
+  op (`nsis/hooks.nsh`).
+  - **Windows 11** toont zulke items in het nieuwe, korte menu niet; ze staan onder **Meer opties weergeven**
+    (Shift+F10), en direct in het menu als het klassieke menu aan staat. Een item in het nieuwe menu vraagt een
+    `IExplorerCommand`: een COM-server (DLL) in een pakket met identiteit (een MSIX-*sparse package* met
+    `desktop4:FileExplorerContextMenus`), ondertekend met hetzelfde certificaat als de app en bij het installeren
+    geregistreerd met `Add-AppxPackage -ExternalLocation`. Dat is een eigen DLL, een tweede ondertekend pakket en een
+    stap in de installer (en bij elke update), en het is alleen te testen met een vertrouwd certificaat. Daarom nu de
+    registervariant; het nieuwe menu staat bij Nog te doen.
+- **Linux:** in `~/.local/share` van de gebruiker die de app start:
+  - Nautilus (GNOME): `nautilus/scripts/Versturen met OpenAEC` (onder **Scripts** in het menu), of, als
+    nautilus-python geïnstalleerd is, `nautilus-python/extensions/openaec_versturen.py` (direct in het menu; dan geen
+    script, anders staat het er twee keer). Nautilus opnieuw starten (`nautilus -q`) laadt een nieuwe extensie;
+  - Dolphin (KDE): het service-menu `kio/servicemenus/openaec-versturen.desktop` (uitvoerbaar, zoals KDE 6 vraagt);
+  - Nemo (Cinnamon): de actie `nemo/actions/openaec-versturen.nemo_action`.
+
+  Ze roepen de AppImage zelf aan (`$APPIMAGE`) of `/usr/bin/openaec-cloud`. Uitzetten in de instellingen haalt ze weg;
+  gebruik je de AppImage, zet het dan uit voordat je hem weggooit. Bij het verwijderen van de `.deb` ruimt
+  `src-tauri/linux/postrm` de items op die naar het pakket wijzen (bij elke gebruiker; die van een AppImage blijven
+  staan). Een postinst is niet nodig: de app zet de items bij de eerste start zelf, voor de gebruiker die hem start.
+- **macOS:** een snelle actie voor de Finder, `~/Library/Services/Versturen met OpenAEC.workflow` (één stap "Voer
+  shellscript uit" met de gekozen bestanden als argumenten). Hij staat in het rechtermuismenu onder **Snelle acties**
+  (of **Voorzieningen**), zonder extra installatiestap; na het schrijven ververst de app de lijst (`pbs -update`).
+  Uitzetten in de instellingen haalt hem weg. (Een `NSServices`-regel in de `Info.plist` van de app zou een eigen
+  Objective-C-methode in de app vragen; de workflow werkt met de app zoals Tauri hem bouwt.)
 
 ## Lastige namen en negeerlijst
 
@@ -189,6 +259,10 @@ De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow *
 - **Linux (desktop):** `.deb` voor Debian/Ubuntu (`sudo apt install ./OpenAEC.Desktop.App_<versie>_amd64.deb`) of de
   `.AppImage` (uitvoerbaar maken en starten). Het pictogram verschijnt in het systeemvak; sleutels gaan naar de
   sleutelbos van de desktop (Secret Service).
+- **macOS:** `OpenAEC.Desktop.App_<versie>_universal.dmg` (Apple silicon en Intel), ondertekend en genotariseerd;
+  open hem en sleep de app naar Programma's. Op macOS synchroniseert de app gekoppelde mappen, deelt en verstuurt,
+  maar zonder statusvinkjes in de Finder, zonder bestanden op aanvraag en zonder hoofdmap in de navigatiekolom (die
+  gebruiken de Cloud Filter API van Windows; die code wordt op macOS niet gebouwd).
 - **Linux zonder scherm (servers):** het programma `openaec-storage` (de naam blijft: het is de opdrachtregel voor
   OpenAEC Storage, en scripts en `packaging/openaec-storage.service` gebruiken hem):
 
@@ -211,7 +285,16 @@ cd src-tauri && cargo run --example status_smoke    # Windows: statusvinkjes (Cl
 cd src-tauri && cargo run --example vinkjes_smoke   # Windows: motor + statusvinkjes samen
 cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigatiepaneel, bestanden op aanvraag
 cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC" voor losse koppelingen
+cd src-tauri && cargo run --example versturen_smoke # Windows: Versturen met OpenAEC in het rechtermuismenu
+npm test                                            # hulpfuncties van de vensters
 ```
+
+`versturen_smoke` registreert een testwerkwoord onder een testnaam (`OpenAECVersturenRooktest`) dat naar het
+rookprogramma zelf wijst, leest het terug, laat de Verkenner (`Shell.Application`) het item noemen bij een bestand en
+een map, roept het aan op drie bestanden tegelijk en op een map, controleert dat elke aanroep binnenkomt als
+`--actie versturen <pad>` en ruimt alles op. Het echte werkwoord van de app en de instellingen raakt hij niet aan.
+De menu's voor Linux en macOS en de overdracht-client tegen een nagebootste server (ook lege bestanden en hervatten)
+zitten in de unit-tests; op Linux en macOS draaien de tests van de app in de bouwstraat.
 
 De voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` (met een testnaam) en ruimen hun registratie,
 het item in het navigatiepaneel en de map altijd op. Met `OPENAEC_ROOKTEST_WACHT=<seconden>` blijft de registratie van
@@ -247,6 +330,15 @@ npm run tauri build    # Windows-installer (.msi/.exe)
 De Windows-installer bundelt de WebView2-bootstrapper mee (`embedBootstrapper`)
 + `WebView2Loader.dll`, zodat de app op een schone Windows-installatie start.
 Een GitHub Actions-workflow (`tauri-action`) bouwt de installer reproduceerbaar.
+
+**macOS:** `npm run tauri build -- --target universal-apple-darwin` (eerst `rustup target add aarch64-apple-darwin
+x86_64-apple-darwin`) maakt de `.app`, de `.dmg` en de updater-bundel (`.app.tar.gz` met `.sig`). In de bouwstraat
+ondertekent tauri-action de app met het Developer ID-certificaat (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_SIGNING_IDENTITY`) en notariseert hij met een App Store Connect API-sleutel (`APPLE_API_ISSUER`, `APPLE_API_KEY`
+en de sleutel zelf uit `APPLE_API_KEY_CONTENT`, die als `.p8` op de runner komt; `APPLE_TEAM_ID`). Een stap daarna
+controleert de app uit de `.dmg`: handtekening, Gatekeeper, het notarisatieticket en beide architecturen. In
+`latest.json` staat de universele bundel voor `darwin-aarch64` en `darwin-x86_64`. De instellingen voor macOS staan in
+`src-tauri/tauri.macos.conf.json`.
 
 `npm run tauri build` maakt ook de updatebestanden (`.sig`) en heeft daarvoor de geheime updater-sleutel nodig:
 zet `TAURI_SIGNING_PRIVATE_KEY` op de sleutel of het pad ernaar (en `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` als hij een
@@ -418,7 +510,11 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 ## Nog te doen
 
 - Bij het verwijderen van de app de registratie van gekoppelde mappen opruimen (nu: eerst ontkoppelen).
-- Statusvinkjes in de bestandsbeheerder op Linux.
+- Statusvinkjes in de bestandsbeheerder op Linux en macOS (op macOS ook bestanden op aanvraag: File Provider).
+- "Versturen met OpenAEC" in het nieuwe, korte rechtermuismenu van Windows 11 (`IExplorerCommand` in een ondertekend
+  pakket met identiteit; nu onder "Meer opties weergeven").
+- De macOS-build en de menu's voor Linux en macOS zijn nog niet op een echte machine nagelopen (alleen de bouwstraat en
+  de unit-tests).
 - Bestanden die alleen online staan, zijn niet te openen zolang de app niet draait.
 - Gedeelde mappen in het opdrachtregelprogramma `openaec-storage` (nu alleen ruimtes).
 - Een gedeeld bestand openen of een nieuwe versie uploaden vanuit de app zelf (nu via de browser).
