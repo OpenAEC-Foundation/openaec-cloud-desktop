@@ -94,6 +94,25 @@ export interface Rapport {
   meldingen: string[]
   /** De sessie verliep onderweg: de ronde is netjes gestopt en gaat verder na opnieuw inloggen. */
   sessie_verlopen?: boolean
+  /** Bestanden die eerder steeds mislukten en deze ronde wachten (geen nieuwe poging, geen nieuwe fout). */
+  wachtend?: Mislukt[]
+}
+
+export interface Mislukt {
+  pad: string
+  reden: string
+  keer: number
+  /** Unix-tijd in seconden van de volgende poging. */
+  opnieuw_om: number
+}
+
+/** Een bestand dat niet lukt, voor de details onder "3 bestanden lukken niet". */
+export interface Misluktregel {
+  lokaal: string
+  pad: string
+  reden: string
+  /** Milliseconden sinds 1970 van de volgende poging (alleen als het bestand wacht). */
+  opnieuw_om: number | null
 }
 
 export interface Overgeslagen {
@@ -223,6 +242,8 @@ export interface Stand {
   ronde: RondeStand | null
   /** Opnieuw inloggen nodig: de sync wacht tot dan (knop Inloggen in het overzicht en het statusvenster). */
   sessie_verlopen: boolean
+  /** Bestanden die niet lukken, over alle gekoppelde mappen. */
+  mislukt: Misluktregel[]
 }
 
 /** Uitkomst van installeren: setup gestart (Windows) of direct geïnstalleerd (Linux). */

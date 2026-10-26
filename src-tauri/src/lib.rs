@@ -316,6 +316,7 @@ fn stop_koppeling(app: &AppHandle, lokaal: &str, tekst: &str) {
         }
         werk_menu_bij(&inst);
     }
+    activiteit::vergeet_koppeling(app, lokaal);
     let lokaal = lokaal.to_string();
     let _ = tauri::async_runtime::spawn_blocking(move || vinkjes::ontkoppel(&lokaal));
     melding(app, tekst);
@@ -673,6 +674,7 @@ fn ontkoppel(app: AppHandle, state: tauri::State<'_, AppState>, lokaal: String) 
     inst.koppelingen.retain(|k| k.lokaal != lokaal);
     inst.bewaar().map_err(fout)?;
     werk_menu_bij(&inst);
+    activiteit::vergeet_koppeling(&app, &lokaal);
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
         let _slot = state.bezig.lock().await;
@@ -800,8 +802,11 @@ async fn sync_ronde(
             }
             let lokaal = k.lokaal.clone();
             let bijgewerkt = std::mem::take(&mut rapport.bijgewerkt);
-            let foutpaden = std::mem::take(&mut rapport.foutpaden);
-            let fouten: Vec<(String, String)> = rapport.fouten.iter().filter_map(|f| vinkjes::splits_fout(f, &foutpaden)).collect();
+            let mut foutpaden = std::mem::take(&mut rapport.foutpaden);
+            let mut fouten: Vec<(String, String)> = rapport.fouten.iter().filter_map(|f| vinkjes::splits_fout(f, &foutpaden)).collect();
+            // Wat wacht na eerdere mislukte pogingen, houdt in de Verkenner zijn foutstatus.
+            foutpaden.extend(rapport.wachtend.iter().map(|w| w.pad.clone()));
+            fouten.extend(rapport.wachtend.iter().map(|w| (w.pad.clone(), w.reden.clone())));
             let overgeslagen: Vec<(String, String)> = rapport.overgeslagen.iter().map(|o| (o.pad.clone(), o.reden.clone())).collect();
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 vinkjes::na_ronde(&lokaal, &bijgewerkt, &foutpaden);

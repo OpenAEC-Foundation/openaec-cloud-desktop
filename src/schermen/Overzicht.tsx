@@ -5,7 +5,7 @@ import Mappenkiezer from "../Mappenkiezer"
 import OvergeslagenLijst from "../OvergeslagenLijst"
 import SessieVerlopen from "../SessieVerlopen"
 import { rechtenTekst } from "../lib/delen"
-import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
+import { besparingTekst, grootte, misluktTekst, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
   basis, bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
   setKoppelingen, setMelding, setScherm, stand, verversOverzicht, verwerkSync,
@@ -19,7 +19,7 @@ const samenvatting = (m: MapRapport) => {
     r.gedownload && `${r.gedownload} gedownload`,
     r.verwijderd && `${r.verwijderd} verwijderd`,
     r.conflicten && `${r.conflicten} conflict${r.conflicten > 1 ? "en" : ""}`,
-    r.fouten.length && `${r.fouten.length} fout${r.fouten.length > 1 ? "en" : ""}`,
+    misluktTekst(r.fouten.length + (r.wachtend?.length ?? 0)),
   ].filter(Boolean)
   return delen.length ? delen.join(" · ") : "Niets veranderd"
 }
@@ -33,7 +33,7 @@ const toestandVan = (k: Koppeling): [string, Kleur] => {
   if (stand()?.gepauzeerd) return ["Gepauzeerd", "grijs"]
   if (stand()?.actief.some((o) => o.lokaal === k.lokaal)) return ["Bezig", "oranje"]
   const r = rapporten()[k.lokaal]
-  if (r?.fout || r?.rapport?.fouten.length) return ["Fout", "rood"]
+  if (r?.fout || r?.rapport?.fouten.length || r?.rapport?.wachtend?.length) return ["Fout", "rood"]
   if (stand()?.toestand === "bezig") return ["Bezig", "oranje"]
   if (!r && !st?.aantal) return ["Nog niet gesynchroniseerd", "grijs"]
   return ["Bijgewerkt", "groen"]
@@ -276,7 +276,7 @@ export default function Overzicht() {
                     </div>
                     <div>
                       <dt>Laatste ronde</dt>
-                      <dd classList={{ foutief: !!r()?.fout || !!r()?.rapport?.fouten.length }}>{r() ? samenvatting(r()!) : "–"}</dd>
+                      <dd classList={{ foutief: !!r()?.fout || !!r()?.rapport?.fouten.length || !!r()?.rapport?.wachtend?.length }}>{r() ? samenvatting(r()!) : "–"}</dd>
                     </div>
                     <div class="vol">
                       <dt>Lokale map</dt>
@@ -289,10 +289,16 @@ export default function Overzicht() {
                       </div>
                     </Show>
                   </dl>
-                  <Show when={r()?.rapport?.fouten.length}>
-                    <ul class="foutenlijst">
-                      <For each={r()!.rapport!.fouten.slice(0, 5)}>{(f) => <li>{f}</li>}</For>
-                    </ul>
+                  <Show when={r()?.rapport?.fouten.length || r()?.rapport?.wachtend?.length}>
+                    <details class="foutenlijst">
+                      <summary>{misluktTekst(r()!.rapport!.fouten.length + (r()!.rapport!.wachtend?.length ?? 0))}, zie details</summary>
+                      <ul>
+                        <For each={r()!.rapport!.fouten.slice(0, 20)}>{(f) => <li>{f}</li>}</For>
+                        <For each={(r()!.rapport!.wachtend ?? []).slice(0, 20)}>
+                          {(w) => <li>{w.pad}: {w.reden} (volgende poging {tijdstip(new Date(w.opnieuw_om * 1000))})</li>}
+                        </For>
+                      </ul>
+                    </details>
                   </Show>
                   <div class="knoppen">
                     <button disabled={st() && !st()!.bestaat} onClick={() => api.openMap(k.lokaal).catch((e) => setMelding(String(e)))}>

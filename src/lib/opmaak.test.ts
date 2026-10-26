@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { besparingTekst, duur, gb, quotumTekst, resterendTekst, rondeTekst } from "./opmaak.ts"
+import { besparingTekst, duur, gb, misluktTekst, quotumTekst, resterendTekst, rondeTekst } from "./opmaak.ts"
 
 const MB = 1048576
 const GB = 1073741824
@@ -61,5 +61,13 @@ describe("ronde en besparing", () => {
     assert.equal(besparingTekst(1.2 * GB, 16 * MB), "alleen 16,0 MB van 1,20 GB verstuurd")
     assert.equal(besparingTekst(10 * MB, 10 * MB), "")
     assert.equal(besparingTekst(null, 5), "")
+  })
+})
+
+describe("bestanden die niet lukken", () => {
+  it("vat samen in één regel", () => {
+    assert.equal(misluktTekst(0), "")
+    assert.equal(misluktTekst(1), "1 bestand lukt niet")
+    assert.equal(misluktTekst(3), "3 bestanden lukken niet")
   })
 })

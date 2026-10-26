@@ -4,7 +4,7 @@ import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { api, type Gebeurd, type Koppeling, type KoppelOvergeslagen, type Quotum, type Stand } from "./lib/api"
 import OvergeslagenLijst from "./OvergeslagenLijst"
 import SessieVerlopen from "./SessieVerlopen"
-import { besparingTekst, grootte, lokaalPad, naamVan, procent, quotumTekst, rondeTekst, snelheid, tijdstip } from "./lib/opmaak"
+import { besparingTekst, grootte, lokaalPad, misluktTekst, naamVan, procent, quotumTekst, rondeTekst, snelheid, tijdstip } from "./lib/opmaak"
 
 const actieTekst: Record<Gebeurd["actie"], string> = {
   geupload: "Geüpload",
@@ -86,6 +86,29 @@ export default function Status() {
 
       <Show when={stand()?.sessie_verlopen && basis()}>
         <SessieVerlopen basis={basis()} klaar={setFout} compact />
+      </Show>
+
+      <Show when={stand()?.mislukt.length}>
+        <details class="status-mislukt">
+          <summary>{misluktTekst(stand()!.mislukt.length)}, zie details</summary>
+          <ul>
+            <For each={stand()!.mislukt}>
+              {(m) => (
+                <li>
+                  <button class="recent" title="Map openen" onClick={() => toon(lokaalPad(m.lokaal, m.pad))}>
+                    <span class="regel">
+                      <span class="naam">{naamVan(m.pad)}</span>
+                      <span class="meta">
+                        {ruimteVan(m.lokaal)} · {m.reden}
+                        {m.opnieuw_om ? ` · volgende poging ${tijdstip(new Date(m.opnieuw_om))}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </details>
       </Show>
 
       <Show when={stand()?.ronde}>

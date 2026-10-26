@@ -62,6 +62,17 @@ pub struct Gebeurd {
     verstuurd: Option<u64>,
 }
 
+/// Een bestand dat niet lukt (deze ronde mislukt, of wachtend na eerdere mislukte pogingen), voor de details onder de
+/// samenvatting "3 bestanden lukken niet".
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Misluktregel {
+    lokaal: String,
+    pad: String,
+    reden: String,
+    /// Unix-tijd in milliseconden van de volgende poging (alleen bij een bestand dat wacht).
+    opnieuw_om: Option<u64>,
+}
+
 /// Voortgang van de lopende ronde (over alle gekoppelde mappen samen).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RondeStand {
@@ -126,6 +137,8 @@ pub struct Stand {
     ronde: Option<RondeStand>,
     /// De sessie is verlopen: de vensters vragen om opnieuw in te loggen (knop Inloggen).
     sessie_verlopen: bool,
+    /// Bestanden die niet lukken, over alle mappen (de details bij de samenvatting).
+    mislukt: Vec<Misluktregel>,
 }
 
 #[derive(Default)]
@@ -136,10 +149,50 @@ struct Binnen {
     actief: HashMap<(String, String), Overdracht>,
     recent: VecDeque<Gebeurd>,
     fout: Option<String>,
+    /// Per gekoppelde map: de bestanden die niet lukken volgens de laatste ronde van die map.
+    mislukt: HashMap<String, Vec<Misluktregel>>,
     ronde: Ronde,
 }
 
 impl Binnen {
+    /// Gaat er deze ronde echt iets over de lijn? Een controle zonder werk telt niet als "bezig".
+    fn werk(&self) -> bool {
+        self.uploaden + self.downloaden > 0 || !self.actief.is_empty() || self.ronde.bytes > 0
+    }
+
+    /// Verwerk de rapporten van een afgelopen ronde: een fout van een map blijft zichtbaar tot de volgende ronde, en per
+    /// map de bestanden die niet lukken (vervangen voor de mappen in deze ronde).
+    fn na_ronde(&mut self, rapporten: Result<&[MapRapport], &str>) {
+        self.bezig = false;
+        self.uploaden = 0;
+        self.downloaden = 0;
+        self.actief.clear();
+        self.fout = match rapporten {
+            Err(f) => Some(f.to_string()),
+            Ok(r) => r.iter().find_map(|m| m.fout.as_ref().map(|f| format!("{}: {f}", m.ruimte_naam))),
+        };
+        for m in rapporten.unwrap_or(&[]) {
+            let Some(r) = &m.rapport else { continue };
+            let regel = |pad: &str, reden: &str, opnieuw_om: Option<u64>| Misluktregel {
+                lokaal: m.lokaal.clone(),
+                pad: pad.to_string(),
+                reden: reden.to_string(),
+                opnieuw_om,
+            };
+            // Een fout in het rapport is "pad: reden" (een pad heeft geen dubbele punt).
+            let mut lijst: Vec<Misluktregel> =
+                r.fouten.iter().map(|f| f.split_once(": ").map_or_else(|| regel("", f, None), |(p, reden)| regel(p, reden, None))).collect();
+            lijst.extend(r.wachtend.iter().map(|w| regel(&w.pad, &w.reden, Some(w.opnieuw_om * 1000))));
+            self.mislukt.insert(m.lokaal.clone(), lijst);
+        }
+    }
+
+    fn alle_mislukt(&self) -> Vec<Misluktregel> {
+        let mut uit: Vec<Misluktregel> = self.mislukt.values().flatten().cloned().collect();
+        uit.sort_by(|a, b| (&a.lokaal, &a.pad).cmp(&(&b.lokaal, &b.pad)));
+        uit
+    }
+
     /// Alles wat deze ronde over de lijn ging, inclusief de lopende bestanden.
     fn verstuurd(&self) -> u64 {
         self.ronde.verstuurd_klaar + self.actief.values().map(|o| o.gedaan).sum::<u64>()
@@ -230,20 +283,24 @@ impl Activiteit {
         let b = self.binnen.lock().unwrap();
         let gepauzeerd = self.gepauzeerd();
         let sessie_verlopen = self.sessie_is_verlopen();
+        let mislukt = b.alle_mislukt();
         let (toestand, samenvatting) = if gepauzeerd {
             (Toestand::Gepauzeerd, "Gepauzeerd".to_string())
         } else if sessie_verlopen {
             (Toestand::Fout, openaec_sync::SESSIE_VERLOPEN.to_string())
-        } else if b.bezig {
+        } else if b.bezig && b.werk() {
             let delen: Vec<String> = [(b.uploaden, "uploaden"), (b.downloaden, "downloaden")]
                 .into_iter()
                 .filter(|(n, _)| *n > 0)
                 .map(|(n, w)| format!("{n} {w}"))
                 .collect();
-            let tekst = if delen.is_empty() { "Bezig: controleren op wijzigingen".to_string() } else { format!("Bezig: {}", delen.join(", ")) };
+            let tekst = if delen.is_empty() { "Bezig met synchroniseren".to_string() } else { format!("Bezig: {}", delen.join(", ")) };
             (Toestand::Bezig, tekst)
         } else if let Some(f) = &b.fout {
             (Toestand::Fout, format!("Fout: {f}"))
+        } else if !mislukt.is_empty() {
+            let n = mislukt.len();
+            (Toestand::Fout, format!("{n} bestand{} lukk{} niet, zie details", if n == 1 { "" } else { "en" }, if n == 1 { "t" } else { "en" }))
         } else {
             (Toestand::Bijgewerkt, "Alles bijgewerkt".to_string())
         };
@@ -259,6 +316,7 @@ impl Activiteit {
             recent: b.recent.iter().cloned().collect(),
             ronde: b.ronde_stand(nu),
             sessie_verlopen,
+            mislukt,
         }
     }
 
@@ -362,26 +420,16 @@ pub fn begin(app: &AppHandle) {
     meld(app);
 }
 
-/// Einde van een sync-ronde; de eerste fout (van een map of een bestand) blijft zichtbaar tot de volgende ronde.
+/// Einde van een sync-ronde: een fout van een map blijft zichtbaar tot de volgende ronde; bestanden die niet lukken,
+/// komen samen in één regel met details (zie [`Binnen::na_ronde`]).
 pub fn einde(app: &AppHandle, rapporten: Result<&[MapRapport], &str>) {
-    {
-        let state = app.state::<AppState>();
-        let mut b = state.activiteit.binnen.lock().unwrap();
-        b.bezig = false;
-        b.uploaden = 0;
-        b.downloaden = 0;
-        b.actief.clear();
-        b.fout = match rapporten {
-            Err(f) => Some(f.to_string()),
-            Ok(r) => r.iter().find_map(|m| {
-                m.fout
-                    .as_ref()
-                    .map(|f| format!("{}: {f}", m.ruimte_naam))
-                    .or_else(|| m.rapport.as_ref().and_then(|r| r.fouten.first().cloned()))
-            }),
-        };
-    }
+    app.state::<AppState>().activiteit.binnen.lock().unwrap().na_ronde(rapporten);
     meld(app);
+}
+
+/// Een koppeling is weg: haar bestanden die niet lukten, tellen niet meer mee.
+pub fn vergeet_koppeling(app: &AppHandle, lokaal: &str) {
+    app.state::<AppState>().activiteit.binnen.lock().unwrap().mislukt.remove(lokaal);
 }
 
 /// Pauzeren of hervatten; een lopende ronde stopt na het huidige bestand.
@@ -506,6 +554,44 @@ mod tests {
         assert!(a.zet_sessie_verlopen(false));
         assert!(!a.zet_sessie_verlopen(false));
         assert_eq!(a.stand_op(0.0).toestand, Toestand::Bijgewerkt);
+    }
+
+    fn map(lokaal: &str, rapport: openaec_sync::motor::Rapport) -> MapRapport {
+        MapRapport { lokaal: lokaal.into(), ruimte_naam: "Project".into(), rapport: Some(rapport), fout: None }
+    }
+
+    #[test]
+    fn bestanden_die_niet_lukken_in_een_regel_met_details() {
+        use openaec_sync::motor::{Mislukt, Rapport};
+        let a = Activiteit::default();
+        let mut r = Rapport::default();
+        r.fouten = vec!["Keuren/a.pdf: De server weigerde dit verzoek.".into(), "b.txt: geweigerd".into()];
+        r.wachtend = vec![Mislukt { pad: "c.txt".into(), reden: "weg".into(), keer: 2, opnieuw_om: 100 }];
+        a.binnen.lock().unwrap().na_ronde(Ok(&[map("C:\\Werk", r)]));
+        let s = a.stand_op(0.0);
+        assert_eq!(s.toestand, Toestand::Fout);
+        assert_eq!(s.samenvatting, "3 bestanden lukken niet, zie details");
+        assert_eq!(s.mislukt.len(), 3);
+        assert_eq!((s.mislukt[0].pad.as_str(), s.mislukt[0].reden.as_str()), ("Keuren/a.pdf", "De server weigerde dit verzoek."));
+        assert_eq!(s.mislukt[2].opnieuw_om, Some(100_000));
+        // Een ronde van een andere map laat deze lijst staan; een nieuwe ronde van deze map zonder fouten wist hem.
+        a.binnen.lock().unwrap().na_ronde(Ok(&[map("D:\\Ander", Rapport::default())]));
+        assert_eq!(a.stand_op(0.0).mislukt.len(), 3);
+        a.binnen.lock().unwrap().na_ronde(Ok(&[map("C:\\Werk", Rapport::default())]));
+        let s = a.stand_op(0.0);
+        assert_eq!((s.toestand, s.samenvatting.as_str()), (Toestand::Bijgewerkt, "Alles bijgewerkt"));
+    }
+
+    #[test]
+    fn controle_zonder_werk_telt_niet_als_bezig() {
+        let a = Activiteit::default();
+        a.binnen.lock().unwrap().bezig = true;
+        a.verwerk_op("x", Gebeurtenis::Ronde { uploaden: 0, downloaden: 0, bytes: 0 }, 0.0);
+        let s = a.stand_op(0.0);
+        assert_eq!((s.toestand, s.samenvatting.as_str()), (Toestand::Bijgewerkt, "Alles bijgewerkt"));
+        a.verwerk_op("x", Gebeurtenis::Ronde { uploaden: 2, downloaden: 0, bytes: 10 }, 0.0);
+        let s = a.stand_op(0.0);
+        assert_eq!((s.toestand, s.samenvatting.as_str()), (Toestand::Bezig, "Bezig: 2 uploaden"));
     }
 
     #[test]

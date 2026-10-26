@@ -228,6 +228,12 @@ fn toon_rapport(k: &Koppeling, r: &Result<Rapport, Fout>) {
             for m in &r.meldingen {
                 println!("  {m}");
             }
+            if !r.wachtend.is_empty() {
+                eprintln!("  {} bestand(en) lukken steeds niet en wachten op een volgende poging:", r.wachtend.len());
+                for w in &r.wachtend {
+                    eprintln!("    {}: {}", w.pad, w.reden);
+                }
+            }
             if r.sessie_verlopen {
                 eprintln!("  gestopt: {}", openaec_sync::SESSIE_VERLOPEN);
             }

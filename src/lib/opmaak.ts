@@ -100,3 +100,6 @@ const soortNaam: Record<string, string> = { team: "Teamruimte", project: "Projec
 
 /** Leesbare soort van een ruimte. */
 export const soort = (s: string | null | undefined) => (s ? soortNaam[s] ?? s : null)
+
+/** "3 bestanden lukken niet" (of leeg bij 0): één regel in plaats van een lange lijst per ronde. */
+export const misluktTekst = (n: number) => (n > 0 ? `${n} bestand${n === 1 ? " lukt" : "en lukken"} niet` : "")
