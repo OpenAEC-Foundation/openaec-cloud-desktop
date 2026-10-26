@@ -20,8 +20,9 @@ pub const POORT: u16 = 47613;
 pub const REDIRECT: &str = "http://127.0.0.1:47613/callback";
 const TOKEN: &str = "/api/method/frappe.integrations.oauth2.get_token";
 const AUTORISEER: &str = "/api/method/frappe.integrations.oauth2.authorize";
-/// Zoveel seconden voor het verlopen wordt het token al vernieuwd.
-const MARGE: u64 = 60;
+/// Zoveel seconden voor het verlopen wordt het token al vernieuwd: ruim, zodat een verzoek dat net begint niet halverwege
+/// een verlopen token heeft (een toegangstoken leeft een kwartier).
+const MARGE: u64 = 180;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tokens {
@@ -45,8 +46,14 @@ fn nu() -> u64 {
 }
 
 impl Tokens {
+    /// Tijd om te vernieuwen (binnen de marge voor het verlopen)?
     pub fn verlopen(&self) -> bool {
-        nu() + MARGE >= self.verloopt
+        self.verloopt_binnen(MARGE)
+    }
+
+    /// Verloopt het token binnen `seconden` (0: is het al verlopen)?
+    pub fn verloopt_binnen(&self, seconden: u64) -> bool {
+        nu() + seconden >= self.verloopt
     }
 
     /// Waarde voor de Authorization-header.

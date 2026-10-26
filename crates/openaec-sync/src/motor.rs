@@ -21,6 +21,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
@@ -200,6 +201,10 @@ pub struct Rapport {
     pub overgeslagen: Vec<Overgeslagen>,
     /// Wat de motor zelf deed met een lastige naam (opgeruimd, onder een veilige naam), voor een melding.
     pub meldingen: Vec<String>,
+    /// De sessie verliep onderweg en vernieuwen lukte niet ([`Fout::SessieVerlopen`]): de ronde is netjes gestopt. Wat
+    /// al gedaan was, is bewaard; de rest volgt in een ronde na opnieuw inloggen. Die bestanden staan niet in
+    /// [`Rapport::fouten`].
+    pub sessie_verlopen: bool,
 }
 
 impl Rapport {
@@ -454,9 +459,16 @@ struct Ronde<'a, O> {
     waarnemer: &'a dyn Waarnemer,
     toestand: Mutex<Toestand>,
     rapport: Mutex<Rapport>,
+    /// De sessie is verlopen: geen nieuwe taken meer, en geen fout per bestand.
+    gestopt: AtomicBool,
 }
 
 impl<O: Opslag> Ronde<'_, O> {
+    /// Nog nieuwe taken beginnen? Niet bij pauzeren, en niet als de sessie verlopen is.
+    fn stoppen(&self) -> bool {
+        self.gestopt.load(Ordering::SeqCst) || self.waarnemer.gepauzeerd()
+    }
+
     /// Het pad hier (met '/') voor een pad op de server; meldingen en het rapport gebruiken dat pad.
     fn rel(&self, sleutel: &str) -> String {
         self.toestand.lock().unwrap().hier(sleutel)
@@ -570,11 +582,13 @@ impl<O: Opslag> Ronde<'_, O> {
         }
     }
 
-    /// Uitkomst van een taak melden; een fout komt in het rapport.
+    /// Uitkomst van een taak melden; een fout komt in het rapport. Een verlopen sessie is geen fout van dit bestand:
+    /// de ronde stopt (zie [`Rapport::sessie_verlopen`]).
     fn meld(&self, pad: &str, uitkomst: Result<Actie, Fout>) {
         let pad = &self.rel(pad);
         match uitkomst {
             Ok(actie) => self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie }),
+            Err(fout) if fout.sessie_verlopen() => self.gestopt.store(true, Ordering::SeqCst),
             Err(fout) => {
                 self.waarnemer.melding(Gebeurtenis::Fout { pad: pad.to_string(), fout: fout.to_string() });
                 self.rapport.lock().unwrap().fout(pad, fout);
@@ -585,7 +599,7 @@ impl<O: Opslag> Ronde<'_, O> {
     /// Taak uitvoeren en melden; een fout komt in het rapport en houdt de andere taken niet op. Bij pauzeren
     /// begint de taak niet meer (de rest volgt in een volgende ronde).
     async fn verwerk(&self, taak: &Taak) {
-        if self.waarnemer.gepauzeerd() {
+        if self.stoppen() {
             return;
         }
         let uitkomst = self.voer_uit(taak).await;
@@ -594,7 +608,7 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Een groep kleine uploads in één verzoek. Weigert de opslag het verzoek als geheel, dan gaat elk bestand apart.
     async fn verwerk_kleine_uploads(&self, taken: &[Taak]) {
-        if self.waarnemer.gepauzeerd() {
+        if self.stoppen() {
             return;
         }
         let paden: Vec<(&str, PathBuf, Option<u64>, Option<&OpslagBestand>, u64)> = taken
@@ -615,6 +629,7 @@ impl<O: Opslag> Ronde<'_, O> {
             paden.iter().map(|(pad, lokaal, basis, _, _)| KleinUpload { pad, lokaal, basis_versie: *basis }).collect();
         let resultaten = match self.opslag.upload_klein(&items).await {
             Ok(r) if r.len() == paden.len() => r,
+            Err(fout) if fout.sessie_verlopen() => return self.gestopt.store(true, Ordering::SeqCst),
             _ => {
                 for taak in taken {
                     self.verwerk(taak).await;
@@ -636,7 +651,7 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Een groep kleine downloads in één verzoek; als [`Ronde::verwerk_kleine_uploads`].
     async fn verwerk_kleine_downloads(&self, taken: &[Taak]) {
-        if self.waarnemer.gepauzeerd() {
+        if self.stoppen() {
             return;
         }
         let paden: Vec<(&str, &OpslagBestand, PathBuf)> = taken
@@ -652,6 +667,7 @@ impl<O: Opslag> Ronde<'_, O> {
         let items: Vec<(&OpslagBestand, &Path)> = paden.iter().map(|(_, server, lokaal)| (*server, lokaal.as_path())).collect();
         let resultaten = match self.opslag.download_klein(&items).await {
             Ok(r) if r.len() == paden.len() => r,
+            Err(fout) if fout.sessie_verlopen() => return self.gestopt.store(true, Ordering::SeqCst),
             _ => {
                 for taak in taken {
                     self.verwerk(taak).await;
@@ -803,7 +819,7 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     waarnemer.melding(Gebeurtenis::Ronde { uploaden, downloaden, bytes });
 
-    let ronde = Ronde { opslag, root, waarnemer, toestand: Mutex::new(toestand), rapport: Mutex::new(rapport) };
+    let ronde = Ronde { opslag, root, waarnemer, toestand: Mutex::new(toestand), rapport: Mutex::new(rapport), gestopt: AtomicBool::new(false) };
 
     // Beslissen per pad. Wat geen overdracht is (opnemen, vergeten, uitgesloten), gebeurt meteen.
     let mut overdrachten = Vec::new();
@@ -895,8 +911,11 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     // Ook wat bij alleen lezen niet naar de server ging, staat in de lijst met overgeslagen bestanden.
     ronde.toestand.lock().unwrap().overgeslagen = ronde.rapport.lock().unwrap().overgeslagen.clone();
+    // Ook als de sessie onderweg verliep: wat gelukt is, blijft bekend.
     bewaar(root, &ronde.toestand.lock().unwrap())?;
-    Ok(ronde.rapport.into_inner().unwrap())
+    let mut rapport = ronde.rapport.into_inner().unwrap();
+    rapport.sessie_verlopen = ronde.gestopt.into_inner();
+    Ok(rapport)
 }
 
 /// Paden op de server die hier niet onder hun eigen naam kunnen (Windows, zie [`Opties::lokale_naamregels`]) krijgen

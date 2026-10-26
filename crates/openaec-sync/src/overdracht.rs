@@ -299,7 +299,7 @@ fn link_verlopen(f: &Fout) -> bool {
 fn tijdelijk(f: &Fout) -> bool {
     match f {
         Fout::Netwerk(_) => true,
-        Fout::Server { status, .. } => matches!(status, 408 | 429 | 500..=599),
+        Fout::Server { status, .. } | Fout::Link { status, .. } => matches!(status, 408 | 429 | 500..=599),
         _ => false,
     }
 }
@@ -330,7 +330,7 @@ async fn put_deel(client: &Client, url: &str, pad: &Path, begin: u64, lengte: u6
                 .await?;
             if !antwoord.status().is_success() {
                 let status = antwoord.status().as_u16();
-                return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
+                return Err(Fout::Link { status, tekst: antwoord.text().await.unwrap_or_default() });
             }
             Ok(lengte)
         }
@@ -524,6 +524,8 @@ mod tests {
         assert!(tijdelijk(&Fout::Server { status: 503, tekst: String::new() }));
         assert!(!tijdelijk(&Fout::Server { status: 403, tekst: String::new() }));
         assert!(link_verlopen(&Fout::Server { status: 403, tekst: String::new() }));
+        assert!(link_verlopen(&Fout::Link { status: 403, tekst: String::new() }));
+        assert!(tijdelijk(&Fout::Link { status: 503, tekst: String::new() }));
         assert!(!link_verlopen(&Fout::Controle("x".into())));
     }
 }

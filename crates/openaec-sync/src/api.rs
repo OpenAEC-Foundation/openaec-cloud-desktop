@@ -6,16 +6,22 @@ use serde_json::{json, Value};
 
 use sha2::{Digest, Sha256};
 
+use std::sync::Arc;
+
+use crate::sessie::{Tokenbron, VasteSleutel};
 use crate::Fout;
 
 const API: &str = "/api/method/openaec_storage.api.";
 
-/// Verbinding met één klantomgeving. `autorisatie` is de volledige waarde van de Authorization-header,
-/// bijv. `Bearer <OpenAEC-JWT>` of `token <sleutel>:<geheim>`.
+/// Verbinding met één klantomgeving. De Authorization-header komt bij elk verzoek uit de [`Tokenbron`]: een vaste
+/// waarde (`token <sleutel>:<geheim>`, zie [`Client::new`]) of een [`Sessie`](crate::sessie::Sessie) die het OAuth-token
+/// op tijd vernieuwt. Weigert de API een verzoek met 401, dan vraagt de client de bron één keer om een nieuwe waarde en
+/// probeert hij het nog één keer; lukt dat niet, dan is het [`Fout::SessieVerlopen`]. Verzoeken naar ondertekende links
+/// van de opslag (`http` direct) gaan zonder Authorization-header.
 #[derive(Clone)]
 pub struct Client {
     basis: String,
-    autorisatie: String,
+    autorisatie: Arc<dyn Tokenbron>,
     pub(crate) http: reqwest::Client,
 }
 
@@ -396,6 +402,15 @@ fn met_deling(mut gegevens: Value, deling: Option<&str>) -> Value {
     gegevens
 }
 
+/// Begin van het formulier voor `upload_klein`: de ruimte en zo nodig de deling.
+fn formulier_basis(ruimte: &str, deling: Option<&str>) -> reqwest::multipart::Form {
+    let formulier = reqwest::multipart::Form::new().text("ruimte", ruimte.to_string());
+    match deling {
+        Some(deling) => formulier.text("deling", deling.to_string()),
+        None => formulier,
+    }
+}
+
 /// HTTP-client voor de opslag: verbindingen blijven open (keep-alive, genoeg per host voor parallelle overdrachten)
 /// en HTTP/2 wordt gebruikt als de server het aanbiedt. Eén client delen tussen [`Client`]s scheelt een nieuwe
 /// TLS-verbinding per ronde.
@@ -416,7 +431,34 @@ impl Client {
 
     /// Als [`Client::new`], met een bestaande (gedeelde) HTTP-client; zie [`nieuwe_http`].
     pub fn met_http(basis_url: &str, autorisatie: &str, http: reqwest::Client) -> Self {
-        Self { basis: basis_url.trim_end_matches('/').to_string(), autorisatie: autorisatie.to_string(), http }
+        Self::met_bron(basis_url, Arc::new(VasteSleutel(autorisatie.to_string())), http)
+    }
+
+    /// Client die de autorisatie bij elk verzoek uit `bron` haalt (bijv. een gedeelde
+    /// [`Sessie`](crate::sessie::Sessie)).
+    pub fn met_bron(basis_url: &str, bron: Arc<dyn Tokenbron>, http: reqwest::Client) -> Self {
+        Self { basis: basis_url.trim_end_matches('/').to_string(), autorisatie: bron, http }
+    }
+
+    /// Verstuur een verzoek naar de API met de autorisatie van nu. Bij een 401: één keer een nieuwe waarde van de bron
+    /// en één keer opnieuw; blijft het 401 of is er niets te vernieuwen, dan [`Fout::SessieVerlopen`]. `maak` bouwt het
+    /// verzoek (zonder autorisatie) en kan dus twee keer aangeroepen worden.
+    async fn met_autorisatie(&self, maak: impl Fn() -> reqwest::RequestBuilder) -> Result<reqwest::Response, Fout> {
+        let waarde = self.autorisatie.geef().await?;
+        let mut antwoord = maak().header(reqwest::header::AUTHORIZATION, &waarde).send().await?;
+        if antwoord.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let nieuw = self.autorisatie.na_weigering(&waarde).await?.ok_or(Fout::SessieVerlopen)?;
+            antwoord = maak().header(reqwest::header::AUTHORIZATION, &nieuw).send().await?;
+            if antwoord.status() == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(Fout::SessieVerlopen);
+            }
+        }
+        let status = antwoord.status();
+        if !status.is_success() {
+            let tekst = antwoord.text().await.unwrap_or_default();
+            return Err(Fout::Server { status: status.as_u16(), tekst });
+        }
+        Ok(antwoord)
     }
 
     async fn roep<T: DeserializeOwned>(&self, methode: &str, gegevens: Value) -> Result<T, Fout> {
@@ -443,19 +485,8 @@ impl Client {
     }
 
     async fn verstuur_naar(&self, voorvoegsel: &str, methode: &str, gegevens: Value) -> Result<reqwest::Response, Fout> {
-        let antwoord = self
-            .http
-            .post(format!("{}{}{}", self.basis, voorvoegsel, methode))
-            .header("Authorization", &self.autorisatie)
-            .json(&gegevens)
-            .send()
-            .await?;
-        let status = antwoord.status();
-        if !status.is_success() {
-            let tekst = antwoord.text().await.unwrap_or_default();
-            return Err(Fout::Server { status: status.as_u16(), tekst });
-        }
-        Ok(antwoord)
+        let url = format!("{}{}{}", self.basis, voorvoegsel, methode);
+        self.met_autorisatie(|| self.http.post(&url).json(&gegevens)).await
     }
 
     /// Wat de server kent; een fout (bijv. een oudere server zonder deze methode) betekent: niets nieuws.
@@ -520,26 +551,18 @@ impl Client {
         // Alle inhoud achter elkaar in één deel: de server snijdt op `grootte` en controleert met `sha256`. Losse
         // delen per bestand kunnen bij het ontleden een regeleinde aan het eind houden.
         let alles: Vec<u8> = bestanden.iter().flat_map(|b| b.inhoud.iter().copied()).collect();
-        let mut formulier = reqwest::multipart::Form::new().text("ruimte", ruimte.to_string());
-        if let Some(deling) = deling {
-            formulier = formulier.text("deling", deling.to_string());
-        }
-        let formulier = formulier
-            .text("bron", "sync")
-            .text("bestanden", Value::Array(lijst).to_string())
-            .part("inhoud", reqwest::multipart::Part::bytes(alles).file_name("inhoud"));
+        let lijst = Value::Array(lijst).to_string();
+        let url = format!("{}{}upload_klein", self.basis, API);
+        // Het formulier per poging opnieuw (bij een 401 gaat het verzoek nog één keer).
         let antwoord = self
-            .http
-            .post(format!("{}{}upload_klein", self.basis, API))
-            .header("Authorization", &self.autorisatie)
-            .multipart(formulier)
-            .send()
+            .met_autorisatie(|| {
+                let formulier = formulier_basis(ruimte, deling)
+                    .text("bron", "sync")
+                    .text("bestanden", lijst.clone())
+                    .part("inhoud", reqwest::multipart::Part::bytes(alles.clone()).file_name("inhoud"));
+                self.http.post(&url).multipart(formulier)
+            })
             .await?;
-        let status = antwoord.status();
-        if !status.is_success() {
-            let tekst = antwoord.text().await.unwrap_or_default();
-            return Err(Fout::Server { status: status.as_u16(), tekst });
-        }
         #[derive(Deserialize)]
         struct Resultaten {
             resultaten: Vec<PerBestand>,
@@ -767,12 +790,7 @@ impl Client {
             .map_err(|_| Fout::Controle("ongeldig adres".into()))?
             .pop_if_empty()
             .extend(["api", "resource", "Ruimte", ruimte]);
-        let antwoord = self.http.get(url).header("Authorization", &self.autorisatie).send().await?;
-        let status = antwoord.status();
-        if !status.is_success() {
-            let tekst = antwoord.text().await.unwrap_or_default();
-            return Err(Fout::Server { status: status.as_u16(), tekst });
-        }
+        let antwoord = self.met_autorisatie(|| self.http.get(url.clone())).await?;
         Ok(antwoord.json::<Data>().await?.data.leden)
     }
 

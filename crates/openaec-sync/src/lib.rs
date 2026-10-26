@@ -12,6 +12,7 @@ pub mod oauth;
 pub mod opslag;
 pub mod overdracht;
 pub mod selectie;
+pub mod sessie;
 pub mod voortgang;
 
 use std::io::SeekFrom;
@@ -32,13 +33,65 @@ pub enum Fout {
     Netwerk(#[from] reqwest::Error),
     #[error("bestandsfout: {0}")]
     Bestand(#[from] std::io::Error),
-    #[error("server antwoordde {status}: {tekst}")]
+    /// De API weigerde het verzoek. De tekst voor mensen komt uit [`serverfout_tekst`]: nooit de ruwe JSON.
+    #[error("{}", serverfout_tekst(*status, tekst))]
     Server { status: u16, tekst: String },
+    /// Een ondertekende link naar de opslag (upload- of downloaddeel) werkte niet: verlopen (400, 401, 403) of de opslag
+    /// is even niet bereikbaar. Zo'n verzoek gaat zonder Authorization-header; de sessie staat er los van.
+    #[error("{}", linkfout_tekst(*status))]
+    Link { status: u16, tekst: String },
+    /// De server weigert de aanmelding en het token is niet (meer) te vernieuwen: opnieuw inloggen is nodig. De sync
+    /// stopt dan netjes, zonder een fout per bestand.
+    #[error("{SESSIE_VERLOPEN}")]
+    SessieVerlopen,
     #[error("controle mislukt: {0}")]
     Controle(String),
     /// De server weigerde één bestand uit een batch; `foutcode` is de vaste reden (zie de README van de server).
     #[error("geweigerd: {melding}")]
     Geweigerd { foutcode: Option<String>, melding: String },
+}
+
+/// Melding als de sessie verlopen is en vernieuwen niet meer lukt.
+pub const SESSIE_VERLOPEN: &str = "Je sessie is verlopen. Log opnieuw in.";
+
+/// De melding van de server voor mensen uit een antwoord van Frappe: `_server_messages` (een JSON-lijst van
+/// JSON-teksten), anders `exception` (`frappe.exceptions.X: melding`).
+fn servermelding_uit(tekst: &str) -> Option<String> {
+    let antwoord: serde_json::Value = serde_json::from_str(tekst).ok()?;
+    let berichten = antwoord.get("_server_messages").and_then(|v| v.as_str()).and_then(|t| serde_json::from_str::<Vec<String>>(t).ok());
+    let eerste = berichten.into_iter().flatten().find_map(|b| {
+        let v: serde_json::Value = serde_json::from_str(&b).ok()?;
+        v.get("message").and_then(|m| m.as_str()).map(str::to_string)
+    });
+    eerste.or_else(|| {
+        let e = antwoord.get("exception")?.as_str()?;
+        Some(e.split_once(": ").map_or(e, |(_, m)| m).to_string())
+    })
+}
+
+/// Een weigering van de API in een Nederlandse zin (voor het rapport, de statusregel en de vensters). De vensters
+/// Delen en Versturen maken 401, 403 en 404 nog specifieker voor hun eigen handeling.
+pub fn serverfout_tekst(status: u16, tekst: &str) -> String {
+    // Alleen een echte melding; een kale uitzonderingsnaam (`frappe.exceptions.PermissionError`) zegt niemand iets.
+    let melding = servermelding_uit(tekst).filter(|m| !m.trim().is_empty() && !m.starts_with("frappe."));
+    match status {
+        401 => SESSIE_VERLOPEN.to_string(),
+        403 => melding.unwrap_or_else(|| "Je hebt hiervoor geen rechten.".into()),
+        404 => "Dit bestand of deze map bestaat niet (meer) op de server.".into(),
+        408 | 429 | 502..=504 => "De server is tijdelijk niet bereikbaar. Probeer het straks opnieuw.".into(),
+        500..=599 => "Er ging iets mis op de server. Probeer het later opnieuw.".into(),
+        417 => melding.unwrap_or_else(|| "De server weigerde dit verzoek.".into()),
+        _ => melding.unwrap_or_else(|| format!("De server weigerde dit verzoek (code {status}).")),
+    }
+}
+
+/// Een mislukte overdracht via een ondertekende link in een Nederlandse zin.
+pub fn linkfout_tekst(status: u16) -> String {
+    match status {
+        400 | 401 | 403 => "De link naar de opslag is verlopen; het bestand wordt opnieuw geprobeerd.".into(),
+        408 | 429 | 500..=599 => "De opslag is tijdelijk niet bereikbaar. Probeer het straks opnieuw.".into(),
+        _ => format!("De opslag weigerde de overdracht (code {status})."),
+    }
 }
 
 /// Foutcodes van de server waarna een gedeelde map niet meer te syncen is (zie [`Fout::deling_gestopt`]).
@@ -66,9 +119,14 @@ impl Fout {
     /// HTTP-status van een weigering door de server.
     pub fn status(&self) -> Option<u16> {
         match self {
-            Fout::Server { status, .. } => Some(*status),
+            Fout::Server { status, .. } | Fout::Link { status, .. } => Some(*status),
             _ => None,
         }
+    }
+
+    /// Moet de gebruiker opnieuw inloggen? Dan stopt de sync netjes (zie [`Fout::SessieVerlopen`]).
+    pub fn sessie_verlopen(&self) -> bool {
+        matches!(self, Fout::SessieVerlopen)
     }
 
     fn antwoord(&self) -> Option<serde_json::Value> {
@@ -99,16 +157,10 @@ impl Fout {
         if let Fout::Geweigerd { melding, .. } = self {
             return Some(melding.clone());
         }
-        let antwoord = self.antwoord()?;
-        let berichten = antwoord.get("_server_messages").and_then(|v| v.as_str()).and_then(|t| serde_json::from_str::<Vec<String>>(t).ok());
-        let eerste = berichten.into_iter().flatten().find_map(|b| {
-            let v: serde_json::Value = serde_json::from_str(&b).ok()?;
-            v.get("message").and_then(|m| m.as_str()).map(str::to_string)
-        });
-        eerste.or_else(|| {
-            let e = antwoord.get("exception")?.as_str()?;
-            Some(e.split_once(": ").map_or(e, |(_, m)| m).to_string())
-        })
+        match self {
+            Fout::Server { tekst, .. } => servermelding_uit(tekst),
+            _ => None,
+        }
     }
 }
 
@@ -153,6 +205,30 @@ pub async fn upload_met_voortgang(
 /// Als [`upload_met_voortgang`], met een gedeelde [`Rem`]: elk deel wacht op een vrije plek.
 #[allow(clippy::too_many_arguments)]
 pub async fn upload_met_rem(
+    client: &Client,
+    ruimte: &str,
+    map: Option<&str>,
+    naam: &str,
+    pad: &Path,
+    basis_versie: Option<u64>,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
+) -> Result<UploadResultaat, Fout> {
+    // Verloopt een uploadlink onderweg, dan een nieuwe upload met nieuwe links (blokken die er al zijn, hergebruikt de
+    // server); de autorisatie van de API zelf staat daar los van.
+    match upload_poging(client, ruimte, map, naam, pad, basis_versie, voortgang, rem).await {
+        Err(f) if link_verlopen(&f) => upload_poging(client, ruimte, map, naam, pad, basis_versie, voortgang, rem).await,
+        r => r,
+    }
+}
+
+/// Werkt een ondertekende link niet meer (verlopen of geweigerd), dan helpt alleen een nieuwe link.
+fn link_verlopen(f: &Fout) -> bool {
+    matches!(f, Fout::Link { status: 400 | 401 | 403, .. })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_poging(
     client: &Client,
     ruimte: &str,
     map: Option<&str>,
@@ -208,7 +284,8 @@ async fn upload_deel(
     let _plek = plek(rem).await?;
     let stuk = lees_stuk(pad, begin, lengte).await?;
     // De opslag weigert een PUT zonder `Content-Length` (411, MissingContentLength). Bij een leeg lichaam laat de
-    // HTTP-laag die kop weg; daarom altijd zelf zetten, ook bij 0 bytes (een leeg bestand).
+    // HTTP-laag die kop weg; daarom altijd zelf zetten, ook bij 0 bytes (een leeg bestand). Een ondertekende link:
+    // zonder Authorization-header.
     let antwoord = client
         .http
         .put(url)
@@ -218,7 +295,7 @@ async fn upload_deel(
         .await?;
     if !antwoord.status().is_success() {
         let status = antwoord.status().as_u16();
-        return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
+        return Err(Fout::Link { status, tekst: antwoord.text().await.unwrap_or_default() });
     }
     let etag = antwoord
         .headers()
@@ -246,6 +323,14 @@ pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, 
 
 /// Als [`download_met_voortgang`], met een gedeelde [`Rem`]: elk blok dat over de lijn moet, wacht op een vrije plek.
 pub async fn download_met_rem(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>, rem: &Rem) -> Result<(), Fout> {
+    // Verloopt de downloadlink onderweg, dan nog één keer met een nieuwe link.
+    match download_poging(client, bestand, pad, voortgang, rem).await {
+        Err(f) if link_verlopen(&f) => download_poging(client, bestand, pad, voortgang, rem).await,
+        r => r,
+    }
+}
+
+async fn download_poging(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>, rem: &Rem) -> Result<(), Fout> {
     let info = client.blokken(bestand).await?;
     let link = client.download(bestand).await?;
     let blok = info.blokgrootte;
@@ -320,6 +405,7 @@ async fn download_blok(
     let stuk = match bron {
         Some(url) => {
             let _plek = plek(rem).await?;
+            // Een ondertekende link: zonder Authorization-header.
             let mut antwoord = client
                 .http
                 .get(url)
@@ -328,7 +414,7 @@ async fn download_blok(
                 .await?;
             if !antwoord.status().is_success() {
                 let status = antwoord.status().as_u16();
-                return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
+                return Err(Fout::Link { status, tekst: antwoord.text().await.unwrap_or_default() });
             }
             // In stukjes binnenhalen, zodat de voortgang ook binnen een blok doorloopt.
             let mut stuk = Vec::with_capacity(lengte as usize);

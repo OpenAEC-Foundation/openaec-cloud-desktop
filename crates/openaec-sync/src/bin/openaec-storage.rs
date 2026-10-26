@@ -21,6 +21,7 @@ use openaec_sync::bewaking::{nieuwe_wijzigingen, telt_mee};
 use openaec_sync::motor::{sync_met_selectie, Rapport};
 use openaec_sync::oauth::{self, Tokens};
 use openaec_sync::opslag::ClientOpslag;
+use openaec_sync::sessie::{Bewaring, Sessie};
 use openaec_sync::{Client, Fout};
 use serde::{Deserialize, Serialize};
 
@@ -106,7 +107,14 @@ impl Config {
         std::fs::read(config_pad()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
-    fn bewaar(&self) -> std::io::Result<()> {
+    fn bewaar(&mut self) -> std::io::Result<()> {
+        // Onderweg vernieuwde tokens staan al in het bestand (zie `Configbewaring`) en zijn nieuwer dan die in het
+        // geheugen; die niet overschrijven, anders gaat het geldige refresh-token verloren.
+        if let (Some(hier), Some(daar)) = (&self.tokens, Config::laad().tokens) {
+            if daar.verloopt > hier.verloopt {
+                self.tokens = Some(daar);
+            }
+        }
         let pad = config_pad();
         std::fs::create_dir_all(pad.parent().unwrap())?;
         std::fs::write(&pad, serde_json::to_vec_pretty(self).unwrap())?;
@@ -118,22 +126,34 @@ impl Config {
         Ok(())
     }
 
-    /// Client met geldige autorisatie; vernieuwt OAuth-tokens zo nodig en bewaart ze.
+    /// Client voor de omgeving: de API-sleutel, of de OAuth-tokens die bij elk verzoek zo nodig vernieuwd worden (en
+    /// dan meteen in het configuratiebestand komen; zie [`Configbewaring`]).
     async fn client(&mut self) -> Result<Client, String> {
         let basis = self.basis.clone().ok_or("niet ingelogd: gebruik `openaec-storage inloggen <adres>`")?;
         if let Some(s) = &self.sleutel {
             return Ok(Client::new(&basis, s));
         }
-        let tokens = self.tokens.clone().ok_or("niet ingelogd: gebruik `openaec-storage inloggen <adres>`")?;
-        let tokens = if tokens.verlopen() {
-            let nieuw = oauth::vernieuw(&basis, &tokens).await.map_err(|e| format!("sessie verlopen, log opnieuw in ({e})"))?;
-            self.tokens = Some(nieuw.clone());
-            self.bewaar().map_err(|e| e.to_string())?;
-            nieuw
-        } else {
-            tokens
-        };
-        Ok(Client::new(&basis, &tokens.autorisatie()))
+        if self.tokens.is_none() {
+            return Err("niet ingelogd: gebruik `openaec-storage inloggen <adres>`".into());
+        }
+        let sessie = std::sync::Arc::new(Sessie::new(&basis, Configbewaring));
+        Ok(Client::met_bron(&basis, sessie, openaec_sync::api::nieuwe_http()))
+    }
+}
+
+/// De tokens in het configuratiebestand: vernieuwde tokens komen er direct in (het oude refresh-token is dan ongeldig).
+struct Configbewaring;
+
+impl Bewaring for Configbewaring {
+    fn lees(&self) -> Option<String> {
+        Config::laad().tokens.and_then(|t| serde_json::to_string(&t).ok())
+    }
+
+    fn bewaar(&self, waarde: &str) -> Result<(), String> {
+        let tokens: Tokens = serde_json::from_str(waarde).map_err(|e| e.to_string())?;
+        let mut config = Config::laad();
+        config.tokens = Some(tokens);
+        config.bewaar().map_err(|e| e.to_string())
     }
 }
 
@@ -207,6 +227,9 @@ fn toon_rapport(k: &Koppeling, r: &Result<Rapport, Fout>) {
             }
             for m in &r.meldingen {
                 println!("  {m}");
+            }
+            if r.sessie_verlopen {
+                eprintln!("  gestopt: {}", openaec_sync::SESSIE_VERLOPEN);
             }
         }
         Err(f) => eprintln!("{} ({}): {f}", k.ruimte_naam, k.lokaal.display()),
