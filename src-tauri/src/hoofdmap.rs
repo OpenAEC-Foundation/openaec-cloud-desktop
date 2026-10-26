@@ -1,7 +1,7 @@
 //! De hoofdmap: één map (standaard `%USERPROFILE%\OpenAEC`) met per ruimte een submap. Op Windows is hij één
-//! sync-root met een eigen item "OpenAEC" in het navigatiepaneel van de Verkenner, en met bestanden op aanvraag (zie
-//! `cloudfilter`, Fase 3, en `opaanvraag`). Losse gekoppelde mappen blijven werken zoals ze werkten; de app biedt een
-//! overstap naar de hoofdmap aan ([`verplaats_naar_hoofdmap`]), maar doet dat nooit vanzelf.
+//! sync-root met een eigen item "OpenAEC Cloud" in het navigatiepaneel van de Verkenner, en met bestanden op
+//! aanvraag (zie `cloudfilter`, Fase 3, en `opaanvraag`). Losse gekoppelde mappen blijven werken zoals ze werkten; de
+//! app biedt een overstap naar de hoofdmap aan ([`verplaats_naar_hoofdmap`]), maar doet dat nooit vanzelf.
 
 use std::path::{Path, PathBuf};
 
@@ -11,8 +11,8 @@ use tauri::{AppHandle, Manager};
 use crate::instellingen::{self, submapnaam, Koppeling, GEDEELD_MET_MIJ};
 use crate::{fout, werk_menu_bij, AppState};
 
-/// Naam van het item in het navigatiepaneel.
-pub const NAAM: &str = "OpenAEC";
+/// Naam van het item in het navigatiepaneel: dezelfde als het eigen item voor losse koppelingen.
+pub const NAAM: &str = crate::navigatie::NAAM;
 
 #[derive(Serialize)]
 pub struct HoofdmapStatus {

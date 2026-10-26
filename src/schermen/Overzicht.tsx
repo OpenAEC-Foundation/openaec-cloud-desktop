@@ -44,7 +44,7 @@ function HoofdmapKaart() {
   const zet = (pad: string) =>
     doe("Hoofdmap instellen", async () => {
       setHoofdmap(await api.zetHoofdmap(pad))
-      setMelding(`Hoofdmap ingesteld: ${pad}. Ruimtes die je daarin synchroniseert, staan in de Verkenner onder "OpenAEC".`)
+      setMelding(`Hoofdmap ingesteld: ${pad}. Ruimtes die je daarin synchroniseert, staan in de Verkenner onder "OpenAEC Cloud".`)
     })
   const kies = async () => {
     const map = await open({ directory: true, multiple: false, title: "Hoofdmap voor OpenAEC" })
@@ -62,7 +62,7 @@ function HoofdmapKaart() {
                   <h2>Eén map voor al je ruimtes</h2>
                   <p class="uitleg">
                     Stel een hoofdmap in: <span class="pad">{h().voorstel}</span>. Elke ruimte krijgt daarin een eigen map
-                    <Show when={h().ondersteund}>, de map staat als "OpenAEC" in het navigatiepaneel van de Verkenner en bestanden komen pas op deze computer als je ze opent</Show>.
+                    <Show when={h().ondersteund}>, de map staat als "OpenAEC Cloud" in het navigatiepaneel van de Verkenner en bestanden komen pas op deze computer als je ze opent</Show>.
                   </p>
                 </div>
                 <div class="knoppen">

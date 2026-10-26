@@ -1,23 +1,23 @@
-//! Een vast item "OpenAEC" in het navigatiepaneel van de Verkenner (Windows), met het app-icoon, boven "Deze pc";
-//! daaronder bladert de gebruiker door de mappen. Het item staat in HKCU (geen beheerdersrechten nodig) als
-//! shell-namespace-item: een eigen CLSID die een gewone map toont (`TargetFolderPath`), vastgezet in de boom
-//! (`System.IsPinnedToNameSpaceTree`), en verborgen op het bureaublad (`HideDesktopIcons\NewStartPanel`).
+//! Een vast item "OpenAEC Cloud" in het navigatiepaneel van de Verkenner (Windows), met het app-icoon, boven "Deze
+//! pc"; daaronder staan de ruimtes, en daaronder hun mappen en bestanden. Het item staat in HKCU (geen
+//! beheerdersrechten nodig) als shell-namespace-item: een eigen CLSID die een gewone map toont (`TargetFolderPath`),
+//! vastgezet in de boom (`System.IsPinnedToNameSpaceTree`), en verborgen op het bureaublad
+//! (`HideDesktopIcons\NewStartPanel`).
 //!
-//! Een map die bij Windows als eigen sync-root geregistreerd is, krijgt van Windows zelf al een item in het
-//! navigatiepaneel (`StorageProviderSyncRootManager`, zie `cloudfilter`). Dit eigen item vult alleen aan wat zo'n
-//! item mist, zodat er nooit twee voor dezelfde map staan. Welke map het toont ([`doel`]):
-//! - **Met een hoofdmap**: is die als sync-root geregistreerd, dan geen eigen item (Windows toont "OpenAEC" al, zie
-//!   `hoofdmap`); lukte registreren niet, dan toont het eigen item de hoofdmap.
-//! - **Zonder hoofdmap** telt elke losse koppeling die geen eigen sync-root is. Dat komt veel voor: een map binnen
-//!   een map die al door een andere sync-app beheerd wordt, kan geen tweede sync-root worden.
-//!   - **Eén** zo'n koppeling: het item toont die map zelf.
-//!   - **Meer**: het item toont een eigen map met per koppeling een mapsnelkoppeling (een map met `desktop.ini` en
-//!     `target.lnk`, zoals "Netwerklocaties" die maakt). In de boom klapt elke snelkoppeling uit als de echte map; de
-//!     bestanden blijven waar ze staan.
-//!   - **Geen**: geen item.
+//! **Het doel is altijd een eigen map**, nooit een gekoppelde map zelf. Ligt het doel binnen een map die door een
+//! andere sync-app beheerd wordt, dan neemt de shell de weergavenaam (en het pictogram) van die sync-root over: het
+//! item heet dan zoals de bovenliggende map van die andere app, wat er ook als naam in het register staat. Daarom
+//! wijst het item naar een vaste map van de app (`%LOCALAPPDATA%\OpenAEC Storage\Verkenner`), met daarin per
+//! gekoppelde ruimte of gedeelde map een mapsnelkoppeling (een map met `desktop.ini` en `target.lnk`, zoals
+//! "Netwerklocaties" die maakt) met de naam van de ruimte. Een mapsnelkoppeling houdt zijn eigen naam; in de boom
+//! klapt hij uit als de echte map, en openen en opslaan gebeurt in de echte map. Er wordt niets verplaatst.
 //!
-//! Er wordt niets verplaatst: de overstap naar de hoofdmap ("Naar de hoofdmap…" in het Overzicht, na een voorstel
-//! bij de eerste start) blijft een keuze van de gebruiker.
+//! Welk doel ([`doel`]):
+//! - **Hoofdmap actief** (als eigen sync-root geregistreerd): daar staan de ruimtes al als submappen, en Windows geeft
+//!   de sync-root zelf een item met dezelfde naam [`NAAM`] (zie `hoofdmap`). Dan geen eigen item, anders stond het er
+//!   twee keer.
+//! - **Anders**: de eigen map met snelkoppelingen, voor elke koppeling die geen eigen sync-root is (een eigen
+//!   sync-root heeft van Windows al een item). Ook bij één koppeling. Zonder zulke koppelingen: geen item.
 //!
 //! De app werkt het item bij bij het starten en na elke (ont)koppeling; de NSIS-uninstaller ruimt het op
 //! (`nsis/hooks.nsh`, met dezelfde [`CLSID`]).
@@ -31,45 +31,47 @@ use std::path::{Path, PathBuf};
 /// dezelfde, zodat een update het item vervangt in plaats van er een tweede naast te zetten.
 pub const CLSID: &str = "{A1046B79-4B13-4993-B03B-4D94B67DDB65}";
 
+/// Naam van het item in het navigatiepaneel (ook die van de sync-root van de hoofdmap).
+pub const NAAM: &str = "OpenAEC Cloud";
+
 /// Plek in het navigatiepaneel: dezelfde waarde als die van de andere sync-apps (boven "Deze pc").
 pub const SORTERING: u32 = 0x42;
 
 /// Wat het item moet tonen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Doel {
-    /// Geen eigen item (geen koppelingen, of de hoofdmap heeft het item van zijn sync-root).
+    /// Geen eigen item: er is niets te tonen.
     Geen,
-    /// Deze map.
-    Map(PathBuf),
-    /// Een map met mapsnelkoppelingen: (naam in het navigatiepaneel, echte map).
+    /// De hoofdmap; die heeft als sync-root al een item van Windows met dezelfde naam, dus geen eigen item.
+    Hoofdmap(PathBuf),
+    /// De eigen map met mapsnelkoppelingen: (naam in het navigatiepaneel, echte map).
     Snelkoppelingen(Vec<(String, PathBuf)>),
 }
 
-/// Een map voor [`doel`]: (naam, lokale map, heeft al een eigen item als sync-root bij Windows).
+/// Een map voor [`doel`]: (naam van de ruimte of gedeelde map zoals de server hem geeft, lokale map, heeft al een
+/// eigen item als sync-root bij Windows).
 pub type Koppeling = (String, String, bool);
 
 /// Wat het item toont, bij deze hoofdmap (pad, als sync-root geregistreerd) en deze koppelingen. Zie de uitleg
 /// bovenaan.
 pub fn doel(hoofdmap: Option<(&str, bool)>, koppelingen: &[Koppeling]) -> Doel {
-    if let Some((pad, geregistreerd)) = hoofdmap {
-        return if geregistreerd { Doel::Geen } else { Doel::Map(PathBuf::from(pad)) };
+    if let Some((pad, true)) = hoofdmap {
+        return Doel::Hoofdmap(PathBuf::from(pad));
     }
-    let koppelingen: Vec<(&String, &String)> = koppelingen.iter().filter(|(_, _, eigen)| !eigen).map(|(n, l, _)| (n, l)).collect();
-    match koppelingen[..] {
-        [] => Doel::Geen,
-        [(_, lokaal)] => Doel::Map(PathBuf::from(lokaal)),
-        _ => {
-            let mut namen: Vec<String> = Vec::new();
-            let lijst = koppelingen
-                .iter()
-                .map(|(naam, lokaal)| {
-                    let naam = unieke_naam(naam, lokaal, &namen);
-                    namen.push(naam.clone());
-                    (naam, PathBuf::from(lokaal))
-                })
-                .collect();
-            Doel::Snelkoppelingen(lijst)
-        }
+    let mut namen: Vec<String> = Vec::new();
+    let lijst: Vec<(String, PathBuf)> = koppelingen
+        .iter()
+        .filter(|(_, _, eigen)| !eigen)
+        .map(|(naam, lokaal, _)| {
+            let naam = unieke_naam(naam, lokaal, &namen);
+            namen.push(naam.clone());
+            (naam, PathBuf::from(lokaal))
+        })
+        .collect();
+    if lijst.is_empty() {
+        Doel::Geen
+    } else {
+        Doel::Snelkoppelingen(lijst)
     }
 }
 
@@ -122,7 +124,11 @@ mod echt {
     pub fn registreer(clsid: &str, naam: &str, icoon: &str, map: &Path) -> std::io::Result<()> {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let (k, _) = hkcu.create_subkey(format!("{KLASSEN}\\{clsid}"))?;
+        // De naam staat op drie plekken die de shell elk ergens gebruikt: de standaardwaarde, `LocalizedString` (de
+        // weergavenaam in het navigatiepaneel) en `InfoTip` (de tooltip).
         k.set_value("", &naam)?;
+        k.set_value("LocalizedString", &naam)?;
+        k.set_value("InfoTip", &naam)?;
         k.set_value("System.IsPinnedToNameSpaceTree", &1u32)?;
         k.set_value("SortOrderIndex", &SORTERING)?;
         k.create_subkey("DefaultIcon")?.0.set_value("", &icoon)?;
@@ -272,10 +278,17 @@ mod echt {
         .map_err(|e| std::io::Error::other(format!("snelkoppeling maken: {e}")))
     }
 
-    /// Zet het item `clsid` zoals [`Doel`] zegt; `snelkoppelingen` is de map voor [`Doel::Snelkoppelingen`].
+    /// Staan ook `LocalizedString` en `InfoTip` van het item `clsid` op `naam`? (Oudere versies zetten ze niet.)
+    fn naam_overal(clsid: &str, naam: &str) -> bool {
+        let Ok(k) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(format!("{KLASSEN}\\{clsid}")) else { return false };
+        ["LocalizedString", "InfoTip"].iter().all(|w| k.get_value::<String, _>(w).is_ok_and(|v| v == naam))
+    }
+
+    /// Zet het item `clsid` zoals [`Doel`] zegt; `snelkoppelingen` is de eigen map voor [`Doel::Snelkoppelingen`].
     pub fn pas_toe(clsid: &str, naam: &str, icoon: &str, doel: &Doel, snelkoppelingen: &Path) -> std::io::Result<()> {
         match doel {
-            Doel::Geen => {
+            Doel::Geen | Doel::Hoofdmap(_) => {
+                // De hoofdmap heeft als sync-root het item van Windows; een eigen item zou dubbel staan.
                 verwijder(clsid)?;
                 if snelkoppelingen.is_dir() {
                     vul_snelkoppelingen(snelkoppelingen, &[])?;
@@ -283,19 +296,12 @@ mod echt {
                 }
                 Ok(())
             }
-            Doel::Map(map) => {
-                if snelkoppelingen.is_dir() {
-                    vul_snelkoppelingen(snelkoppelingen, &[])?;
-                    let _ = std::fs::remove_dir(snelkoppelingen);
-                }
-                if lees(clsid).is_some_and(|(n, m, vast, i, _)| n == naam && Path::new(&m) == map && vast && i == icoon) {
-                    return Ok(());
-                }
-                registreer(clsid, naam, icoon, map)
-            }
             Doel::Snelkoppelingen(lijst) => {
                 vul_snelkoppelingen(snelkoppelingen, lijst)?;
-                if lees(clsid).is_some_and(|(n, m, vast, i, _)| n == naam && Path::new(&m) == snelkoppelingen && vast && i == icoon) {
+                let actueel = lees(clsid)
+                    .is_some_and(|(n, m, vast, i, _)| n == naam && Path::new(&m) == snelkoppelingen && vast && i == icoon)
+                    && naam_overal(clsid, naam);
+                if actueel {
                     return Ok(());
                 }
                 registreer(clsid, naam, icoon, snelkoppelingen)
@@ -312,26 +318,37 @@ mod tests {
         (naam.to_string(), lokaal.to_string(), false)
     }
 
+    fn snel(lijst: &[(&str, &str)]) -> Doel {
+        Doel::Snelkoppelingen(lijst.iter().map(|(n, p)| (n.to_string(), PathBuf::from(p))).collect())
+    }
+
     const H: &str = "C:\\Users\\a\\OpenAEC";
 
     #[test]
-    fn met_hoofdmap_geen_eigen_item() {
-        // De sync-root van de hoofdmap heeft zijn eigen item; een tweede zou dubbel staan.
-        assert_eq!(doel(Some((H, true)), &[k("A", "C:\\Users\\a\\OpenAEC\\A")]), Doel::Geen);
-        assert_eq!(doel(Some((H, true)), &[k("Los", "D:\\Werk\\Los")]), Doel::Geen);
-        assert_eq!(doel(Some((H, true)), &[]), Doel::Geen);
+    fn actieve_hoofdmap_is_het_doel() {
+        // Daar staan de ruimtes al als submappen; de sync-root heeft het item, dus geen eigen item ernaast.
+        assert_eq!(doel(Some((H, true)), &[k("A", "C:\\Users\\a\\OpenAEC\\A")]), Doel::Hoofdmap(PathBuf::from(H)));
+        assert_eq!(doel(Some((H, true)), &[k("Los", "D:\\Werk\\Los")]), Doel::Hoofdmap(PathBuf::from(H)));
+        assert_eq!(doel(Some((H, true)), &[]), Doel::Hoofdmap(PathBuf::from(H)));
     }
 
     #[test]
-    fn hoofdmap_zonder_registratie_krijgt_het_eigen_item() {
-        assert_eq!(doel(Some((H, false)), &[k("Los", "D:\\Werk\\Los")]), Doel::Map(PathBuf::from(H)));
+    fn hoofdmap_zonder_registratie_krijgt_snelkoppelingen() {
+        // Mislukte het registreren (bijv. omdat de hoofdmap onder een andere sync-app valt), dan zou het item als doel
+        // de naam van die andere sync-root overnemen; daarom ook dan de eigen map met snelkoppelingen.
+        let koppelingen = [k("OpenAEC Studio", "C:\\Users\\a\\OpenAEC\\OpenAEC Studio"), k("Los", "D:\\Werk\\Los")];
+        assert_eq!(
+            doel(Some((H, false)), &koppelingen),
+            snel(&[("OpenAEC Studio", "C:\\Users\\a\\OpenAEC\\OpenAEC Studio"), ("Los", "D:\\Werk\\Los")])
+        );
+        assert_eq!(doel(Some((H, false)), &[]), Doel::Geen);
     }
 
     #[test]
     fn koppelingen_met_een_eigen_sync_root_tellen_niet_mee() {
         let eigen = ("Eigen".to_string(), "D:\\Eigen".to_string(), true);
         assert_eq!(doel(None, std::slice::from_ref(&eigen)), Doel::Geen);
-        assert_eq!(doel(None, &[eigen.clone(), k("Los", "E:\\Los")]), Doel::Map(PathBuf::from("E:\\Los")));
+        assert_eq!(doel(None, &[eigen.clone(), k("Los", "E:\\Los")]), snel(&[("Los", "E:\\Los")]));
     }
 
     #[test]
@@ -340,8 +357,15 @@ mod tests {
     }
 
     #[test]
-    fn een_losse_koppeling_toont_de_map_zelf() {
-        assert_eq!(doel(None, &[k("OpenAEC Studio", "D:\\Werk\\Studio")]), Doel::Map(PathBuf::from("D:\\Werk\\Studio")));
+    fn ook_een_losse_koppeling_wordt_een_snelkoppeling() {
+        // Nooit de map zelf als doel: die kan binnen de map van een andere sync-app liggen.
+        let d = doel(None, &[k("OpenAEC Studio", "C:\\Users\\a\\Sync van elders\\Werk\\Studio")]);
+        assert_eq!(d, snel(&[("OpenAEC Studio", "C:\\Users\\a\\Sync van elders\\Werk\\Studio")]));
+    }
+
+    #[test]
+    fn de_naam_van_de_ruimte_niet_de_mapnaam() {
+        assert_eq!(doel(None, &[k("OpenAEC Studio", "D:\\Werk\\studio-lokaal")]), snel(&[("OpenAEC Studio", "D:\\Werk\\studio-lokaal")]));
     }
 
     // Windows-paden: de mapnaam uit "F:\Archief" leest alleen Windows zo (elders is het één naam).
@@ -349,15 +373,7 @@ mod tests {
     #[test]
     fn meer_losse_koppelingen_met_unieke_namen() {
         let d = doel(None, &[k("Project A", "D:\\A"), k("project a", "E:\\A"), k("", "F:\\Archief"), k("a/b:c", "G:\\X")]);
-        assert_eq!(
-            d,
-            Doel::Snelkoppelingen(vec![
-                ("Project A".into(), PathBuf::from("D:\\A")),
-                ("project a (2)".into(), PathBuf::from("E:\\A")),
-                ("Archief".into(), PathBuf::from("F:\\Archief")),
-                ("a_b_c".into(), PathBuf::from("G:\\X")),
-            ])
-        );
+        assert_eq!(d, snel(&[("Project A", "D:\\A"), ("project a (2)", "E:\\A"), ("Archief", "F:\\Archief"), ("a_b_c", "G:\\X")]));
     }
 
     #[test]
