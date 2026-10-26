@@ -206,7 +206,15 @@ async fn upload_deel(
 ) -> Result<(Etag, u64), Fout> {
     let _plek = plek(rem).await?;
     let stuk = lees_stuk(pad, begin, lengte).await?;
-    let antwoord = client.http.put(url).body(stuk).send().await?;
+    // De opslag weigert een PUT zonder `Content-Length` (411, MissingContentLength). Bij een leeg lichaam laat de
+    // HTTP-laag die kop weg; daarom altijd zelf zetten, ook bij 0 bytes (een leeg bestand).
+    let antwoord = client
+        .http
+        .put(url)
+        .header(reqwest::header::CONTENT_LENGTH, stuk.len())
+        .body(stuk)
+        .send()
+        .await?;
     if !antwoord.status().is_success() {
         let status = antwoord.status().as_u16();
         return Err(Fout::Server { status, tekst: antwoord.text().await.unwrap_or_default() });
