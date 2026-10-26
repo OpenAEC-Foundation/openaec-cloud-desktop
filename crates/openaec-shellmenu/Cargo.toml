@@ -1,0 +1,43 @@
+[package]
+name = "openaec-shellmenu"
+version = "0.8.1"
+description = "OpenAEC in het moderne rechtermuismenu van Windows 11 (IExplorerCommand, COM-server in een DLL)"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[lib]
+name = "openaec_shellmenu"
+# cdylib: de DLL die de Verkenner laadt (via het pakket met identiteit, zie pakket/AppxManifest.xml).
+# rlib: de app gebruikt de gedeelde logica (menu.json, het manifest) zonder de COM-server.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["server"]
+# De COM-server (IExplorerCommand, IClassFactory, DllGetClassObject/DllCanUnloadNow). De app zet dit uit.
+server = ["dep:windows", "dep:windows-core"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-core = { version = "0.61", optional = true }
+windows = { version = "0.61", optional = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_SystemServices",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+winreg = "0.55"
+
+[profile.release]
+# Een kleine DLL: de Verkenner laadt hem bij elk rechtermuismenu.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
