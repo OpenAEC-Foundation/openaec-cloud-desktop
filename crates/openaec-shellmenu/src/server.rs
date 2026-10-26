@@ -287,15 +287,14 @@ impl IClassFactory_Impl for Fabriek_Impl {
     }
 }
 
-/// Hoort deze CLSID bij deze DLL: de vaste, of de test-CLSID van de rooktest (`OPENAEC_SHELLMENU_TEST_CLSID`).
+/// Hoort deze CLSID bij deze DLL: de vaste, of een test-CLSID (`OPENAEC_SHELLMENU_TEST_CLSID`, tijdens het draaien
+/// voor de rooktest of al bij het bouwen voor een testpakket).
 fn onze_clsid(clsid: &GUID) -> bool {
     if GUID::try_from(logica::CLSID).is_ok_and(|g| g == *clsid) {
         return true;
     }
-    std::env::var(logica::ENV_TEST_CLSID)
-        .ok()
-        .and_then(|t| GUID::try_from(t.trim_matches(['{', '}'])).ok())
-        .is_some_and(|g| g == *clsid)
+    let test = |t: &str| GUID::try_from(t.trim_matches(['{', '}'])).is_ok_and(|g| g == *clsid);
+    option_env!("OPENAEC_SHELLMENU_TEST_CLSID").is_some_and(test) || std::env::var(logica::ENV_TEST_CLSID).is_ok_and(|t| test(&t))
 }
 
 /// # Safety

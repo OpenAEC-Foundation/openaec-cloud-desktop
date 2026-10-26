@@ -30,7 +30,8 @@ pub const LOGO: &str = "logo.png";
 
 /// Omgevingsvariabele voor de rooktest: een ander `menu.json`.
 pub const ENV_MENU: &str = "OPENAEC_SHELLMENU_MENU";
-/// Omgevingsvariabele voor de rooktest: een extra CLSID die de DLL accepteert (een test-CLSID in HKCU).
+/// Omgevingsvariabele voor de rooktest: een extra CLSID die de DLL accepteert (een test-CLSID in HKCU). Ook bij het
+/// bouwen te zetten, voor een test-DLL in een testpakket.
 pub const ENV_TEST_CLSID: &str = "OPENAEC_SHELLMENU_TEST_CLSID";
 
 /// De items onder "OpenAEC".
@@ -126,9 +127,13 @@ impl Menu {
 }
 
 /// Waar `menu.json` staat: naast `instellingen.json` van de app (`%APPDATA%\OpenAEC Storage`), of waar
-/// `OPENAEC_SHELLMENU_MENU` naar wijst (rooktest).
+/// `OPENAEC_SHELLMENU_MENU` naar wijst: tijdens het draaien (rooktest) of al bij het bouwen (een test-DLL die de
+/// Verkenner laadt, zonder het `menu.json` van de echte app te lezen). De bouwstraat zet die variabele nooit.
 pub fn menu_pad() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(ENV_MENU).filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    if let Some(p) = option_env!("OPENAEC_SHELLMENU_MENU").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
     }
     std::env::var_os("APPDATA").filter(|p| !p.is_empty()).map(|a| PathBuf::from(a).join("OpenAEC Storage").join("menu.json"))
