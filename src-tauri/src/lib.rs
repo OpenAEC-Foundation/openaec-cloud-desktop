@@ -9,11 +9,13 @@ mod instellingen;
 mod itemstatus;
 mod opaanvraag;
 mod opruimen;
+pub mod rechtermuis;
 mod sloten;
 mod systeemvak;
 mod tools;
 mod updates;
 mod verkenner;
+mod versturen;
 mod vinkjes;
 
 #[cfg(windows)]
@@ -898,9 +900,14 @@ async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) ->
     }
 }
 
-/// Actie uit het rechtermuismenu van de Verkenner: "Delen…" opent het deelvenster, "Verzenden…" en "Versies
-/// bekijken" het hoofdvenster; de rest gebeurt op de achtergrond met een melding.
-pub(crate) async fn voer_actie(app: AppHandle, actie: String, pad: String) {
+/// Actie uit het rechtermuismenu van de Verkenner: "Delen…" opent het deelvenster, "Versturen met OpenAEC" het
+/// venster Versturen (met alle paden), "Versies bekijken" het hoofdvenster; de rest gebeurt op de achtergrond met een
+/// melding.
+pub(crate) async fn voer_actie(app: AppHandle, actie: String, paden: Vec<String>) {
+    if verkenner::venster_voor(&actie) == Some(versturen::VENSTER) {
+        return versturen::ontvang(&app, paden);
+    }
+    let Some(pad) = paden.into_iter().next() else { return };
     match verkenner::venster_voor(&actie) {
         Some(delen::VENSTER) => return delen::toon(&app, delen::Deelverzoek { pad: Some(pad), doel: None }),
         Some(_) => {
@@ -1011,11 +1018,17 @@ fn zet_autostart(app: AppHandle, aan: bool) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Een selectie van meerdere items start de app per item: wacht zo nodig tot de eerste start klaar is om door te
+    // sturen (zie `rechtermuis::wacht_op_eerste_start`).
+    #[cfg(windows)]
+    if std::env::args().any(|a| a == "--actie") {
+        rechtermuis::wacht_op_eerste_start("com.openaec.cloud");
+    }
     tauri::Builder::default()
-        // Eén exemplaar tegelijk: een tweede start toont het bestaande venster.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _| match verkenner::actie_uit(&argv) {
-            Some((actie, pad)) => {
-                tauri::async_runtime::spawn(voer_actie(app.clone(), actie, pad));
+        // Eén exemplaar tegelijk: een tweede start toont het bestaande venster, of geeft zijn actie door.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _| match verkenner::actie_met_paden(&argv) {
+            Some((actie, paden)) => {
+                tauri::async_runtime::spawn(voer_actie(app.clone(), actie, paden));
             }
             None => systeemvak::toon(app),
         }))
@@ -1039,16 +1052,25 @@ pub fn run() {
             activiteit: activiteit::Activiteit::default(),
             deelverzoek: std::sync::Mutex::new(None),
         })
+        .manage(versturen::Versturen::default())
         .setup(|app| {
             systeemvak::maak(app)?;
             bewaking::start(app.handle().clone());
             updates::start(app.handle().clone());
             werk_menu_bij(&app.state::<AppState>().instellingen.lock().unwrap().koppelingen);
+            // "Versturen met OpenAEC" in het rechtermuismenu, op elk bestand en elke map (het pad naar de app kan
+            // veranderd zijn na een update of een verplaatste AppImage).
+            let menu_aan = app.state::<AppState>().instellingen.lock().unwrap().menu_versturen_aan();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = rechtermuis::werk_bij(menu_aan) {
+                    log::warn!("Versturen met OpenAEC in het rechtermuismenu: {e}");
+                }
+            });
             activiteit::meld(app.handle());
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();
-            if let Some((actie, pad)) = verkenner::actie_uit(&argv) {
-                tauri::async_runtime::spawn(voer_actie(app.handle().clone(), actie, pad));
+            if let Some((actie, paden)) = verkenner::actie_met_paden(&argv) {
+                tauri::async_runtime::spawn(voer_actie(app.handle().clone(), actie, paden));
             }
             Ok(())
         })
@@ -1109,6 +1131,19 @@ pub fn run() {
             delen::ruimteleden,
             delen::collegas,
             delen::kopieer,
+            versturen::open_versturen,
+            versturen::sluit_versturen,
+            versturen::versturen_verzoek,
+            versturen::versturen_items,
+            versturen::versturen_grenzen,
+            versturen::start_versturen,
+            versturen::onderbroken_versturen,
+            versturen::hervat_versturen,
+            versturen::stop_versturen,
+            versturen::mijn_overdrachten,
+            versturen::trek_overdracht_in,
+            versturen::menu_versturen,
+            versturen::zet_menu_versturen,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,

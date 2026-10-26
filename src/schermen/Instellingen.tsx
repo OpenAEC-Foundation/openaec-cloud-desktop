@@ -10,11 +10,13 @@ export default function Instellingen() {
   const [update, setUpdate] = createSignal<"" | "zoeken" | "actueel" | string>("")
   const [updateFout, setUpdateFout] = createSignal("")
   const [sync, setSync] = createSignal<SyncInstellingen | null>(null)
+  const [menuVersturen, setMenuVersturen] = createSignal(true)
 
   onMount(() => {
     api.autostart().then(setAutostart).catch(() => {})
     api.versie().then(setVersie).catch(() => {})
     api.syncInstellingen().then(setSync).catch(() => {})
+    api.menuVersturen().then(setMenuVersturen).catch(() => {})
   })
 
   const zetSync = (wijziging: Partial<SyncInstellingen>) => {
@@ -117,6 +119,32 @@ export default function Instellingen() {
           </section>
         )}
       </Show>
+
+      <section class="kaart">
+        <h2>Rechtermuismenu</h2>
+        <label class="vinkje">
+          <input
+            type="checkbox"
+            checked={menuVersturen()}
+            onChange={(e) =>
+              api
+                .zetMenuVersturen(e.currentTarget.checked)
+                .then(setMenuVersturen)
+                .catch((f) => setMelding("Rechtermuismenu: " + f))
+            }
+          />
+          "Versturen met OpenAEC" in het rechtermuismenu van de bestandsbeheerder
+        </label>
+        <p class="hint">
+          Op elk bestand en elke map, ook buiten de gekoppelde mappen: verstuur ze met een downloadlink, eventueel per e-mail. Op
+          Windows staat het in het menu van de Verkenner (in Windows 11 onder "Meer opties weergeven"), op Linux in Nautilus, Dolphin
+          en Nemo, op macOS bij de snelle acties van de Finder. Gebruik je de AppImage, zet het dan hier uit voordat je de app
+          weggooit.
+        </p>
+        <div class="knoppen">
+          <button onClick={() => api.openVersturen()}>Venster Versturen openen</button>
+        </div>
+      </section>
 
       <section class="kaart">
         <h2>Opstarten</h2>

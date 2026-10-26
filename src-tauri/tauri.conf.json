@@ -41,6 +41,17 @@
         "minHeight": 520,
         "visible": false,
         "center": true
+      },
+      {
+        "title": "Versturen met OpenAEC",
+        "label": "versturen",
+        "url": "versturen.html",
+        "width": 560,
+        "height": 760,
+        "minWidth": 460,
+        "minHeight": 540,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

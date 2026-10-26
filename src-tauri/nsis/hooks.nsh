@@ -75,5 +75,8 @@ Var OudeMap
     ; Het rechtermuismenu in de Verkenner (verkenner.rs) wijst naar de verwijderde exe.
     DeleteRegKey HKCU "Software\Classes\*\shell\OpenAECStorage"
     DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenAECStorage"
+    ; "Versturen met OpenAEC" op elk bestand en elke map (rechtermuis.rs).
+    DeleteRegKey HKCU "Software\Classes\*\shell\OpenAECVersturen"
+    DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenAECVersturen"
   ${EndIf}
 !macroend
