@@ -32,7 +32,11 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
   openen worden opgehaald).
 - **`src`** — de UI (SolidJS). Het hoofdvenster heeft vijf schermen: **Overzicht** (status per gekoppelde map),
   **Ruimtes** (ruimtes koppelen en de bestanden op de server bekijken), **Delen** (deellinks, vergrendelen, versies),
-  **Tools** (zie hieronder) en **Instellingen**; onderin een statusbalk. Een linkerklik op het pictogram in het systeemvak opent het
+  **Tools** (zie hieronder) en **Instellingen**; onderin een statusbalk. Bovenaan staat een eigen titelbalk volgens de
+  OpenAEC-standaardschil (32 px, Deep Forge met een amberlijn): het OpenAEC-symbool links, "Open**AEC** Desktop App"
+  met het versienummer (`v2026.44.0`) in het midden, rechts de verbonden omgeving en de knoppen minimaliseren,
+  maximaliseren en sluiten. Slepen en dubbelklikken op de balk werken zoals bij een gewone titelbalk; sluiten verbergt
+  het venster. Een linkerklik op het pictogram in het systeemvak opent het
   **statusvenster** (`status.html`): wat er nu over de lijn gaat, de laatste activiteit en knoppen om een map te
   openen of te pauzeren. Het pictogram zelf toont met een gekleurde stip of alles bijgewerkt is, de sync bezig of
   gepauzeerd is, of dat er een fout is.
@@ -476,6 +480,40 @@ GitHub-release). Een update wordt op de achtergrond gedownload en gecontroleerd 
 `tauri.conf.json`; dan verschijnt een melding en in het systeemvakmenu **Update installeren (vX.Y.Z)**. Pas na die klik
 wordt hij geïnstalleerd, nooit midden in een sync-ronde. Op Windows sluit de installer de app en start hem daarna
 opnieuw. Een conceptrelease telt pas mee als hij gepubliceerd is.
+
+## Versienummers en releases
+
+De app volgt het versieschema van alle OpenAEC-tools: **jaar.week**, `JJJJ.W.N`. Dat is het ISO-jaar, het ISO-weeknummer
+zonder voorloopnul en een volgnummer binnen de week dat bij 0 begint: `2026.44.0` is de eerste release van week 44 in
+2026, `2026.44.1` de tweede, `2026.45.0` de eerste van de week erna. De Git-tag en de GitHub-release heten
+`v2026.44.0`. Punten, geen streepje: `2026-44` is in npm, Cargo en Tauri geen geldige versie. Tot en met 0.8.1 had de
+app gewone 0.x-nummers.
+
+Het nummer staat in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+`crates/openaec-sync/Cargo.toml` en de twee `Cargo.lock`'s. Zet het altijd met het script, dan lopen ze niet uiteen:
+
+```bash
+git fetch --tags
+node scripts/versie.mjs              # volgende versie uit de datum en de bestaande tags, overal gezet
+node scripts/versie.mjs 2026.44.1    # deze versie overal zetten
+node scripts/versie.mjs --volgende   # alleen tonen welke versie het zou worden
+node scripts/versie.mjs --droog      # tonen welke bestanden zouden veranderen
+node scripts/versie.mjs --controleer v2026.44.0   # klopt alles met deze tag?
+```
+
+Daarna committen, taggen met `v<versie>` en de tag pushen. De workflow controleert bij een tag eerst met
+`--controleer` dat de tag gelijk is aan de versie in alle bestanden, en stopt bij een verschil.
+
+- **MSI:** een MSI-versie heeft als hoofdversie hoogstens 255. Het script zet daarom in
+  `bundle.windows.wix.version` een afgeleide versie zonder eeuw: `2026.44.0` wordt `26.44.0`. Dat is hoger dan de oude
+  0.x-versies, dus een `.msi` van 0.8.x wordt gewoon bijgewerkt. De NSIS-installer en de updater gebruiken het volle
+  nummer.
+- **Updater:** de updater vergelijkt versies volgens semver, en `2026.44.0` is daarin hoger dan `0.8.1`. Een app op 0.8.x
+  ziet de eerste jaar.week-release dus als update. De test `updates::tests` in `src-tauri` controleert dat.
+- **Waar je het nummer ziet:** in de titelbalk naast de naam, en in **Instellingen → Over OpenAEC Desktop App**, met de
+  knop **Controleren op updates**.
+- Tests van het script: `node --test scripts/versie.test.mjs` (draait mee in `npm test`): ISO-week rond de jaarwisseling,
+  het volgnummer uit de tags, de MSI-versie en het bijwerken van de bestanden zonder de opmaak te veranderen.
 
 ## Overstap van OpenAEC Storage (0.4 en ouder)
 
