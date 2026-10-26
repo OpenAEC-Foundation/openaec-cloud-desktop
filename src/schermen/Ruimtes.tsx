@@ -58,7 +58,8 @@ function Bestandsweergave(props: { plek: Plek }) {
   // Nieuwe map op deze plek: een invoerveld onder de kop, Enter maakt hem aan, Esc breekt af.
   const [nieuweMap, setNieuweMap] = createSignal<string | null>(null)
   const [mapFout, setMapFout] = createSignal("")
-  const maakMap = async () => {
+  /** Met `uitnodigen` opent na het maken meteen het deelvenster van de nieuwe map (collega's of een link). */
+  const maakMap = async (uitnodigen = false) => {
     const naam = (nieuweMap() ?? "").trim()
     if (!naam) return
     setMapFout("")
@@ -67,6 +68,12 @@ function Bestandsweergave(props: { plek: Plek }) {
       setNieuweMap(null)
       if (!uit.nieuw) setMelding(`De map "${naam}" bestond hier al.`)
       await laad()
+      if (uitnodigen) {
+        const plek = [props.plek.naam, ...pad().map((s) => s.naam), naam].join(" / ")
+        await api.openDelen({
+          doel: { doctype: "Opslagmap", id: uit.map, naam, pad: plek, ruimte: props.plek.ruimte, ruimte_naam: props.plek.ruimte_naam },
+        })
+      }
     } catch (e) {
       setMapFout(String(e))
     }
@@ -133,6 +140,17 @@ function Bestandsweergave(props: { plek: Plek }) {
           <button class="primair klein" type="submit" disabled={!(nieuweMap() ?? "").trim()}>
             Maken
           </button>
+          <Show when={props.plek.magDelen}>
+            <button
+              class="klein"
+              type="button"
+              disabled={!(nieuweMap() ?? "").trim()}
+              title="Map maken en meteen collega's of externen uitnodigen"
+              onClick={() => maakMap(true)}
+            >
+              Maken en uitnodigen…
+            </button>
+          </Show>
           <button
             class="klein"
             type="button"
