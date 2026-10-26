@@ -152,6 +152,15 @@ niet uit. Voorbeeld:
     build/
     /Export/*.pdf
 
+Mappen met code bevatten vaak tienduizenden kleine bestanden die je niet in een ruimte wilt. Ze worden niet vanzelf
+overgeslagen (in een projectmap kan een map met zo'n naam er juist bij horen), maar zet ze gerust in
+`.openaecignore`:
+
+    node_modules/
+    .git/
+    __pycache__/
+    .venv/
+
 ## Tools
 
 Het tabblad **Tools** toont de OpenAEC-tools als kaarten (naam, omschrijving, afbeelding, categorie, versie) en werkt
@@ -201,11 +210,13 @@ cd src-tauri && cargo test --lib               # app (unit-tests)
 cd src-tauri && cargo run --example status_smoke    # Windows: statusvinkjes (Cloud Filter API)
 cd src-tauri && cargo run --example vinkjes_smoke   # Windows: motor + statusvinkjes samen
 cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigatiepaneel, bestanden op aanvraag
+cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC" voor losse koppelingen
 ```
 
 De voorbeeldprogramma's werken op een tijdelijke map onder `%TEMP%` (met een testnaam) en ruimen hun registratie,
 het item in het navigatiepaneel en de map altijd op. Met `OPENAEC_ROOKTEST_WACHT=<seconden>` blijft de registratie van
-`hoofdmap_smoke` zo lang staan om in de Verkenner te kijken.
+`hoofdmap_smoke` en `navigatie_smoke` zo lang staan om in de Verkenner te kijken. `navigatie_smoke` gebruikt een
+tijdelijke CLSID en controleert dat de echte registratie van de app onveranderd blijft.
 
 Tegen een echte omgeving: `cargo run --example sync -- <basis-url> <ruimte> <map>` met
 `OPENAEC_AUTORISATIE="token <sleutel>:<geheim>"`.
@@ -276,6 +287,33 @@ werkten: elke map is zijn eigen sync-root met volledige bestanden. In het Overzi
 hoofdmap…**: na bevestiging gaan de statusvinkjes eraf, verhuist de map met zijn toestand (`.openaec`) naar een submap
 van de hoofdmap (dus zonder opnieuw te downloaden) en krijgt hij daar zijn status terug. Dat kan alleen binnen hetzelfde
 station; de app doet het nooit vanzelf.
+
+**Het item "OpenAEC" ook zonder hoofdmap** (`src-tauri/src/navigatie.rs`). Een map die als sync-root geregistreerd
+is, krijgt van Windows zelf een item in het navigatiepaneel. Dat lukt niet altijd: een gekoppelde map die binnen een
+map van een andere sync-app staat, kan geen tweede sync-root worden (dan zijn er ook geen statusvinkjes). Voor zulke
+mappen zet de app een eigen item **OpenAEC** met het pictogram van de app in het navigatiepaneel, als
+shell-naamruimte-item in HKCU met een vaste CLSID `{A1046B79-4B13-4993-B03B-4D94B67DDB65}`:
+
+- `HKCU\Software\Classes\CLSID\{…}` met `System.IsPinnedToNameSpaceTree = 1`, `SortOrderIndex = 0x42`,
+  `DefaultIcon` (de exe), `Instance\InitPropertyBag\TargetFolderPath` en `ShellFolder`;
+- `HKCU\…\Explorer\Desktop\NameSpace\{…}`;
+- `HKCU\…\Explorer\HideDesktopIcons\NewStartPanel`, waarde `{…}` = 1 (geen pictogram op het bureaublad).
+
+Wat het item toont:
+
+| situatie | item |
+| --- | --- |
+| hoofdmap, geregistreerd | geen eigen item: Windows toont al "OpenAEC" voor de hoofdmap |
+| hoofdmap, registreren mislukt | het eigen item toont de hoofdmap |
+| geen hoofdmap, één koppeling zonder eigen sync-root | het item toont die map |
+| geen hoofdmap, meer zulke koppelingen | het item toont `%LOCALAPPDATA%\OpenAEC Storage\Verkenner`, met per koppeling een mapsnelkoppeling (`desktop.ini` + `target.lnk`) die in de boom uitklapt als de echte map |
+| geen koppelingen | geen item |
+
+Zo staan er nooit twee items voor dezelfde map, en wordt er niets verplaatst. De overstap naar de hoofdmap blijft een
+keuze: het Overzicht stelt bij de eerste start een hoofdmap voor, en **Naar de hoofdmap…** verhuist een losse map. De
+app werkt het item bij bij het starten, na elke (ont)koppeling en na het instellen van de hoofdmap; na het ontkoppelen
+van de laatste map verdwijnt het. De uninstaller ruimt de drie registersleutels en de map met snelkoppelingen op
+(`nsis/hooks.nsh`).
 
 Een ruimte in de hoofdmap ontkoppelen haalt de bestanden die alleen online stonden weg (ze staan op de server); wat
 lokaal staat, blijft staan.
