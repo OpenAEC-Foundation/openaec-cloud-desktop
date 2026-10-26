@@ -3,6 +3,7 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { api, type Gebeurd, type Koppeling, type KoppelOvergeslagen, type Quotum, type Stand } from "./lib/api"
 import OvergeslagenLijst from "./OvergeslagenLijst"
+import SessieVerlopen from "./SessieVerlopen"
 import { besparingTekst, grootte, lokaalPad, naamVan, procent, quotumTekst, rondeTekst, snelheid, tijdstip } from "./lib/opmaak"
 
 const actieTekst: Record<Gebeurd["actie"], string> = {
@@ -29,10 +30,12 @@ export default function Status() {
   const [fout, setFout] = createSignal("")
   const [quotum, setQuotum] = createSignal<Quotum | null>(null)
   const [overgeslagen, setOvergeslagen] = createSignal<KoppelOvergeslagen[]>([])
+  const [basis, setBasis] = createSignal("")
 
   const laad = async () => {
     const s = await api.status()
     setKoppelingen(s.koppelingen)
+    setBasis(s.basis ?? "")
     setStand(await api.activiteit())
     setFout("")
     api.quotum().then(setQuotum).catch(() => {})
@@ -80,6 +83,10 @@ export default function Status() {
           </span>
         </div>
       </section>
+
+      <Show when={stand()?.sessie_verlopen && basis()}>
+        <SessieVerlopen basis={basis()} klaar={setFout} compact />
+      </Show>
 
       <Show when={stand()?.ronde}>
         {(r) => (

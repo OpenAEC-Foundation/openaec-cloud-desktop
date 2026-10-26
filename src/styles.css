@@ -83,6 +83,11 @@ h2 { font-family: var(--f-kop); font-size: 15px; font-weight: 600; margin-bottom
 }
 .foutvlak { background: var(--rood-vlak); color: var(--rood-tekst); border: 1px solid #fecaca; }
 .succesvlak { background: var(--groen-vlak); color: var(--groen-tekst); border: 1px solid #bbf7d0; }
+/* sessie verlopen: de vraag om opnieuw in te loggen, met de knop ernaast */
+.sessie-verlopen { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 16px; }
+.sessie-verlopen span { font-weight: 500; }
+.sessie-verlopen button { flex: none; }
+.sessie-verlopen.compact { margin: 0; border-radius: 0; border-width: 0 0 1px; padding: 10px 16px; flex: none; }
 
 /* statuslabels en stippen: groen = bijgewerkt, oranje = bezig, rood = fout, grijs = gepauzeerd/onbekend */
 .label {

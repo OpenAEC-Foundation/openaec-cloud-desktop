@@ -3,10 +3,11 @@ import { ask, open } from "@tauri-apps/plugin-dialog"
 import { api, type Koppeling, type KoppelOvergeslagen, type MapRapport } from "../lib/api"
 import Mappenkiezer from "../Mappenkiezer"
 import OvergeslagenLijst from "../OvergeslagenLijst"
+import SessieVerlopen from "../SessieVerlopen"
 import { rechtenTekst } from "../lib/delen"
 import { besparingTekst, grootte, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
-  bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
+  basis, bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
   setKoppelingen, setMelding, setScherm, stand, verversOverzicht, verwerkSync,
 } from "../lib/winkel"
 
@@ -170,6 +171,10 @@ export default function Overzicht() {
           Nu synchroniseren
         </button>
       </div>
+
+      <Show when={stand()?.sessie_verlopen}>
+        <SessieVerlopen basis={basis()} klaar={(tekst) => setMelding(tekst)} />
+      </Show>
 
       <HoofdmapKaart />
 

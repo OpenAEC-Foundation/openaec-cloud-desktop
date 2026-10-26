@@ -92,6 +92,8 @@ export interface Rapport {
   overgeslagen: Overgeslagen[]
   /** Wat de sync zelf deed met een lastige naam (opgeruimd, onder een veilige naam). */
   meldingen: string[]
+  /** De sessie verliep onderweg: de ronde is netjes gestopt en gaat verder na opnieuw inloggen. */
+  sessie_verlopen?: boolean
 }
 
 export interface Overgeslagen {
@@ -219,6 +221,8 @@ export interface Stand {
   actief: Overdracht[]
   recent: Gebeurd[]
   ronde: RondeStand | null
+  /** Opnieuw inloggen nodig: de sync wacht tot dan (knop Inloggen in het overzicht en het statusvenster). */
+  sessie_verlopen: boolean
 }
 
 /** Uitkomst van installeren: setup gestart (Windows) of direct geïnstalleerd (Linux). */
