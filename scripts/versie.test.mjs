@@ -74,10 +74,12 @@ test("bestanden bijwerken zonder de opmaak te veranderen", () => {
   }
   // tauri.conf.json: alleen de twee versieregels veranderen.
   const conf = bestanden(wortel).find((b) => b.pad === "src-tauri/tauri.conf.json")
+  // Een andere versie dan die in de repo, zodat de test niet afhangt van de huidige stand (en of de wix-versie er al staat).
   const oud = conf.tekst.split(/\r?\n/)
-  const nieuw = conf.zet(conf.tekst, "2026.44.0").split(/\r?\n/)
-  assert.equal(nieuw.length, oud.length + 1)
-  assert.deepEqual(nieuw.filter((r) => !oud.includes(r)).map((r) => r.trim()), ['"version": "2026.44.0",', '"version": "26.44.0",'])
+  const nieuw = conf.zet(conf.tekst, "2031.7.3").split(/\r?\n/)
+  const hadWix = JSON.parse(conf.tekst).bundle?.windows?.wix?.version !== undefined
+  assert.equal(nieuw.length, oud.length + (hadWix ? 0 : 1))
+  assert.deepEqual(nieuw.filter((r) => !oud.includes(r)).map((r) => r.trim()), ['"version": "2031.7.3",', '"version": "31.7.3",'])
 })
 
 test("alle velden krijgen de nieuwe versie", () => {
