@@ -287,6 +287,66 @@ de browser. De logica komt uit de [OpenAEC Installer](https://github.com/OpenAEC
 - Tests van de pure logica: `npm test` (frontend) en `cargo test` in `src-tauri` (assetkeuze, download- en
   digestcontrole, handtekening, uninstall-opdracht).
 
+## Assistent
+
+Het scherm **Assistent** (zijmenu, of **Assistent** in het menu van het systeemvak) is een gesprek met de AI-dienst
+van OpenAEC (de AI-gateway, `https://ai.cloud.open-aec.eu`). Code: `src-tauri/src/assistent`
+(bijlagen, gesprekken, opdrachten), `crates/openaec-sync/src/ai.rs` (de client van de gateway), `src/schermen/Assistent.tsx`
+en `src/lib/markdown.ts`.
+
+- **Gesprek:** antwoorden komen gestreamd binnen (server-sent events) en worden als markdown opgemaakt: kopjes, lijsten,
+  tabellen, codeblokken (met Kopiëren), citaten en links. De opmaak bouwt gewone elementen met tekst, nooit HTML: een
+  `<script>` in een antwoord blijft tekst, en alleen `http`, `https` en `mailto` worden een link (die opent in de
+  browser). **Stoppen** breekt een antwoord af; wat er al was, blijft staan.
+- **Model:** de keuzelijst komt uit `GET /v1/models`, met het datalabel (EU) erbij; een nieuw gesprek begint met het
+  standaardmodel van de server (of het laatst gekozen model, als de server het nog heeft).
+- **Gesprekken** staan lokaal, één JSON-bestand per gesprek in `%APPDATA%\OpenAEC Storage\assistent\` (macOS en Linux:
+  de configuratiemap van de gebruiker), en zijn te verwijderen. **Nieuw gesprek** begint een leeg gesprek. De
+  denkblokken van het model (`openaec_denkblokken`) worden bewaard en gaan ongewijzigd terug bij de volgende vraag.
+- **Bijlagen:** inslepen, kiezen (de knop begint in de eerste gekoppelde map), plakken (bijv. een schermafbeelding) of
+  in de Verkenner **Vragen aan de assistent…** in het submenu van een gekoppelde map. Per bijlage een chip met naam,
+  grootte en een knop om hem weg te halen.
+  - Afbeeldingen (png, jpg, webp): verkleind tot hoogstens 1568 px aan de langste zijde en 1,5 MB, als JPEG (of PNG met
+    doorzichtigheid), als `image_url` met een data-URL. Hoogstens 20 per gesprek (de grens van de gateway).
+  - Tekst en code (txt, md, csv, json, xml, ifc, py, ts, rs, …; ook een onbekende extensie als de inhoud tekst is): als
+    tekst in de vraag, tussen `<bijlage naam="…">` en `</bijlage>`.
+  - PDF: de tekst via `pdf-extract`; een scan of een beveiligde PDF geeft een melding. DOCX en XLSX: de tekst uit het
+    document of de bladen (tab-gescheiden).
+  - Grenzen: 40 MB per bestand, 200.000 tekens tekst per bestand en 400.000 tekens voor alle bijlagen van een gesprek;
+    daarboven een duidelijke melding en geen bijlage.
+- **Privacy en kosten:** vóór de eerste vraag staat de melding "Vragen en bijlagen gaan naar de AI-dienst van OpenAEC
+  in de EU en kosten AI-tegoed van je omgeving." (eenmalig te bevestigen; in een leeg gesprek blijft hij als regel staan).
+  Na elk antwoord staat het verbruik in tokens (uit `usage`) met het model.
+- **Fouten:** in het Nederlands, met een knop waar dat helpt: geen tegoed (met **Beheer openen**; tegoed bijkopen via
+  Beheer → Abonnement), het plafond en te veel vragen (met de tijd tot het weer kan, uit `Retry-After`), een model dat
+  niet is toegestaan, geen lid of gast, een dienst die niet bereikbaar is (met **Opnieuw proberen**) en een verlopen
+  sessie (met **Inloggen**).
+
+**Toegang.** De gateway accepteert alleen een toegangstoken van de cloud (RS256-JWT van `https://cloud.open-aec.eu`) met
+scope `ai`, en de host van de klantomgeving in `X-OpenAEC-Omgeving`. Het token van de sync komt van de klantomgeving
+zelf (Frappe, client `openaec-cloud-desktop`, scopes `all openid`) en is ondoorzichtig: dat kan de gateway niet
+controleren. Daar `ai` aan toevoegen helpt niet en breekt het inloggen (Frappe weigert een scope die de client niet heeft).
+De assistent logt daarom één keer apart in bij de cloud met de publieke client `tools` (PKCE met S256, terug op
+`http://localhost:8765/terug`) en vraagt alleen `openid email profile ai`. Wie al bij de cloud is ingelogd, hoeft
+meestal alleen toe te staan. Die tokens staan in de sleutelbos (`<cloud>#ai`) en worden net als die van de sync vernieuwd
+(`Sessie` met de `Aanvrager` `TOOLS`); weigert de gateway het token (401), dan vernieuwt de app één keer en vraagt
+opnieuw. Verbinding verbreken meldt ook de assistent af. Er staat geen geheim in de app. De cloud wordt afgeleid van de
+omgeving (`klant.cloud.open-aec.eu` → `cloud.open-aec.eu`); voor ontwikkelen en testen kunnen `assistent_gateway` en
+`assistent_cloud` in `instellingen.json` een ander adres geven. De vragen gaan met `X-OpenAEC-Tool: openaec-desktop`.
+
+Wat er op de server klaar moet staan:
+
+- **Cloud:** de client `tools` (`inrichten.sh tools`) met de scope `ai` en de redirect-URI `http://localhost:8765/terug`
+  (de standaard van die stap).
+- **Gateway:** `OPENAEC_TOEGESTANE_CLIENTS` leeg of met `tools`; `OPENAEC_CLOUD_URL` gelijk aan de `iss` van de cloud.
+- **Regelkamer:** staat het beleid aan met een lijst toegestane apps, dan moet `openaec-desktop` daarin (anders
+  `tool_niet_toegestaan`), en de omgeving moet AI-tegoed hebben.
+
+Testen: `cargo test` in `crates/openaec-sync` (de client tegen een nagebootste gateway en cloud: streaming, foutcodes,
+een fout midden in de stream, een verlopen token dat één keer vernieuwd wordt) en in `src-tauri` (bijlagen: tekst,
+afbeelding verkleinen, PDF-, DOCX- en XLSX-tekst, grenzen; gesprekken bewaren, lezen en verwijderen; de berichten voor
+de gateway), en `npm test` (markdown en de hulpfuncties van het scherm).
+
 ## Installeren
 
 De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow **Build OpenAEC Desktop App**; bij een
@@ -324,7 +384,7 @@ cd src-tauri && cargo run --example hoofdmap_smoke  # Windows: hoofdmap, navigat
 cd src-tauri && cargo run --example navigatie_smoke # Windows: eigen item "OpenAEC Cloud" voor losse koppelingen
 cd src-tauri && cargo run --example versturen_smoke # Windows: Versturen met OpenAEC in het rechtermuismenu
 cd crates/openaec-shellmenu && cargo test && cargo build && cargo run --example rooktest  # Windows: modern menu (COM)
-npm test                                            # hulpfuncties van de vensters
+npm test                                            # hulpfuncties van de vensters (ook markdown van de assistent)
 ```
 
 `versturen_smoke` registreert een testwerkwoord onder een testnaam (`OpenAECVersturenRooktest`) dat naar het
@@ -615,3 +675,6 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 - Bestanden die alleen online staan, zijn niet te openen zolang de app niet draait.
 - Gedeelde mappen in het opdrachtregelprogramma `openaec-storage` (nu alleen ruimtes).
 - Een gedeeld bestand openen of een nieuwe versie uploaden vanuit de app zelf (nu via de browser).
+- Assistent: "Vragen aan de assistent" ook in het moderne rechtermuismenu van Windows 11 en op Linux en macOS (nu alleen
+  in het klassieke submenu van de gekoppelde mappen); een eigen klein venster vanuit het systeemvak; PowerPoint, oudere
+  Office-bestanden en gescande PDF's (tekstherkenning).
