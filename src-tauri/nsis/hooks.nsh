@@ -21,6 +21,18 @@
 
 Var OudeMap
 
+; Het moderne rechtermuismenu van Windows 11 (menupakket.rs, crates/openaec-shellmenu): een DLL die de Verkenner nog
+; geladen heeft, kan niet overschreven worden, wel hernoemd. Hernoemde exemplaren gaan weg zodra de Verkenner ze heeft
+; losgelaten (bij een volgende installatie of het verwijderen).
+!macro OPENAEC_SHELLMENU_VRIJ ARCH
+  Delete "$INSTDIR\shellmenu\${ARCH}\*.oud"
+  ${If} ${FileExists} "$INSTDIR\shellmenu\${ARCH}\openaec_shellmenu.dll"
+    System::Call 'kernel32::GetTickCount() i .R8'
+    Rename "$INSTDIR\shellmenu\${ARCH}\openaec_shellmenu.dll" "$INSTDIR\shellmenu\${ARCH}\openaec_shellmenu-$R8.oud"
+    Delete "$INSTDIR\shellmenu\${ARCH}\openaec_shellmenu-$R8.oud"
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   StrCpy $OudeMap ""
   ; Alleen als er onder de nieuwe naam nog niets geïnstalleerd is en de gebruiker de standaardmap niet zelf
@@ -39,9 +51,19 @@ Var OudeMap
       DetailPrint "Bestaande installatie in $INSTDIR wordt bijgewerkt"
     ${EndIf}
   ${EndIf}
+  !insertmacro OPENAEC_SHELLMENU_VRIJ "x64"
+  !insertmacro OPENAEC_SHELLMENU_VRIJ "arm64"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  ; Het moderne rechtermuismenu van Windows 11: het ondertekende pakket voor deze gebruiker registreren, met de
+  ; installatiemap als external location (de app doet hetzelfde bij het starten als het ontbreekt). Lukt het niet,
+  ; dan blijft het klassieke menu.
+  ${If} ${FileExists} "$INSTDIR\shellmenu\*.msix"
+    nsExec::Exec '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket registreer'
+    Pop $R9
+    DetailPrint "Rechtermuismenu van Windows 11: $R9"
+  ${EndIf}
   ${If} $OudeMap != ""
     ; "Apps en onderdelen" toont voortaan alleen de nieuwe naam (de nieuwe sleutel is net geschreven).
     DeleteRegKey SHCTX "${OUDE_UNINSTKEY}"
@@ -68,6 +90,14 @@ Var OudeMap
   ${EndIf}
 !macroend
 
+!macro NSIS_HOOK_PREUNINSTALL
+  ${If} $UpdateMode <> 1
+    ; Het pakket van het moderne rechtermuismenu afmelden, zolang de app er nog is (menupakket.rs).
+    nsExec::Exec '"$INSTDIR\${MAINBINARYNAME}.exe" --menupakket afmelden'
+    Pop $R9
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
     ; De autostart-regel heeft een vaste naam (de oude productnaam); Tauri ruimt alleen de regel met de huidige
@@ -87,5 +117,11 @@ Var OudeMap
     ; "Versturen met OpenAEC" op elk bestand en elke map (rechtermuis.rs).
     DeleteRegKey HKCU "Software\Classes\*\shell\OpenAECVersturen"
     DeleteRegKey HKCU "Software\Classes\Directory\shell\OpenAECVersturen"
+    ; Hernoemde DLL's van het moderne menu die de Verkenner inmiddels heeft losgelaten.
+    Delete "$INSTDIR\shellmenu\x64\*.oud"
+    Delete "$INSTDIR\shellmenu\arm64\*.oud"
+    RMDir "$INSTDIR\shellmenu\x64"
+    RMDir "$INSTDIR\shellmenu\arm64"
+    RMDir "$INSTDIR\shellmenu"
   ${EndIf}
 !macroend
