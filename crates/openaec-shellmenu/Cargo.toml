@@ -1,6 +1,6 @@
 [package]
 name = "openaec-shellmenu"
-version = "2026.44.1"
+version = "2026.44.2"
 description = "OpenAEC in het moderne rechtermuismenu van Windows 11 (IExplorerCommand, COM-server in een DLL)"
 edition = "2021"
 rust-version = "1.77"

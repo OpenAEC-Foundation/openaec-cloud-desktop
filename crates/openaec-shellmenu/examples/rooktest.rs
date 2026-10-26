@@ -133,7 +133,10 @@ mod windows_rooktest {
         let dll = PathBuf::from(dll.to_string_lossy().trim_start_matches(r"\\?\").to_string());
         println!("DLL: {}", dll.display());
 
-        let map = std::env::temp_dir().join(format!("openaec-shellmenu-rooktest-{}", std::process::id()));
+        // Het volledige pad van de tijdelijke map: de shell geeft paden lang terug, ook als %TEMP% een kort 8.3-pad is.
+        let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+        let temp = temp.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(temp);
+        let map = temp.join(format!("openaec-shellmenu-rooktest-{}", std::process::id()));
         let sleutel = format!("Software\\Classes\\CLSID\\{{{TEST_CLSID}}}");
         let _opruimen = Opruimen { map: map.clone(), sleutel: sleutel.clone() };
         let gekoppeld = map.join("Gekoppeld project");
