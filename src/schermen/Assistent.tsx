@@ -240,13 +240,25 @@ function Chip(props: { bijlage: Bijlage; weg?: () => void }) {
   )
 }
 
+const GEEN_HERKANSING = ["plafond", "geen_lid", "gast", "tool_niet_toegestaan"]
+
 /** De knop bij een fout: inloggen, beheer openen of opnieuw proberen. */
 function FoutKnop(props: { f: AiFout }) {
   return (
     <Show
       when={props.f.soort === "sessie_verlopen"}
       fallback={
-        <Show when={props.f.soort === "geen_tegoed"} fallback={<button class="klein" onClick={opnieuw}>Opnieuw proberen</button>}>
+        <Show
+          when={props.f.soort === "geen_tegoed"}
+          fallback={
+            // Bij een plafond, geen lidmaatschap of een gast helpt opnieuw proberen niet.
+            <Show when={!GEEN_HERKANSING.includes(props.f.soort)}>
+              <button class="klein" onClick={opnieuw}>
+                Opnieuw proberen
+              </button>
+            </Show>
+          }
+        >
           <button class="klein" onClick={() => api.assistentOpenBeheer().catch(() => {})}>
             Beheer openen
           </button>
@@ -473,7 +485,8 @@ export default function Assistent() {
             <textarea
               ref={invoerVak}
               rows={2}
-              placeholder={ingelogd() ? "Stel een vraag… (Enter verstuurt, Shift+Enter is een nieuwe regel)" : "Log eerst in om een vraag te stellen"}
+              placeholder={ingelogd() ? "Stel een vraag of sleep een bestand hierheen" : "Log eerst in om een vraag te stellen"}
+              title="Enter verstuurt, Shift+Enter is een nieuwe regel"
               value={invoer()}
               onInput={(e) => setInvoer(e.currentTarget.value)}
               onPaste={plak}
