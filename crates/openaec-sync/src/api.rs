@@ -419,6 +419,19 @@ struct Antwoord<T> {
     message: T,
 }
 
+/// Kent de server deze methode van `openaec_storage.api` niet (een oudere versie)? Frappe meldt dan dat het de
+/// methode niet kon ophalen; een gewone fout van de methode zelf (geen recht, ongeldige invoer) telt niet.
+pub fn methode_ontbreekt(f: &Fout, methode: &str) -> bool {
+    let Some(tekst) = f.servermelding().or_else(|| if let Fout::Server { tekst, .. } = f { Some(tekst.clone()) } else { None }) else {
+        return false;
+    };
+    let volledig = format!("openaec_storage.api.{methode}");
+    tekst.contains(&volledig)
+        && ["ophalen", "Failed to get method", "has no attribute", "No module", "not whitelisted", "niet toegestaan"]
+            .iter()
+            .any(|t| tekst.contains(t))
+}
+
 /// Voeg `deling` toe aan de gegevens van een verzoek (alleen als er een is: een oudere server kent hem niet).
 fn met_deling(mut gegevens: Value, deling: Option<&str>) -> Value {
     if let Some(deling) = deling {
@@ -816,6 +829,17 @@ impl Client {
 
     pub async fn ruimteleden(&self, ruimte: &str) -> Result<Vec<Ruimtelid>, Fout> {
         #[derive(Deserialize)]
+        struct Detail {
+            #[serde(default)]
+            leden: Vec<Ruimtelid>,
+        }
+        // Nieuwere servers: een eigen methode (ook met een token); anders het documentadres van Frappe.
+        match self.roep::<Detail>("ruimte", json!({"ruimte": ruimte})).await {
+            Ok(d) => return Ok(d.leden),
+            Err(f) if !methode_ontbreekt(&f, "ruimte") => return Err(f),
+            Err(_) => {}
+        }
+        #[derive(Deserialize)]
         struct Document {
             #[serde(default)]
             leden: Vec<Ruimtelid>,
@@ -838,10 +862,17 @@ impl Client {
         self.roep_op("/api/method/openaec_storage.mapsjablonen.", "sjablonen", json!({"soort": soort})).await
     }
 
-    /// Een nieuwe ruimte, via het documentadres van Frappe (`POST /api/resource/Ruimte`): alleen een beheerder van de
-    /// omgeving mag dat (de server toetst het); wie hem aanmaakt, wordt beheerder van de ruimte. Met een mapsjabloon
-    /// legt de server meteen de mappen aan.
+    /// Een nieuwe ruimte (`maak_ruimte`): alleen een beheerder van de omgeving mag dat (de server toetst het); wie hem
+    /// aanmaakt, wordt beheerder van de ruimte. Met een mapsjabloon legt de server meteen de mappen aan. Een oudere
+    /// server zonder die methode: via het documentadres van Frappe.
     pub async fn maak_ruimte(&self, naam: &str, soort: &str, mapsjabloon: Option<&str>) -> Result<Ruimte, Fout> {
+        match self.roep::<Ruimte>("maak_ruimte", json!({"naam": naam, "soort": soort, "mapsjabloon": mapsjabloon})).await {
+            Err(f) if methode_ontbreekt(&f, "maak_ruimte") => self.maak_ruimte_document(naam, soort, mapsjabloon).await,
+            uit => uit,
+        }
+    }
+
+    async fn maak_ruimte_document(&self, naam: &str, soort: &str, mapsjabloon: Option<&str>) -> Result<Ruimte, Fout> {
         #[derive(Deserialize)]
         struct Document {
             name: String,
