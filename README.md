@@ -11,7 +11,12 @@ deel ze met een link. Daarnaast de **OpenAEC-tools** installeren, bijwerken en s
 
 - **`crates/openaec-sync`** — de kern, zonder UI (ook bruikbaar voor een WebDAV-gateway of een client
   voor macOS/Linux):
-  - `api` — client voor `openaec_storage.api.*` (API-sleutel of bearer-token).
+  - `api` — client voor `openaec_storage.api.*` (API-sleutel of bearer-token). De Authorization-header komt bij
+    elk verzoek uit een token-bron; ondertekende links naar de opslag gaan zonder.
+  - `sessie` — de token-bron van een omgeving: vernieuwt het OAuth-token ruim voor het verlopen (hoogstens één
+    vernieuwing tegelijk, het nieuwe paar wordt meteen bewaard) en na een 401 één keer geforceerd. Lukt vernieuwen
+    niet meer, dan stopt de sync netjes met één melding "Je sessie is verlopen. Log opnieuw in." (knop Inloggen in
+    het overzicht en het statusvenster) en gaat hij verder zodra er opnieuw is ingelogd.
   - `blokken` — BLAKE3-hashes per blok (8 MiB, groter bij zeer grote bestanden).
   - `upload_bestand` / `download_bestand` — delta: bij een wijziging gaan alleen de gewijzigde blokken
     over de lijn; de server kopieert de rest. Downloads worden gecontroleerd en atomair geplaatst.

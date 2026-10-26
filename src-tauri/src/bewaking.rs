@@ -138,6 +138,11 @@ pub fn start(app: AppHandle) {
                                 Err(f) if k.deling.is_some() && f.deling_gestopt().is_some() => {
                                     te_doen.insert(k.lokaal.clone());
                                 }
+                                // Ook tussen de rondes door: één melding dat opnieuw inloggen nodig is.
+                                Err(f) if f.sessie_verlopen() => {
+                                    crate::sessie_verlopen(&app);
+                                    break;
+                                }
                                 Err(_) => {}
                             }
                         }

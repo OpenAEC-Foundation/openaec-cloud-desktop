@@ -33,9 +33,10 @@ use std::time::Duration;
 
 use openaec_sync::api::{Gedeeld, Ruimte};
 use openaec_sync::motor::{aantal_bekend, bekend_bestand, sync_met_opties, Opties, Rapport};
-use openaec_sync::oauth::{self, Tokens};
+use openaec_sync::oauth;
 use openaec_sync::opslag::ClientOpslag;
-use openaec_sync::Client;
+use openaec_sync::sessie::{Bewaring, Sessie, Tokenbron};
+use openaec_sync::{Client, Fout, SESSIE_VERLOPEN};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
@@ -59,23 +60,76 @@ fn fout(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-/// Voorkomt dat twee taken tegelijk het token vernieuwen (het oude refresh-token vervalt daarbij).
-static VERNIEUWEN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// De sleutel of tokens van een omgeving in de sleutelbos van het systeem (zie `instellingen`).
+struct Sleutelbos(String);
 
-/// Waarde voor de Authorization-header: een API-sleutel zoals bewaard, of een OAuth-token dat zo nodig
-/// eerst wordt vernieuwd.
-async fn autorisatie(basis: &str) -> Result<String, String> {
-    let _slot = VERNIEUWEN.lock().await;
-    let bewaard = instellingen::lees_sleutel(basis).ok_or("niet ingelogd; verbind opnieuw")?;
-    let Ok(tokens) = serde_json::from_str::<Tokens>(&bewaard) else {
-        return Ok(bewaard);
-    };
-    if !tokens.verlopen() {
-        return Ok(tokens.autorisatie());
+impl Bewaring for Sleutelbos {
+    fn lees(&self) -> Option<String> {
+        instellingen::lees_sleutel(&self.0)
     }
-    let nieuw = oauth::vernieuw(basis, &tokens).await.map_err(|e| format!("sessie verlopen, log opnieuw in ({e})"))?;
-    instellingen::bewaar_sleutel(basis, &serde_json::to_string(&nieuw).unwrap()).map_err(fout)?;
-    Ok(nieuw.autorisatie())
+
+    fn bewaar(&self, waarde: &str) -> Result<(), String> {
+        instellingen::bewaar_sleutel(&self.0, waarde).map_err(fout)
+    }
+}
+
+type Sessies = std::collections::HashMap<String, std::sync::Arc<Sessie>>;
+
+/// De sessie van een omgeving, één voor de hele app: rondes, bewaking, het deelvenster, Versturen en de bestanden op
+/// aanvraag halen hun autorisatie bij elk verzoek hier. Haar slot zorgt dat er hoogstens één vernieuwing tegelijk loopt
+/// (het oude refresh-token vervalt daarbij); wie wachtte, gebruikt meteen het nieuwe token.
+fn sessie(basis: &str) -> std::sync::Arc<Sessie> {
+    static SESSIES: std::sync::Mutex<Option<Sessies>> = std::sync::Mutex::new(None);
+    let mut sessies = SESSIES.lock().unwrap();
+    sessies
+        .get_or_insert_with(Default::default)
+        .entry(basis.to_string())
+        .or_insert_with(|| std::sync::Arc::new(Sessie::new(basis, Sleutelbos(basis.to_string()))))
+        .clone()
+}
+
+/// Waarde voor de Authorization-header buiten een [`Client`] (de bestanden op aanvraag): met `afgewezen` None de
+/// huidige waarde (zo nodig eerst vernieuwd), met de waarde die de server net met 401 weigerde de waarde om het nog één
+/// keer mee te proberen. Lukt dat niet meer, dan verschijnt de melding dat de sessie verlopen is.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) async fn autorisatie(app: &AppHandle, basis: &str, afgewezen: Option<&str>) -> Result<String, String> {
+    let s = sessie(basis);
+    let uitkomst = match afgewezen {
+        None => s.geef().await,
+        Some(a) => s.na_weigering(a).await.and_then(|w| w.ok_or(Fout::SessieVerlopen)),
+    };
+    uitkomst.map_err(|f| {
+        if f.sessie_verlopen() {
+            sessie_verlopen(app);
+        }
+        fout(f)
+    })
+}
+
+/// De sessie is verlopen en vernieuwen lukt niet meer: één melding, en in het overzicht en het statusvenster de vraag
+/// om opnieuw in te loggen. Rondes wachten tot er opnieuw is ingelogd (zie [`opnieuw_ingelogd`]).
+pub(crate) fn sessie_verlopen(app: &AppHandle) {
+    if app.state::<AppState>().activiteit.zet_sessie_verlopen(true) {
+        log::warn!("sessie verlopen; opnieuw inloggen nodig");
+        melding(app, SESSIE_VERLOPEN);
+        activiteit::meld(app);
+    }
+}
+
+/// Opnieuw ingelogd (of verbonden met een sleutel): de sessie leest de sleutelbos opnieuw, de melding verdwijnt en een
+/// gestopte ronde gaat verder.
+async fn opnieuw_ingelogd(app: &AppHandle, basis: &str) {
+    sessie(basis).vergeet().await;
+    let was_verlopen = app.state::<AppState>().activiteit.zet_sessie_verlopen(false);
+    activiteit::meld(app);
+    if was_verlopen {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Ok(r) = sync_alles(&app).await {
+                let _ = app.emit("sync", &r);
+            }
+        });
+    }
 }
 
 /// Eén HTTP-client voor de hele app: verbindingen (en TLS) blijven tussen rondes en verzoeken open.
@@ -84,9 +138,13 @@ fn http() -> reqwest::Client {
     HTTP.get_or_init(openaec_sync::api::nieuwe_http).clone()
 }
 
+/// Client voor de verbonden omgeving; de autorisatie komt bij elk verzoek uit de [`sessie`].
 async fn client(state: &AppState) -> Result<Client, String> {
     let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
-    Ok(Client::met_http(&basis, &autorisatie(&basis).await?, http()))
+    if instellingen::lees_sleutel(&basis).is_none() {
+        return Err("niet ingelogd; verbind opnieuw".into());
+    }
+    Ok(Client::met_bron(&basis, sessie(&basis), http()))
 }
 
 fn onthoud_basis(state: &AppState, basis: String) -> Result<(), String> {
@@ -111,11 +169,15 @@ fn status(state: tauri::State<'_, AppState>) -> Status {
 
 /// Verbinden met een klantomgeving; geeft de ruimtes terug (dient meteen als test van de sleutel).
 #[tauri::command]
-async fn verbind(state: tauri::State<'_, AppState>, basis: String, autorisatie: String) -> Result<Vec<Ruimte>, String> {
+async fn verbind(app: AppHandle, state: tauri::State<'_, AppState>, basis: String, autorisatie: String) -> Result<Vec<Ruimte>, String> {
     let basis = basis.trim().trim_end_matches('/').to_string();
-    let ruimtes = Client::new(&basis, autorisatie.trim()).ruimtes().await.map_err(fout)?;
+    let ruimtes = Client::new(&basis, autorisatie.trim()).ruimtes().await.map_err(|e| match e {
+        Fout::SessieVerlopen => "Deze API-sleutel wordt niet geaccepteerd. Controleer de sleutel en het geheim.".to_string(),
+        e => fout(e),
+    })?;
     instellingen::bewaar_sleutel(&basis, autorisatie.trim()).map_err(fout)?;
-    onthoud_basis(&state, basis)?;
+    onthoud_basis(&state, basis.clone())?;
+    opnieuw_ingelogd(&app, &basis).await;
     Ok(ruimtes)
 }
 
@@ -138,17 +200,28 @@ async fn log_in(app: AppHandle, state: tauri::State<'_, AppState>, basis: String
     let tokens = oauth::wissel_code(&basis, &code, &verifier).await.map_err(fout)?;
     let ruimtes = Client::new(&basis, &tokens.autorisatie()).ruimtes().await.map_err(fout)?;
     instellingen::bewaar_sleutel(&basis, &serde_json::to_string(&tokens).unwrap()).map_err(fout)?;
-    onthoud_basis(&state, basis)?;
+    onthoud_basis(&state, basis.clone())?;
+    opnieuw_ingelogd(&app, &basis).await;
     Ok(ruimtes)
 }
 
 #[tauri::command]
-fn verbreek(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut inst = state.instellingen.lock().unwrap();
-    if let Some(basis) = inst.basis.take() {
-        instellingen::wis_sleutel(&basis);
+async fn verbreek(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let basis = {
+        let mut inst = state.instellingen.lock().unwrap();
+        let basis = inst.basis.take();
+        if let Some(b) = &basis {
+            instellingen::wis_sleutel(b);
+        }
+        inst.bewaar().map_err(fout)?;
+        basis
+    };
+    if let Some(b) = basis {
+        sessie(&b).vergeet().await;
     }
-    inst.bewaar().map_err(fout)
+    state.activiteit.zet_sessie_verlopen(false);
+    activiteit::meld(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -628,6 +701,10 @@ async fn sync_mappen(app: &AppHandle, alleen: Option<&std::collections::HashSet<
     if state.activiteit.gepauzeerd() {
         return Err("synchroniseren is gepauzeerd".into());
     }
+    // Wachten op opnieuw inloggen (zie `opnieuw_ingelogd`): niet bij elke wijziging opnieuw proberen.
+    if state.activiteit.sessie_is_verlopen() {
+        return Err(SESSIE_VERLOPEN.into());
+    }
     activiteit::begin(app);
     let r = sync_ronde(app, &state, alleen).await;
     activiteit::einde(app, r.as_deref().map_err(String::as_str));
@@ -697,6 +774,12 @@ async fn sync_ronde(
         let opslag = opaanvraag::Verkenneropslag::new(&binnen, root, op_aanvraag.contains(&k.lokaal), k.nieuwe_mappen, &k.bekende_mappen);
         let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
         let mut r = sync_met_opties(&opslag, root, &k.uitgesloten, &waarnemer, &opties).await;
+        // Sessie verlopen en niet meer te vernieuwen: de ronde stopt (ook voor de volgende mappen), met één melding en
+        // zonder fouten per bestand. Wat al gelukt was, krijgt hieronder gewoon zijn vinkje.
+        let verlopen = match &r {
+            Ok(rapport) => rapport.sessie_verlopen,
+            Err(f) => f.sessie_verlopen(),
+        };
         // Ingetrokken, verlopen of weg: niet elke ronde opnieuw proberen, maar de koppeling netjes stoppen.
         if let Some(code) = r.as_ref().err().and_then(|f| f.deling_gestopt()).filter(|_| k.deling.is_some()) {
             let tekst = gestopt_tekst(&k.ruimte_naam, &code);
@@ -729,9 +812,13 @@ async fn sync_ronde(
         uit.push(MapRapport {
             lokaal: k.lokaal,
             ruimte_naam: k.ruimte_naam,
-            fout: r.as_ref().err().map(fout),
+            fout: if verlopen { Some(SESSIE_VERLOPEN.to_string()) } else { r.as_ref().err().map(fout) },
             rapport: r.ok(),
         });
+        if verlopen {
+            sessie_verlopen(app);
+            break;
+        }
     }
     Ok(uit)
 }
@@ -972,6 +1059,7 @@ pub(crate) async fn voer_actie(app: AppHandle, actie: String, paden: Vec<String>
 /// rechten van de deling).
 #[tauri::command]
 async fn maak_cloudmap(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     ruimte: String,
     lokaal: String,
@@ -988,7 +1076,7 @@ async fn maak_cloudmap(
         let bestanden = opslag.lijst().await.map_err(fout)?;
         std::fs::create_dir_all(&lokaal).map_err(fout)?;
         cloudfilter::register(&lokaal, "OpenAEC Storage", env!("CARGO_PKG_VERSION")).map_err(fout)?;
-        cloudfilter::set_hydrator(hydrator(client));
+        cloudfilter::set_hydrator(hydrator(app, client.basis().to_string()));
         cloudfilter::connect(&lokaal).map_err(fout)?;
         let mut n = 0u32;
         for b in bestanden {
@@ -1006,7 +1094,7 @@ async fn maak_cloudmap(
     }
     #[cfg(not(windows))]
     {
-        let _ = (&state, &ruimte, &lokaal, &gedeeld);
+        let _ = (&app, &state, &ruimte, &lokaal, &gedeeld);
         Err("cloud-mappen zijn alleen op Windows beschikbaar".into())
     }
 }
@@ -1014,20 +1102,14 @@ async fn maak_cloudmap(
 /// Hydrator voor placeholders: haalt het gevraagde bereik van de huidige versie op via een downloadlink.
 /// Draait op de callback-thread van Windows, dus blocking.
 #[cfg(windows)]
-fn hydrator(client: Client) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync + 'static {
-    let basis = client.basis().to_string();
+fn hydrator(app: AppHandle, basis: String) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync + 'static {
     move |bestand, begin, lengte| {
-        // Callback-thread van Windows (geen async runtime): token zo nodig vernieuwen via block_on.
-        let Ok(autorisatie) = tauri::async_runtime::block_on(autorisatie(&basis)) else { return Vec::new() };
         let http = reqwest::blocking::Client::new();
-        let link: Option<String> = http
-            .post(format!("{basis}/api/method/openaec_storage.api.download"))
-            .header("Authorization", &autorisatie)
-            .json(&serde_json::json!({ "bestand": bestand }))
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json::<serde_json::Value>())
+        let verzoek = serde_json::json!({ "bestand": bestand });
+        let url = format!("{basis}/api/method/openaec_storage.api.download");
+        let link: Option<String> = api_blocking(&app, &basis, |autorisatie| http.post(&url).header("Authorization", autorisatie).json(&verzoek).send())
             .ok()
+            .and_then(|r| r.json::<serde_json::Value>().ok())
             .and_then(|v| v["message"]["url"].as_str().map(str::to_string));
         let Some(url) = link else { return Vec::new() };
         if lengte <= 0 {
@@ -1041,6 +1123,33 @@ fn hydrator(client: Client) -> impl Fn(&str, i64, i64) -> Vec<u8> + Send + Sync 
             .map(|b| b.to_vec())
             .unwrap_or_default()
     }
+}
+
+/// Een verzoek naar de API vanuit blocking code (de callback-threads van Windows, zonder async runtime): met de
+/// autorisatie van de sessie, en na een 401 één keer vernieuwd en opnieuw. Geeft het geslaagde antwoord, of een
+/// melding voor mensen (nooit de ruwe JSON van de server).
+#[cfg(windows)]
+pub(crate) fn api_blocking(
+    app: &AppHandle,
+    basis: &str,
+    verstuur: impl Fn(&str) -> reqwest::Result<reqwest::blocking::Response>,
+) -> Result<reqwest::blocking::Response, String> {
+    const GEEN_VERBINDING: &str = "Geen verbinding met de server. Controleer je internetverbinding en probeer het opnieuw.";
+    let waarde = tauri::async_runtime::block_on(autorisatie(app, basis, None))?;
+    let mut antwoord = verstuur(&waarde).map_err(|_| GEEN_VERBINDING.to_string())?;
+    if antwoord.status() == reqwest::StatusCode::UNAUTHORIZED {
+        let nieuw = tauri::async_runtime::block_on(autorisatie(app, basis, Some(&waarde)))?;
+        antwoord = verstuur(&nieuw).map_err(|_| GEEN_VERBINDING.to_string())?;
+        if antwoord.status() == reqwest::StatusCode::UNAUTHORIZED {
+            sessie_verlopen(app);
+            return Err(SESSIE_VERLOPEN.into());
+        }
+    }
+    let status = antwoord.status();
+    if !status.is_success() {
+        return Err(openaec_sync::serverfout_tekst(status.as_u16(), &antwoord.text().unwrap_or_default()));
+    }
+    Ok(antwoord)
 }
 
 /// Starten bij inloggen (aan/uit); de app start dan verborgen in het systeemvak.

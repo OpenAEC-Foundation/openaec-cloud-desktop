@@ -72,6 +72,10 @@ pub fn deelfout(f: &Fout) -> DeelFout {
     if let Fout::Netwerk(_) = f {
         return melding("geen_verbinding", "Geen verbinding met de server. Controleer je internetverbinding en probeer het opnieuw.");
     }
+    // Vernieuwen van het token lukte niet meer (of de sleutel wordt geweigerd): opnieuw inloggen.
+    if f.sessie_verlopen() {
+        return melding("niet_ingelogd", "Je sessie is verlopen. Log opnieuw in via het hoofdvenster.");
+    }
     if f.foutcode().as_deref() == Some("ruimte_gearchiveerd") {
         return melding(
             "ruimte_gearchiveerd",
@@ -102,6 +106,9 @@ pub fn deelfout(f: &Fout) -> DeelFout {
         ),
         Some(404) => melding("niet_gevonden", "Dit bestand of deze map bestaat niet (meer) op de server."),
         Some(502..=504) => melding("geen_verbinding", "De server is tijdelijk niet bereikbaar. Probeer het straks opnieuw."),
+        // Een weigering van de API: de tekst uit de sync-kern (417 met de melding van de server, 5xx in gewone woorden,
+        // nooit de ruwe JSON).
+        _ if matches!(f, Fout::Server { .. }) => DeelFout { code: "fout", melding: f.to_string() },
         _ => DeelFout { code: "fout", melding: server.unwrap_or_else(|| f.to_string()) },
     }
 }
@@ -369,6 +376,9 @@ mod tests {
         assert_eq!(deelfout(&server(404, json!({}))).code, "niet_gevonden");
         assert_eq!(deelfout(&server(401, json!({}))).code, "niet_ingelogd");
         assert_eq!(deelfout(&server(503, json!({}))).code, "geen_verbinding");
+        assert_eq!(deelfout(&Fout::SessieVerlopen).code, "niet_ingelogd");
+        let crash = deelfout(&server(500, json!({"exc_type": "Exception", "exception": "frappe.exceptions.X: Traceback (most recent call last)"})));
+        assert!(crash.melding.starts_with("Er ging iets mis op de server"), "{}", crash.melding);
         // Een andere weigering: de melding van de server.
         let anders = json!({"exception": "frappe.exceptions.ValidationError: Ongeldige datum"});
         assert_eq!(deelfout(&server(417, anders)), DeelFout { code: "fout", melding: "Ongeldige datum".into() });

@@ -153,6 +153,14 @@ pub fn versturenfout(f: &Fout) -> DeelFout {
     if let Fout::Netwerk(_) = f {
         return melding("geen_verbinding", "Geen verbinding met de server. Controleer je internetverbinding en probeer het opnieuw.");
     }
+    // Vernieuwen van het token lukte niet meer (of de sleutel wordt geweigerd): opnieuw inloggen.
+    if f.sessie_verlopen() {
+        return melding("niet_ingelogd", "Je sessie is verlopen. Log opnieuw in.");
+    }
+    // Een ondertekende link naar de opslag (geen kwestie van rechten): de algemene tekst.
+    if let Fout::Link { .. } = f {
+        return DeelFout { code: "fout", melding: f.to_string() };
+    }
     // Een server zonder overdrachten (oudere OpenAEC Storage): Frappe meldt dan dat de methode of module ontbreekt.
     let servertekst = f.servermelding().unwrap_or_default();
     if servertekst.contains("openaec_storage.overdracht") && (servertekst.contains("No module") || servertekst.contains("ophalen")) {
@@ -169,6 +177,8 @@ pub fn versturenfout(f: &Fout) -> DeelFout {
         ),
         Some(404) => melding("niet_gevonden", "Deze overdracht bestaat niet (meer) op de server."),
         Some(502..=504) => melding("geen_verbinding", "De server is tijdelijk niet bereikbaar. Probeer het straks opnieuw."),
+        // Een weigering van de API: de tekst uit de sync-kern (nooit de ruwe JSON).
+        _ if matches!(f, Fout::Server { .. }) => DeelFout { code: "fout", melding: f.to_string() },
         _ => DeelFout { code: "fout", melding: f.servermelding().unwrap_or_else(|| f.to_string()) },
     }
 }
@@ -672,6 +682,10 @@ mod tests {
         assert_eq!(versturenfout(&server(401)).code, "niet_ingelogd");
         assert_eq!(versturenfout(&server(404)).code, "niet_gevonden");
         assert_eq!(versturenfout(&server(503)).code, "geen_verbinding");
+        assert_eq!(versturenfout(&Fout::SessieVerlopen).code, "niet_ingelogd");
+        let link = versturenfout(&Fout::Link { status: 403, tekst: "<Error/>".into() });
+        assert_eq!(link.code, "fout");
+        assert!(!link.melding.contains("<Error"));
         // Een oudere server zonder overdrachten: een begrijpelijke melding in plaats van de Python-fout.
         let oud = Fout::Server {
             status: 404,

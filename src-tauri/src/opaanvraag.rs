@@ -187,31 +187,32 @@ pub fn serverbestand(root: &Path, pad: &Path) -> Option<(String, Option<u64>)> {
 
 /// De ophaler voor bestanden op aanvraag: zoek de koppeling bij het pad (`koppelingen` geeft de gekoppelde mappen in
 /// de hoofdmap), vraag een downloadlink voor precies die versie en stuur het gevraagde bereik door. Draait op een
-/// callback-thread van Windows (geen async runtime), dus blocking; het token wordt zo nodig vernieuwd.
+/// callback-thread van Windows (geen async runtime), dus blocking. `api` verstuurt het verzoek naar de API met de
+/// autorisatie van de sessie (en vernieuwt na een 401 één keer; zie `crate::api_blocking`); de downloadlink zelf gaat
+/// zonder Authorization-header.
 #[cfg(windows)]
-pub fn ophaler<K, A>(basis: impl Fn() -> Option<String> + Send + Sync + 'static, koppelingen: K, autorisatie: A) -> crate::cloudfilter::Ophaler
+pub fn ophaler<K, A>(basis: impl Fn() -> Option<String> + Send + Sync + 'static, koppelingen: K, api: A) -> crate::cloudfilter::Ophaler
 where
     K: Fn() -> Vec<String> + Send + Sync + 'static,
-    A: Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    A: Fn(&str, &dyn Fn(&str) -> reqwest::Result<reqwest::blocking::Response>) -> Result<reqwest::blocking::Response, String>
+        + Send
+        + Sync
+        + 'static,
 {
     Box::new(move |pad, begin, lengte, schrijf| {
         use std::io::Read;
         let root = koppelingen().into_iter().map(PathBuf::from).find(|r| pad.starts_with(r)).ok_or("dit bestand hoort bij geen gekoppelde ruimte")?;
         let (bestand, versie) = serverbestand(&root, pad).ok_or("dit bestand is niet bekend op de server")?;
         let basis = basis().ok_or("niet verbonden")?;
-        let autorisatie = autorisatie(&basis)?;
         let http = reqwest::blocking::Client::builder().timeout(None).build().map_err(|e| e.to_string())?;
         let mut verzoek = serde_json::json!({ "bestand": bestand });
         if let Some(v) = versie {
             verzoek["versie"] = v.into();
         }
-        let link: serde_json::Value = http
-            .post(format!("{basis}/api/method/openaec_storage.api.download"))
-            .header("Authorization", &autorisatie)
-            .json(&verzoek)
-            .send()
-            .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
+        let url = format!("{basis}/api/method/openaec_storage.api.download");
+        let link: serde_json::Value = api(&basis, &|autorisatie| http.post(&url).header("Authorization", autorisatie).json(&verzoek).send())
+            .map_err(|e| format!("downloadlink: {e}"))?
+            .json()
             .map_err(|e| format!("downloadlink: {e}"))?;
         let url = link["message"]["url"].as_str().ok_or("geen downloadlink van de server")?.to_string();
         if lengte <= 0 {

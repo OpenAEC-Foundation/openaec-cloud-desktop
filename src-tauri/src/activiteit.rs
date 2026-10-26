@@ -124,6 +124,8 @@ pub struct Stand {
     recent: Vec<Gebeurd>,
     /// Alleen tijdens een ronde waarin iets over de lijn gaat.
     ronde: Option<RondeStand>,
+    /// De sessie is verlopen: de vensters vragen om opnieuw in te loggen (knop Inloggen).
+    sessie_verlopen: bool,
 }
 
 #[derive(Default)]
@@ -187,6 +189,8 @@ impl Binnen {
 pub struct Activiteit {
     binnen: Mutex<Binnen>,
     gepauzeerd: AtomicBool,
+    /// Opnieuw inloggen nodig (zie `crate::sessie_verlopen`); de sync wacht tot dan.
+    sessie_verlopen: AtomicBool,
     /// Laatst getoonde toestand en tooltip van het systeemvak (alleen bijwerken als er iets verandert).
     vak: Mutex<Option<(Toestand, String)>>,
 }
@@ -209,6 +213,15 @@ impl Activiteit {
         self.gepauzeerd.load(Ordering::SeqCst)
     }
 
+    pub fn sessie_is_verlopen(&self) -> bool {
+        self.sessie_verlopen.load(Ordering::SeqCst)
+    }
+
+    /// Zet of wis "sessie verlopen"; geeft `true` als dat een verandering is (zo komt er maar één melding).
+    pub fn zet_sessie_verlopen(&self, verlopen: bool) -> bool {
+        self.sessie_verlopen.swap(verlopen, Ordering::SeqCst) != verlopen
+    }
+
     pub fn stand(&self) -> Stand {
         self.stand_op(klok())
     }
@@ -216,8 +229,11 @@ impl Activiteit {
     fn stand_op(&self, nu: f64) -> Stand {
         let b = self.binnen.lock().unwrap();
         let gepauzeerd = self.gepauzeerd();
+        let sessie_verlopen = self.sessie_is_verlopen();
         let (toestand, samenvatting) = if gepauzeerd {
             (Toestand::Gepauzeerd, "Gepauzeerd".to_string())
+        } else if sessie_verlopen {
+            (Toestand::Fout, openaec_sync::SESSIE_VERLOPEN.to_string())
         } else if b.bezig {
             let delen: Vec<String> = [(b.uploaden, "uploaden"), (b.downloaden, "downloaden")]
                 .into_iter()
@@ -242,6 +258,7 @@ impl Activiteit {
             actief,
             recent: b.recent.iter().cloned().collect(),
             ronde: b.ronde_stand(nu),
+            sessie_verlopen,
         }
     }
 
@@ -472,6 +489,23 @@ mod tests {
         a.verwerk_op(m, Gebeurtenis::Fout { pad: "b.pdf".into(), fout: "weg".into() }, 5.0);
         let r = ronde(&a, 5.0);
         assert_eq!((r.nog, r.bytes_gedaan, r.bespaard), (1, 1200 * MB, 984 * MB));
+    }
+
+    #[test]
+    fn verlopen_sessie_geeft_een_melding_tot_er_opnieuw_is_ingelogd() {
+        let a = Activiteit::default();
+        assert!(!a.stand_op(0.0).sessie_verlopen);
+        // De eerste keer is een verandering (één melding); daarna niet meer, hoeveel verzoeken er ook nog mislukken.
+        assert!(a.zet_sessie_verlopen(true));
+        assert!(!a.zet_sessie_verlopen(true));
+        let s = a.stand_op(0.0);
+        assert!(s.sessie_verlopen);
+        assert_eq!(s.toestand, Toestand::Fout);
+        assert_eq!(s.samenvatting, "Je sessie is verlopen. Log opnieuw in.");
+        // Opnieuw ingelogd.
+        assert!(a.zet_sessie_verlopen(false));
+        assert!(!a.zet_sessie_verlopen(false));
+        assert_eq!(a.stand_op(0.0).toestand, Toestand::Bijgewerkt);
     }
 
     #[test]

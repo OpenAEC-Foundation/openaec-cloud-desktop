@@ -62,7 +62,7 @@ mod echt {
             let icoon = std::env::current_exe().map(|p| format!("{},0", p.display())).map_err(|e| e.to_string())?;
             cloudfilter::registreer_hoofdmap(pad, super::NAAM, env!("CARGO_PKG_VERSION"), &icoon).map_err(|e| e.to_string())?;
             let _ = cloudfilter::markeer_op_aanvraag(std::path::Path::new(pad), std::path::Path::new(pad), true);
-            let (a1, a2) = (app.clone(), app.clone());
+            let (a1, a2, a3) = (app.clone(), app.clone(), app.clone());
             cloudfilter::zet_ophaler(opaanvraag::ophaler(
                 move || a1.state::<AppState>().instellingen.lock().unwrap().basis.clone(),
                 move || {
@@ -70,7 +70,7 @@ mod echt {
                     let inst = state.instellingen.lock().unwrap();
                     inst.koppelingen.iter().filter(|k| inst.in_hoofdmap(k)).map(|k| k.lokaal.clone()).collect()
                 },
-                |basis| tauri::async_runtime::block_on(crate::autorisatie(basis)),
+                move |basis, verstuur| crate::api_blocking(&a3, basis, verstuur),
             ));
             cloudfilter::verbind_hoofdmap(pad).map_err(|e| e.to_string())
         })();
