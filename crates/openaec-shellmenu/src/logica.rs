@@ -149,10 +149,26 @@ fn normaal(pad: &str) -> String {
     p.to_lowercase()
 }
 
+/// Het volledige pad van een bestaand bestand of map: een kort 8.3-pad (`C:\Users\RUNNER~1\…`) en een snelkoppeling
+/// naar hetzelfde station worden zo vergelijkbaar. Bestaat het pad niet, dan blijft het zoals het is.
+fn volledig(pad: &str) -> String {
+    match std::fs::canonicalize(pad) {
+        Ok(p) => {
+            let p = p.to_string_lossy().to_string();
+            if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+                format!(r"\\{rest}")
+            } else {
+                p.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(p)
+            }
+        }
+        Err(_) => pad.to_string(),
+    }
+}
+
 /// Ligt `pad` in `map` (of is het `map` zelf)? Hoofdletters tellen niet; "C:\Werk\Project AB" ligt niet in
 /// "C:\Werk\Project A".
 pub fn binnen(pad: &str, map: &str) -> bool {
-    let (p, m) = (normaal(pad), normaal(map));
+    let (p, m) = (normaal(&volledig(pad)), normaal(&volledig(map)));
     if m.is_empty() {
         return false;
     }
