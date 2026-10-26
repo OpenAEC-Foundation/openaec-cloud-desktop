@@ -99,6 +99,18 @@ pub struct Ruimte {
     pub rol: String,
 }
 
+/// Een mapsjabloon (`openaec_storage.mapsjablonen.sjablonen`): `naam` is ook de sleutel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Mapsjabloon {
+    pub naam: String,
+    #[serde(default)]
+    pub omschrijving: Option<String>,
+    #[serde(default)]
+    pub soort: Option<String>,
+    #[serde(default)]
+    pub standaard: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapItem {
     pub name: String,
@@ -819,6 +831,33 @@ impl Client {
             .extend(["api", "resource", "Ruimte", ruimte]);
         let antwoord = self.met_autorisatie(|| self.http.get(url.clone())).await?;
         Ok(antwoord.json::<Data>().await?.data.leden)
+    }
+
+    /// De mapsjablonen van de omgeving om uit te kiezen bij een nieuwe ruimte (bij `team` ook die van een bedrijf).
+    pub async fn mapsjablonen(&self, soort: Option<&str>) -> Result<Vec<Mapsjabloon>, Fout> {
+        self.roep_op("/api/method/openaec_storage.mapsjablonen.", "sjablonen", json!({"soort": soort})).await
+    }
+
+    /// Een nieuwe ruimte, via het documentadres van Frappe (`POST /api/resource/Ruimte`): alleen een beheerder van de
+    /// omgeving mag dat (de server toetst het); wie hem aanmaakt, wordt beheerder van de ruimte. Met een mapsjabloon
+    /// legt de server meteen de mappen aan.
+    pub async fn maak_ruimte(&self, naam: &str, soort: &str, mapsjabloon: Option<&str>) -> Result<Ruimte, Fout> {
+        #[derive(Deserialize)]
+        struct Document {
+            name: String,
+            naam: String,
+            soort: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            data: Document,
+        }
+        let mut url = reqwest::Url::parse(&self.basis).map_err(|e| Fout::Controle(format!("ongeldig adres: {e}")))?;
+        url.path_segments_mut().map_err(|_| Fout::Controle("ongeldig adres".into()))?.pop_if_empty().extend(["api", "resource", "Ruimte"]);
+        let lichaam = json!({"naam": naam, "soort": soort, "mapsjabloon": mapsjabloon});
+        let antwoord = self.met_autorisatie(|| self.http.post(url.clone()).json(&lichaam)).await?;
+        let d = antwoord.json::<Data>().await?.data;
+        Ok(Ruimte { name: d.name, naam: d.naam, soort: d.soort, rol: "beheerder".into() })
     }
 
     /// Alle versies van een bestand, nieuwste eerst.

@@ -231,6 +231,37 @@ async fn ruimtes(state: tauri::State<'_, AppState>) -> Result<Vec<Ruimte>, Strin
     client(&state).await?.ruimtes().await.map_err(fout)
 }
 
+/// De mapsjablonen om uit te kiezen bij een nieuwe ruimte van deze soort; een oudere server kent ze niet (lege lijst).
+#[tauri::command]
+async fn mapsjablonen(state: tauri::State<'_, AppState>, soort: Option<String>) -> Result<Vec<openaec_sync::api::Mapsjabloon>, String> {
+    Ok(client(&state).await?.mapsjablonen(soort.as_deref()).await.unwrap_or_default())
+}
+
+/// Een nieuwe ruimte op de server (alleen voor een beheerder van de omgeving); de maker wordt er beheerder van.
+#[tauri::command]
+async fn maak_ruimte(
+    state: tauri::State<'_, AppState>,
+    naam: String,
+    soort: String,
+    mapsjabloon: Option<String>,
+) -> Result<Ruimte, String> {
+    let naam = naam.trim().to_string();
+    if naam.is_empty() {
+        return Err("geef de ruimte een naam".into());
+    }
+    if !matches!(soort.as_str(), "team" | "project" | "persoonlijk") {
+        return Err("kies team, project of persoonlijk".into());
+    }
+    let mapsjabloon = mapsjabloon.filter(|s| !s.is_empty());
+    match client(&state).await?.maak_ruimte(&naam, &soort, mapsjabloon.as_deref()).await {
+        Ok(r) => Ok(r),
+        Err(e) if e.status() == Some(403) => {
+            Err("Alleen een eigenaar of beheerder van de omgeving kan een nieuwe ruimte aanmaken. Vraag het een beheerder.".into())
+        }
+        Err(e) => Err(fout(e)),
+    }
+}
+
 #[tauri::command]
 fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String, lokaal: String) -> Result<Vec<Koppeling>, String> {
     voeg_koppeling_toe(&state, Koppeling::ruimte(ruimte, ruimte_naam, lokaal))
@@ -1270,6 +1301,8 @@ pub fn run() {
             hoofdmap::verplaats_naar_hoofdmap,
             bladeren,
             maak_map,
+            mapsjablonen,
+            maak_ruimte,
             overzicht,
             open_map,
             open_beheer,

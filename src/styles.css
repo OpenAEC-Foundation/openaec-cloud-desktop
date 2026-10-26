@@ -521,3 +521,8 @@ body.deelvenster { background: var(--papier); }
 /* ---------- kop van de kleine vensters (status, delen, versturen) ----------
    Dezelfde balkkleuren als de titelbalk van het hoofdvenster, via de gedeelde variabelen. */
 .status-kop, .deel-kop { background: var(--balk); color: var(--balk-tekst); border-bottom: 1px solid var(--balk-lijn); }
+
+/* Nieuwe ruimte (Ruimtes) */
+.nieuwe-ruimte { margin-top: 12px; }
+.nieuwe-ruimte form { display: flex; flex-direction: column; gap: 10px; }
+.nieuwe-ruimte label { display: flex; flex-direction: column; gap: 4px; }

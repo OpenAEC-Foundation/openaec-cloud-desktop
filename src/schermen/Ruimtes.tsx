@@ -307,6 +307,40 @@ export default function Ruimtes() {
       setMelding(`${n} bestand(en) als placeholder geplaatst in ${map}`)
     })
 
+  // Nieuwe ruimte: naam, soort en mapindeling (de sjablonen die bij de soort passen; standaard voorgeselecteerd).
+  type Nieuw = { naam: string; soort: string; mapsjabloon: string }
+  const [nieuw, setNieuw] = createSignal<Nieuw | null>(null)
+  const [nieuwFout, setNieuwFout] = createSignal("")
+  const [sjablonen, setSjablonen] = createSignal<{ naam: string; omschrijving?: string | null; standaard: boolean }[]>([])
+  const kiesSoort = async (soort: string) => {
+    setNieuw({ ...(nieuw() ?? { naam: "", mapsjabloon: "" }), soort, mapsjabloon: "" })
+    const lijst = await api.mapsjablonen(soort).catch(() => [])
+    setSjablonen(lijst)
+    const standaard = lijst.find((s) => s.standaard)
+    if (standaard && nieuw()) setNieuw({ ...nieuw()!, mapsjabloon: standaard.naam })
+  }
+  const openNieuw = () => {
+    setNieuwFout("")
+    setNieuw({ naam: "", soort: "project", mapsjabloon: "" })
+    kiesSoort("project")
+  }
+  const maakRuimte = () => {
+    const n = nieuw()
+    if (!n || !n.naam.trim()) return
+    setNieuwFout("")
+    return doe("Ruimte aanmaken", async () => {
+      try {
+        const r = await api.maakRuimte(n.naam.trim(), n.soort, n.mapsjabloon || null)
+        setNieuw(null)
+        await laadRuimtes(true)
+        setGekozen(`r:${r.name}`)
+        setMelding(`Ruimte ${r.naam} aangemaakt. Koppel hem aan een map om de bestanden op deze computer te hebben.`)
+      } catch (e) {
+        setNieuwFout(String(e))
+      }
+    })
+  }
+
   const openInBrowser = (g: Gedeeld) => api.openGedeeld(g.deling).catch((e) => setMelding(String(e)))
   const beheer = () => api.openBeheer().catch((e) => setMelding(String(e)))
 
@@ -339,10 +373,71 @@ export default function Ruimtes() {
             bestanden op deze computer te hebben.
           </p>
         </div>
-        <button disabled={ruimtesLaden()} onClick={() => laadRuimtes(true)}>
-          {ruimtesLaden() ? "Ophalen…" : "Vernieuwen"}
-        </button>
+        <span class="knoppen">
+          <button class="primair" disabled={nieuw() !== null} onClick={openNieuw}>
+            Nieuwe ruimte…
+          </button>
+          <button disabled={ruimtesLaden()} onClick={() => laadRuimtes(true)}>
+            {ruimtesLaden() ? "Ophalen…" : "Vernieuwen"}
+          </button>
+        </span>
       </div>
+
+      <Show when={nieuw()}>
+        {(n) => (
+          <section class="kaart nieuwe-ruimte">
+            <h2>Nieuwe ruimte</h2>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                maakRuimte()
+              }}
+            >
+              <label>
+                Naam
+                <input
+                  ref={(el) => setTimeout(() => el.focus())}
+                  value={n().naam}
+                  maxLength={140}
+                  placeholder="Bijvoorbeeld Project Havenkwartier"
+                  onInput={(e) => setNieuw({ ...n(), naam: e.currentTarget.value })}
+                />
+              </label>
+              <div class="velden">
+                <label>
+                  Soort
+                  <select value={n().soort} onChange={(e) => kiesSoort(e.currentTarget.value)}>
+                    <option value="project">Projectruimte</option>
+                    <option value="team">Teamruimte</option>
+                    <option value="persoonlijk">Persoonlijke ruimte</option>
+                  </select>
+                </label>
+                <label>
+                  Mapindeling
+                  <select value={n().mapsjabloon} onChange={(e) => setNieuw({ ...n(), mapsjabloon: e.currentTarget.value })}>
+                    <option value="">Leeg, zonder vaste mappen</option>
+                    <For each={sjablonen()}>{(s) => <option value={s.naam}>{s.naam}</option>}</For>
+                  </select>
+                </label>
+              </div>
+              <Show when={sjablonen().find((s) => s.naam === n().mapsjabloon)?.omschrijving}>
+                {(o) => <p class="hint">{o()}</p>}
+              </Show>
+              <Show when={nieuwFout()}>
+                <p class="hint fout">{nieuwFout()}</p>
+              </Show>
+              <div class="knoppen">
+                <button class="primair" type="submit" disabled={!n().naam.trim() || !!bezig()}>
+                  Ruimte aanmaken
+                </button>
+                <button type="button" onClick={() => setNieuw(null)}>
+                  Annuleren
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+      </Show>
 
       <Show when={ruimteFout()}>
         <p class="foutvlak">

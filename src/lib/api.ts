@@ -316,6 +316,10 @@ export const api = {
   logIn: (basis: string) => invoke<Ruimte[]>("log_in", { basis }),
   verbreek: () => invoke<void>("verbreek"),
   ruimtes: () => invoke<Ruimte[]>("ruimtes"),
+  mapsjablonen: (soort: string | null) =>
+    invoke<{ naam: string; omschrijving?: string | null; soort?: string | null; standaard: boolean }[]>("mapsjablonen", { soort }),
+  maakRuimte: (naam: string, soort: string, mapsjabloon: string | null) =>
+    invoke<Ruimte>("maak_ruimte", { naam, soort, mapsjabloon }),
   koppel: (ruimte: string, ruimteNaam: string, lokaal: string) =>
     invoke<Koppeling[]>("koppel", { ruimte, ruimteNaam, lokaal }),
   ontkoppel: (lokaal: string) => invoke<Koppeling[]>("ontkoppel", { lokaal }),
