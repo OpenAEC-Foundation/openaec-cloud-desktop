@@ -297,7 +297,7 @@ export default function Verstuurvenster() {
               <h2>Onderbroken overdracht</h2>
               <p class="uitleg">
                 <strong>{o().naam}</strong>: {o().onderdelen.filter((d) => d.klaar).length} van {o().onderdelen.length} verstuurd. Ga
-                verder waar je was, of gooi hem weg.
+                verder waar je was, of gooi hem weg. Verstuur je iets nieuws, dan vervalt deze.
               </p>
               <div class="knoppen">
                 <button class="primair" disabled={!!bezig()} onClick={hervat}>
@@ -447,7 +447,10 @@ export default function Verstuurvenster() {
                             {o.naam}
                           </span>
                           <span class="balk">
-                            <span classList={{ onbepaald: stap()?.status === "inpakken" }} style={{ width: `${breedte()}%` }} />
+                            {/* Inpakken duurt onbepaald lang: dan de heen-en-weer-balk (zonder eigen breedte). */}
+                            <Show when={stap()?.status === "inpakken"} fallback={<span style={{ width: `${breedte()}%` }} />}>
+                              <span class="onbepaald" />
+                            </Show>
                           </span>
                         </div>
                         <span class="meta stap">{stap() ? stapTekst(stap()!) : ""}</span>
