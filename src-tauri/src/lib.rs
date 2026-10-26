@@ -7,6 +7,7 @@ mod delen;
 mod hoofdmap;
 mod instellingen;
 mod itemstatus;
+mod menupakket;
 mod opaanvraag;
 mod navigatie;
 mod opruimen;
@@ -257,6 +258,7 @@ fn werk_menu_bij(inst: &Instellingen) {
     if let Err(e) = verkenner::registreer(&mappen) {
         log::warn!("rechtermuismenu bijwerken mislukt: {e}");
     }
+    menupakket::schrijf_menu(inst);
     let koppelingen: Vec<(String, String)> = inst.koppelingen.iter().map(|k| (k.ruimte_naam.clone(), k.lokaal.clone())).collect();
     werk_navigatie_bij(inst.hoofdmap.clone(), koppelingen);
 }
@@ -1060,6 +1062,10 @@ fn zet_autostart(app: AppHandle, aan: bool) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Vanuit de installer: het pakket voor het moderne rechtermuismenu registreren of afmelden, zonder de app te starten.
+    if let Some(code) = menupakket::opdrachtregel(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     // Een selectie van meerdere items start de app per item: wacht zo nodig tot de eerste start klaar is om door te
     // sturen (zie `rechtermuis::wacht_op_eerste_start`).
     #[cfg(windows)]
@@ -1103,11 +1109,8 @@ pub fn run() {
             // "Versturen met OpenAEC" in het rechtermuismenu, op elk bestand en elke map (het pad naar de app kan
             // veranderd zijn na een update of een verplaatste AppImage).
             let menu_aan = app.state::<AppState>().instellingen.lock().unwrap().menu_versturen_aan();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(e) = rechtermuis::werk_bij(menu_aan) {
-                    log::warn!("Versturen met OpenAEC in het rechtermuismenu: {e}");
-                }
-            });
+            // Met het moderne menu van Windows 11 (menupakket) vervalt het klassieke werkwoord.
+            tauri::async_runtime::spawn_blocking(move || menupakket::bij_start(menu_aan));
             activiteit::meld(app.handle());
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();

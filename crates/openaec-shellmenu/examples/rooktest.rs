@@ -113,7 +113,11 @@ mod windows_rooktest {
         let argv: Vec<String> = std::env::args().collect();
         // Gestart door Invoke: de opdrachtregel opschrijven en stoppen.
         if argv.iter().any(|a| a == "--actie") {
-            let uit = std::env::var_os(ENV_UIT).ok_or("geen uitvoerbestand")?;
+            // Gestart door de Verkenner (testpakket) zonder die variabele: naast deze exe.
+            let uit = match std::env::var_os(ENV_UIT) {
+                Some(u) => u,
+                None => std::env::current_exe()?.with_file_name("ontvangen.json").into_os_string(),
+            };
             std::fs::write(PathBuf::from(&uit).with_extension("tmp"), serde_json::to_vec(&argv[1..])?)?;
             std::fs::rename(PathBuf::from(&uit).with_extension("tmp"), &uit)?;
             return Ok(());
