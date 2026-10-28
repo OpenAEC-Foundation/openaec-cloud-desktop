@@ -482,7 +482,13 @@ body.deelvenster { background: var(--papier); }
 /* Compacter dan het deelvenster: minder ruimte rond kop, secties en velden. */
 .deel.versturen .deel-kop { padding: 10px 16px; gap: 12px; }
 .deel.versturen .deel-kop h1 { font-size: 16px; }
-.deel.versturen .deel-icoon { width: 34px; height: 34px; transform: scale(0.85); }
+/* Het OpenAEC-symbool in de kop (44 px, even hoog als de drie regels ernaast), met rechtsonder een envelop als teken
+   voor Versturen. */
+.verstuur-logo { flex: none; position: relative; width: 44px; height: 44px; display: grid; place-items: center; }
+.verstuur-symbool { width: 44px; height: 44px; display: block; }
+.verstuur-envelop { position: absolute; right: -4px; bottom: -3px; width: 20px; height: 20px; border-radius: 50%; background: var(--balk); box-shadow: 0 0 0 1px var(--balk-lijn); }
+.verstuur-envelop::before { content: ""; position: absolute; left: 4px; top: 6px; width: 12px; height: 8px; box-sizing: border-box; border: 1.5px solid var(--amber-fel); border-radius: 1px; }
+.verstuur-envelop::after { content: ""; position: absolute; left: 7px; top: 4px; width: 6px; height: 6px; box-sizing: border-box; border-right: 1.5px solid var(--amber-fel); border-bottom: 1.5px solid var(--amber-fel); transform: rotate(45deg); }
 .deel.versturen .deel-inhoud { padding: 10px 14px; gap: 8px; }
 .deel.versturen .deel-sectie { padding: 10px 14px; }
 .deel.versturen .deel-sectie .uitleg { margin-bottom: 6px; }

@@ -37,6 +37,34 @@ pub fn toon(app: &AppHandle) {
     let _ = app.emit("venster-open", ());
 }
 
+/// Een venster (Delen, Versturen) tonen en vóór de Verkenner zetten. Vanuit het rechtermuismenu heeft de Verkenner de
+/// voorgrond; zonder hulp zet Windows het venster dan soms achter de Verkenner (alleen een knipperende knop in de
+/// taakbalk), en lijkt de eerste keer kiezen niets te doen. Daarom even "altijd bovenop" en weer terug, naast de
+/// toestemming voor de voorgrond die een tweede start meegeeft (zie `rechtermuis::wacht_op_eerste_start`).
+pub fn naar_voren(venster: &tauri::WebviewWindow) {
+    if !venster.is_visible().unwrap_or(false) {
+        let _ = venster.center();
+    }
+    let _ = venster.unminimize();
+    let _ = venster.show();
+    let _ = venster.set_always_on_top(true);
+    let _ = venster.set_focus();
+    let _ = venster.set_always_on_top(false);
+}
+
+/// Of het hoofdvenster bij het starten zichtbaar blijft: niet bij een autostart (`--verborgen`) en niet als de app
+/// start voor een actie uit het rechtermuismenu die een eigen venster heeft (Delen, Versturen) of op de achtergrond
+/// gebeurt (deellink, vergrendelen). Anders ging het hoofdvenster bij een eerste start over het venster Versturen heen.
+pub fn hoofdvenster_bij_start(argv: &[String]) -> bool {
+    if argv.iter().any(|a| a == VERBORGEN) {
+        return false;
+    }
+    match crate::verkenner::actie_met_paden(argv) {
+        Some((actie, _)) => crate::verkenner::venster_voor(&actie) == Some("main"),
+        None => true,
+    }
+}
+
 /// Statusvenster openen (of sluiten) rechtsonder, bij de plek van de klik en binnen het werkgebied van het scherm.
 fn wissel_status(app: &AppHandle, klik: PhysicalPosition<f64>) {
     let Some(venster) = app.get_webview_window(STATUS) else { return };
@@ -104,7 +132,7 @@ pub fn maak(app: &mut App) -> tauri::Result<()> {
     }
     vak.build(app)?;
 
-    if std::env::args().any(|a| a == VERBORGEN) {
+    if !hoofdvenster_bij_start(&std::env::args().collect::<Vec<_>>()) {
         if let Some(venster) = app.get_webview_window("main") {
             let _ = venster.hide();
         }
@@ -187,5 +215,27 @@ pub fn venster_gebeurtenis(venster: &Window, gebeurtenis: &WindowEvent) {
 pub fn verberg_status(app: &AppHandle) {
     if let Some(status) = app.get_webview_window(STATUS) {
         let _ = status.hide();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn hoofdvenster_alleen_zonder_eigen_venster() {
+        assert!(hoofdvenster_bij_start(&argv(&["app.exe"])));
+        assert!(!hoofdvenster_bij_start(&argv(&["app.exe", VERBORGEN])));
+        // Eerste start vanuit het rechtermuismenu: alleen het venster Versturen (of Delen), niet het hoofdvenster erover.
+        assert!(!hoofdvenster_bij_start(&argv(&["app.exe", "--actie", "versturen", r"C:\a.pdf"])));
+        assert!(!hoofdvenster_bij_start(&argv(&["app.exe", "--actie", "delen", r"C:\Werk"])));
+        assert!(!hoofdvenster_bij_start(&argv(&["app.exe", "--actie", "deel", r"C:\Werk\a.pdf"])));
+        // Versies en de assistent staan in het hoofdvenster.
+        assert!(hoofdvenster_bij_start(&argv(&["app.exe", "--actie", "versies", r"C:\Werk\a.pdf"])));
+        assert!(hoofdvenster_bij_start(&argv(&["app.exe", "--actie", "assistent", r"C:\Werk\a.pdf"])));
     }
 }

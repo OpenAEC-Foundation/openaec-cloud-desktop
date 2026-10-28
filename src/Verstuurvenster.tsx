@@ -8,8 +8,9 @@ import { open } from "@tauri-apps/plugin-dialog"
 import { api } from "./lib/api"
 import { datumTekst, datumWaarde, leesFout, type Deelfout } from "./lib/delen"
 import { grootte, naamVan } from "./lib/opmaak"
+import { Symbool } from "./Titelbalk"
 import {
-  controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, overdrachtMeta,
+  controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, opnieuwNa, overdrachtMeta,
   opslagTekst, samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen,
   type Fase, type Lopend, type OverdrachtRegel, type Overdrachtgrenzen, type VerstuurItem, type VerstuurStap, type Voltooid,
 } from "./lib/versturen"
@@ -31,6 +32,7 @@ export default function Verstuurvenster() {
   // Omgeving en grenzen: null = nog niet bekend.
   const [grenzen, setGrenzen] = createSignal<Overdrachtgrenzen | null>(null)
   const [aanmeldFout, setAanmeldFout] = createSignal<Deelfout | null>(null)
+  const [verbinden, setVerbinden] = createSignal(false)
 
   const [naam, setNaam] = createSignal("")
   const [naamAangepast, setNaamAangepast] = createSignal(false)
@@ -104,16 +106,52 @@ export default function Verstuurvenster() {
     }
   }
 
-  const laadGrenzen = async () => {
-    try {
-      setGrenzen(await api.versturenGrenzen())
+  /**
+   * Verbinden: de grenzen van de server (meteen de test of je ingelogd bent en mag versturen). Eén poging tegelijk; een
+   * tijdelijke fout (vlak na het opstarten is de sessie of het netwerk er soms nog niet) gaat eerst stil opnieuw, pas
+   * daarna verschijnt de melding.
+   */
+  let bezigMetVerbinden: Promise<void> | null = null
+  const laadGrenzen = () => {
+    bezigMetVerbinden ??= (async () => {
+      setVerbinden(true)
       setAanmeldFout(null)
-      laadMijn()
-      if (fase() === "samenstellen") setOnderbroken(await api.onderbrokenVersturen().catch(() => null))
-    } catch (e) {
-      setGrenzen(null)
-      setAanmeldFout(leesFout(e))
-    }
+      for (let poging = 0; ; poging++) {
+        try {
+          setGrenzen(await api.versturenGrenzen())
+          setAanmeldFout(null)
+          laadMijn()
+          if (fase() === "samenstellen") setOnderbroken(await api.onderbrokenVersturen().catch(() => null))
+          break
+        } catch (e) {
+          const f = leesFout(e)
+          const wacht = opnieuwNa(f.code, poging)
+          if (wacht === null) {
+            setGrenzen(null)
+            setAanmeldFout(f)
+            break
+          }
+          await new Promise((klaar) => setTimeout(klaar, wacht))
+        }
+      }
+    })().finally(() => {
+      setVerbinden(false)
+      bezigMetVerbinden = null
+    })
+    return bezigMetVerbinden
+  }
+
+  /**
+   * De paden uit het rechtermuismenu ophalen (de app houdt ze vast tot het venster ze neemt, en herinnert het venster
+   * tot dan). Kon het venster eerder geen verbinding maken of was je niet ingelogd, dan meteen opnieuw proberen: dat is
+   * een oude melding van toen het venster op de achtergrond laadde, niet van nu.
+   */
+  const haalVerzoek = async () => {
+    const nieuw = await api.versturenVerzoek().catch(() => [] as string[])
+    if (!nieuw.length) return
+    ontvang(nieuw)
+    if (!grenzen()) laadGrenzen()
+    else laadMijn()
   }
 
   const volg = (l: Lopend) => {
@@ -236,7 +274,7 @@ export default function Verstuurvenster() {
 
   onMount(async () => {
     const stoppers = [
-      await api.opVersturenVerzoek(ontvang),
+      await api.opVersturenVerzoek(haalVerzoek),
       await api.opVersturenStap((s) => {
         if (s.overdracht !== lopend()?.overdracht) return
         setStappen((oud) => oud.map((x, i) => (i === s.index ? s : x)))
@@ -256,15 +294,23 @@ export default function Verstuurvenster() {
         laadMijn()
       }),
     ]
-    // Na inloggen in het hoofdvenster: opnieuw kijken zodra dit venster weer de focus krijgt.
-    const bijFocus = () => !grenzen() && laadGrenzen()
+    // Na inloggen in het hoofdvenster: opnieuw kijken zodra dit venster weer de focus krijgt of zichtbaar wordt; dan
+    // ook de paden ophalen die er misschien nog staan.
+    const bijFocus = () => {
+      haalVerzoek()
+      if (!grenzen()) laadGrenzen()
+    }
+    const bijZichtbaar = () => document.visibilityState === "visible" && bijFocus()
     window.addEventListener("focus", bijFocus)
+    document.addEventListener("visibilitychange", bijZichtbaar)
     onCleanup(() => {
       stoppers.forEach((s) => s())
       window.removeEventListener("focus", bijFocus)
+      document.removeEventListener("visibilitychange", bijZichtbaar)
     })
-    await laadGrenzen()
-    ontvang(await api.versturenVerzoek().catch(() => []))
+    // Tegelijk: de paden meteen tonen, ook als de verbinding nog even duurt.
+    haalVerzoek()
+    laadGrenzen()
   })
 
   const titel = () => (fase() === "samenstellen" ? naam() || "Versturen" : (lopend()?.naam ?? naam()))
@@ -277,7 +323,10 @@ export default function Verstuurvenster() {
   return (
     <div class="deel versturen">
       <header class="deel-kop">
-        <span class="deel-icoon versturen" aria-hidden="true" />
+        <span class="verstuur-logo" aria-hidden="true">
+          <Symbool class="verstuur-symbool" />
+          <span class="verstuur-envelop" />
+        </span>
         <div>
           <h1>{titel()}</h1>
           <span class="pad">{ondertitel()}</span>
@@ -286,6 +335,9 @@ export default function Verstuurvenster() {
       </header>
 
       <div class="deel-inhoud">
+        <Show when={verbinden() && !grenzen() && !aanmeldFout()}>
+          <p class="hint">Verbinden met OpenAEC…</p>
+        </Show>
         <Show when={aanmeldFout()}>
           {(f) => (
             <section class="deel-sectie">

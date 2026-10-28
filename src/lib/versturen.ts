@@ -229,3 +229,14 @@ export const stapTekst = (s: { status: Stapstatus; gedaan: number; totaal: numbe
       return s.fout ?? "Mislukt"
   }
 }
+
+/**
+ * Na een mislukte eerste verbinding (bijv. vlak na het opstarten of na inloggen, als de sessie of het netwerk er nog
+ * niet is): hoe lang wachten voor de volgende poging, of null om de fout te tonen. Een tijdelijke fout gaat nog twee
+ * keer opnieuw; zonder recht, zonder inlog of op een oudere server meteen de melding.
+ */
+export const opnieuwNa = (code: string, poging: number): number | null => {
+  const tijdelijk = code === "geen_verbinding" || code === "fout"
+  const wachten = [800, 2500]
+  return tijdelijk && poging < wachten.length ? wachten[poging] : null
+}

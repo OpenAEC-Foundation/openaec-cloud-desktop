@@ -42,15 +42,50 @@ const VERZAMELEN: Duration = Duration::from_millis(400);
 const KOPIEER_KIJKEN: Duration = Duration::from_secs(2);
 const KOPIEER_HOOGSTENS: Duration = Duration::from_secs(6 * 3600);
 
+/// Zo lang en zo vaak herinnert de app het venster aan paden die het nog niet heeft opgehaald (bijv. omdat de pagina
+/// bij een eerste start nog laadt): de paden blijven in de wachtrij tot het venster ze neemt.
+const HERINNER_ELKE: Duration = Duration::from_millis(500);
+const HERINNER_HOOGSTENS: u32 = 40;
+
 /// Toestand van het venster in de app.
 #[derive(Default)]
 pub struct Versturen {
     /// Paden die net binnenkwamen, en een teller om te zien of er sindsdien meer kwamen.
     binnen: Mutex<(Vec<String>, u64)>,
-    /// Het laatste verzoek aan het venster (het venster leest het bij het openen).
-    verzoek: Mutex<Vec<String>>,
+    /// Paden die het venster nog niet heeft opgehaald.
+    wachtrij: Mutex<Wachtrij>,
     /// De overdracht die nu loopt.
     taak: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+/// De paden voor het venster tot het ze ophaalt ([`versturen_verzoek`]). Het venster haalt ze zelf op zodra het
+/// klaar is (bij het laden, na een herinnering en als het zichtbaar wordt); een melding die het venster mist (de
+/// pagina laadt nog bij een eerste start, of de webview werd opnieuw geladen) kost zo nooit de selectie, en wat het
+/// venster al nam, krijgt het geen tweede keer.
+#[derive(Debug, Default, PartialEq)]
+pub struct Wachtrij {
+    paden: Vec<String>,
+}
+
+impl Wachtrij {
+    /// Paden erbij (dubbele één keer); geeft of er iets klaarstaat.
+    pub fn voeg_toe(&mut self, paden: Vec<String>) -> bool {
+        for p in paden {
+            if !p.is_empty() && !self.paden.contains(&p) {
+                self.paden.push(p);
+            }
+        }
+        !self.paden.is_empty()
+    }
+
+    /// Alles wat klaarstaat, en de wachtrij is daarna leeg.
+    pub fn neem(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.paden)
+    }
+
+    pub fn leeg(&self) -> bool {
+        self.paden.is_empty()
+    }
 }
 
 /// Paden uit het rechtermuismenu: verzamelen en dan samen naar het venster.
@@ -81,23 +116,32 @@ pub fn ontvang(app: &AppHandle, paden: Vec<String>) {
     });
 }
 
-/// Het venster tonen met deze paden (leeg: alleen tonen).
+/// Het venster tonen met deze paden (leeg: alleen tonen). De paden gaan in de wachtrij; het venster haalt ze op. Tot
+/// het dat gedaan heeft, krijgt het elke halve seconde een herinnering (hoogstens 20 s).
 pub fn toon(app: &AppHandle, paden: Vec<String>) {
-    if !paden.is_empty() {
-        *app.state::<Versturen>().verzoek.lock().unwrap() = paden.clone();
-    }
+    let aantal = paden.len();
+    let klaar = app.state::<Versturen>().wachtrij.lock().unwrap().voeg_toe(paden);
+    log::info!("versturen: venster tonen ({aantal} nieuwe paden, wachtrij {})", if klaar { "gevuld" } else { "leeg" });
     systeemvak::verberg_status(app);
-    if let Some(venster) = app.get_webview_window(VENSTER) {
-        if !venster.is_visible().unwrap_or(false) {
-            let _ = venster.center();
+    match app.get_webview_window(VENSTER) {
+        Some(venster) => systeemvak::naar_voren(&venster),
+        None => log::error!("versturen: het venster ontbreekt"),
+    }
+    if !klaar {
+        return;
+    }
+    let _ = app.emit_to(VENSTER, "versturen-verzoek", ());
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..HERINNER_HOOGSTENS {
+            tokio::time::sleep(HERINNER_ELKE).await;
+            if app.state::<Versturen>().wachtrij.lock().unwrap().leeg() {
+                return;
+            }
+            let _ = app.emit_to(VENSTER, "versturen-verzoek", ());
         }
-        let _ = venster.unminimize();
-        let _ = venster.show();
-        let _ = venster.set_focus();
-    }
-    if !paden.is_empty() {
-        let _ = app.emit_to(VENSTER, "versturen-verzoek", &paden);
-    }
+        log::warn!("versturen: het venster haalde de paden niet op");
+    });
 }
 
 /// Het venster openen (vanuit het hoofdvenster), eventueel met paden.
@@ -113,10 +157,14 @@ pub fn sluit_versturen(app: AppHandle) {
     }
 }
 
-/// Het laatste verzoek (de paden die het venster moet tonen).
+/// De paden die op het venster wachten; daarna is de wachtrij leeg (het venster heeft ze).
 #[tauri::command]
 pub fn versturen_verzoek(st: tauri::State<'_, Versturen>) -> Vec<String> {
-    st.verzoek.lock().unwrap().clone()
+    let paden = st.wachtrij.lock().unwrap().neem();
+    if !paden.is_empty() {
+        log::info!("versturen: venster haalde {} paden op", paden.len());
+    }
+    paden
 }
 
 /// Een gekozen bestand of map, zoals het venster hem toont.
@@ -276,7 +324,11 @@ async fn verbinding(state: &AppState) -> Result<Client, VersturenFout> {
 /// De grenzen van de server; meteen ook de test of er een omgeving is, of je ingelogd bent en mag versturen.
 #[tauri::command]
 pub async fn versturen_grenzen(state: tauri::State<'_, AppState>) -> Result<Grenzen, VersturenFout> {
-    Ok(verbinding(&state).await?.overdracht_grenzen().await?)
+    let uitkomst: Result<Grenzen, VersturenFout> = async { Ok(verbinding(&state).await?.overdracht_grenzen().await?) }.await;
+    if let Err(VersturenFout(f)) = &uitkomst {
+        log::warn!("versturen: grenzen ophalen mislukt ({}): {}", f.code, f.melding);
+    }
+    uitkomst
 }
 
 /// Een onderdeel dat al in de opslag staat: de server kopieert het in plaats van dat de app het uploadt.
@@ -1029,6 +1081,23 @@ pub async fn zet_menu_versturen(state: tauri::State<'_, AppState>, aan: bool) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wachtrij_houdt_paden_tot_het_venster_ze_neemt() {
+        let mut w = Wachtrij::default();
+        assert!(w.leeg());
+        assert!(!w.voeg_toe(vec![]));
+        assert!(!w.voeg_toe(vec![String::new()]));
+        // Een eerste selectie terwijl het venster nog laadt: de paden blijven staan, ook na een gemiste melding.
+        assert!(w.voeg_toe(vec![r"C:\a.pdf".into(), r"C:\b.dwg".into()]));
+        // Een tweede selectie (of dezelfde nog eens) erbij, zonder dubbele.
+        assert!(w.voeg_toe(vec![r"C:\b.dwg".into(), r"C:\Tekeningen".into()]));
+        assert!(!w.leeg());
+        assert_eq!(w.neem(), [r"C:\a.pdf", r"C:\b.dwg", r"C:\Tekeningen"]);
+        // Wat het venster nam, krijgt het geen tweede keer (bijv. na een herinnering of opnieuw laden).
+        assert!(w.leeg());
+        assert!(w.neem().is_empty());
+    }
 
     fn server(status: u16) -> Fout {
         Fout::Server { status, tekst: json!({}).to_string() }

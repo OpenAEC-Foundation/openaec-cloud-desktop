@@ -94,15 +94,24 @@ pub fn wacht_op_eerste_start(identifier: &str) {
     use windows::core::HSTRING;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
-    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, FindWindowW, GetWindowThreadProcessId};
 
     let mutex = HSTRING::from(format!("{identifier}-sim"));
     let (klasse, titel) = (HSTRING::from(format!("{identifier}-sic")), HSTRING::from(format!("{identifier}-siw")));
     let Ok(handle) = (unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, &mutex) }) else { return };
     let _ = unsafe { CloseHandle(handle) };
     for _ in 0..100 {
-        if unsafe { FindWindowW(&klasse, &titel) }.is_ok_and(|h| !h.is_invalid()) {
-            return;
+        if let Ok(venster) = unsafe { FindWindowW(&klasse, &titel) } {
+            if !venster.is_invalid() {
+                // Deze start komt van de Verkenner en mag de voorgrond geven; de eerste start krijgt die toestemming,
+                // zodat zijn venster (Versturen, Delen) vóór de Verkenner komt in plaats van erachter.
+                let mut pid = 0u32;
+                unsafe { GetWindowThreadProcessId(venster, Some(&mut pid)) };
+                if pid != 0 {
+                    let _ = unsafe { AllowSetForegroundWindow(pid) };
+                }
+                return;
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }

@@ -8,6 +8,7 @@ mod delen;
 mod hoofdmap;
 mod instellingen;
 mod itemstatus;
+mod logboek;
 mod menupakket;
 mod opaanvraag;
 mod navigatie;
@@ -1216,6 +1217,7 @@ fn zet_autostart(app: AppHandle, aan: bool) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logboek::start();
     // Vanuit de installer: het pakket voor het moderne rechtermuismenu registreren of afmelden, zonder de app te starten.
     if let Some(code) = menupakket::opdrachtregel(&std::env::args().collect::<Vec<_>>()) {
         std::process::exit(code);
@@ -1230,6 +1232,7 @@ pub fn run() {
         // Eén exemplaar tegelijk: een tweede start toont het bestaande venster, of geeft zijn actie door.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| match verkenner::actie_met_paden(&argv) {
             Some((actie, paden)) => {
+                log::info!("actie {actie} van een tweede start ({} paden)", paden.len());
                 tauri::async_runtime::spawn(voer_actie(app.clone(), actie, paden));
             }
             None => systeemvak::toon(app),
@@ -1269,6 +1272,7 @@ pub fn run() {
             // Gestart vanuit het rechtermuismenu terwijl de app nog niet draaide.
             let argv: Vec<String> = std::env::args().collect();
             if let Some((actie, paden)) = verkenner::actie_met_paden(&argv) {
+                log::info!("actie {actie} bij de eerste start ({} paden)", paden.len());
                 tauri::async_runtime::spawn(voer_actie(app.handle().clone(), actie, paden));
             }
             Ok(())

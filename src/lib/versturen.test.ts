@@ -3,7 +3,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
-  controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, overdrachtMeta,
+  controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, opnieuwNa, overdrachtMeta,
   opslagTekst, samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen, type OverdrachtRegel, type VerstuurItem,
 } from "./versturen.ts"
 
@@ -106,5 +106,17 @@ describe("voortgang", () => {
     assert.equal(opslagTekst([al, { ...item("Tekeningen", 9, true), in_opslag: true }]), "Staat al in OpenAEC: er wordt niets geüpload.")
     assert.equal(opslagTekst([al, item("nieuw.pdf", 1)]), "1 van 2 staan al in OpenAEC en worden niet opnieuw geüpload; de rest wordt geüpload.")
     assert.equal(opslagTekst([item("nieuw.pdf", 1)]), "")
+  })
+})
+
+describe("opnieuw verbinden", () => {
+  it("probeert een tijdelijke fout nog twee keer, daarna de melding", () => {
+    assert.equal(opnieuwNa("geen_verbinding", 0), 800)
+    assert.equal(opnieuwNa("geen_verbinding", 1), 2500)
+    assert.equal(opnieuwNa("geen_verbinding", 2), null)
+    assert.equal(opnieuwNa("fout", 0), 800)
+  })
+  it("toont zonder recht, zonder inlog of op een oudere server meteen de melding", () => {
+    for (const code of ["geen_recht", "niet_ingelogd", "niet_op_server"]) assert.equal(opnieuwNa(code, 0), null)
   })
 })

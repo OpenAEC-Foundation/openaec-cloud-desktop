@@ -157,12 +157,7 @@ pub fn toon(app: &AppHandle, verzoek: Deelverzoek) {
     *app.state::<AppState>().deelverzoek.lock().unwrap() = Some(verzoek.clone());
     systeemvak::verberg_status(app);
     if let Some(venster) = app.get_webview_window(VENSTER) {
-        if !venster.is_visible().unwrap_or(false) {
-            let _ = venster.center();
-        }
-        let _ = venster.unminimize();
-        let _ = venster.show();
-        let _ = venster.set_focus();
+        systeemvak::naar_voren(&venster);
     }
     let _ = app.emit_to(VENSTER, "delen-verzoek", &verzoek);
 }

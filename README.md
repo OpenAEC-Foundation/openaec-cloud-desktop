@@ -146,6 +146,23 @@ Zonder omgeving of inlog toont het venster een melding met **Inloggen** (opent h
 om te versturen (de server geeft 403: alleen wie schrijver of beheerder is in een ruimte, of een rol uit de
 site_config), krijgt dat te horen.
 
+**De eerste keer kiezen werkt meteen.** Het venster Versturen bestaat vanaf het starten van de app (verborgen) en laadt
+dan al; vanuit het rechtermuismenu gaat het zo:
+
+- de paden gaan in een **wachtrij** in de app (`Wachtrij` in `versturen.rs`) en blijven daar tot het venster ze ophaalt
+  (`versturen_verzoek` neemt ze, daarna is de wachtrij leeg). Het venster haalt ze op bij het laden, na de melding
+  `versturen-verzoek`, en als het zichtbaar wordt of de focus krijgt; tot dat gebeurd is, herinnert de app het elke
+  halve seconde (hoogstens 20 s). Een melding die het venster mist (de pagina laadt nog bij een eerste start, of de
+  webview werd opnieuw geladen) kost zo nooit de selectie, en wat het venster al heeft, komt geen tweede keer;
+- de paden staan meteen in de lijst, ook als de verbinding nog even duurt ("Verbinden met OpenAEC…"). Een tijdelijke
+  fout bij het verbinden (vlak na het opstarten of na het inloggen) gaat eerst twee keer stil opnieuw; een oude melding
+  van toen het venster op de achtergrond laadde, verdwijnt zodra er paden binnenkomen of het venster zichtbaar wordt;
+- het venster komt **vóór de Verkenner**: een tweede start (vanuit de Verkenner) geeft de eerste toestemming voor de
+  voorgrond (`AllowSetForegroundWindow` in `rechtermuis::wacht_op_eerste_start`) en het venster gaat even "altijd
+  bovenop" (`systeemvak::naar_voren`, ook voor Delen). Anders zette Windows het soms achter de Verkenner;
+- start de app pas door het rechtermuismenu, dan blijft het **hoofdvenster verborgen** (net als bij een autostart): alleen
+  het venster Versturen (of Delen) gaat open. Eerst ging het hoofdvenster eroverheen.
+
 **Het rechtermuismenu** (`src-tauri/src/rechtermuis.rs`) roept `openaec-cloud --actie versturen <paden…>` aan. De app
 zet het bij elke start (het pad naar de app kan na een update veranderd zijn) en het staat aan of uit onder
 **Instellingen → Rechtermuismenu**.
@@ -387,6 +404,11 @@ cd crates/openaec-shellmenu && cargo test && cargo build && cargo run --example 
 npm test                                            # hulpfuncties van de vensters (ook markdown van de assistent)
 ```
 
+De wachtrij van het venster Versturen en welk venster bij een start vanuit het rechtermuismenu opengaat, zitten in de
+unit-tests (`versturen::tests::wachtrij_houdt_paden_tot_het_venster_ze_neemt`,
+`systeemvak::tests::hoofdvenster_alleen_zonder_eigen_venster`); het stil opnieuw verbinden in `npm test`
+(`opnieuwNa`).
+
 `versturen_smoke` registreert een testwerkwoord onder een testnaam (`OpenAECVersturenRooktest`) dat naar het
 rookprogramma zelf wijst, leest het terug, laat de Verkenner (`Shell.Application`) het item noemen bij een bestand en
 een map, roept het aan op drie bestanden tegelijk en op een map, controleert dat elke aanroep binnenkomt als
@@ -420,6 +442,14 @@ overdrachten tegelijk). "Oud" is versie 0.5.0 (elk bestand na elkaar), "nieuw" d
 | 2000 bestanden van 1–20 KB in 40 mappen | download | 97,0 s | 6,9 s | 14× |
 | 5 bestanden van 50 MB | upload | 5,4 s | 3,5 s | 1,5× |
 | 5 bestanden van 50 MB | download | 4,2 s | 2,0 s | 2,1× |
+
+## Logboek
+
+De app schrijft wat hij meldt (en een paniek, voordat hij stopt) in `logboek.txt` naast `instellingen.json`, op Windows
+`%APPDATA%\OpenAEC Storage\logboek.txt` (`src-tauri/src/logboek.rs`). Bij het starten gaat een logboek boven 1 MB opzij
+als `logboek.1.txt`. Standaard: meldingen van de app en de sync-kern vanaf `info`, van de rest vanaf `warn`; meer
+detail met `OPENAEC_LOG=debug` (de regels van `env_logger`). Er staan geen tokens, sleutels of bestandsinhoud in;
+bij Versturen alleen aantallen en foutcodes. In een debug-build (`npm run tauri dev`) gaan de regels ook naar de console.
 
 ## Bouwen / draaien
 

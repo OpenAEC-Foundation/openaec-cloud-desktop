@@ -392,8 +392,10 @@ export const api = {
   // Venster Versturen (src-tauri/src/versturen.rs); fouten komen als { code, melding }, net als bij het deelvenster.
   openVersturen: (paden?: string[]) => invoke<void>("open_versturen", { paden: paden ?? null }),
   sluitVersturen: () => invoke<void>("sluit_versturen"),
+  /** De paden die op het venster wachten (de wachtrij is daarna leeg). */
   versturenVerzoek: () => invoke<string[]>("versturen_verzoek"),
-  opVersturenVerzoek: (f: (paden: string[]) => void) => listen<string[]>("versturen-verzoek", (e) => f(e.payload)),
+  /** Er staan paden klaar: het venster haalt ze dan op met `versturenVerzoek` (de app herinnert tot dat gebeurd is). */
+  opVersturenVerzoek: (f: () => void) => listen("versturen-verzoek", () => f()),
   versturenItems: (paden: string[]) => invoke<VerstuurItem[]>("versturen_items", { paden }),
   versturenGrenzen: () => invoke<Overdrachtgrenzen>("versturen_grenzen"),
   startVersturen: (opdracht: {
