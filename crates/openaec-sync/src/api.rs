@@ -410,7 +410,8 @@ struct PerBestand {
 
 impl PerBestand {
     fn weigering(&self) -> Fout {
-        Fout::Geweigerd { foutcode: self.foutcode.clone(), melding: self.fout.clone().unwrap_or_else(|| "onbekende fout".into()) }
+        let melding = self.fout.as_deref().map(crate::platte_tekst).unwrap_or_else(|| "onbekende fout".into());
+        Fout::Geweigerd { foutcode: self.foutcode.clone(), melding }
     }
 }
 

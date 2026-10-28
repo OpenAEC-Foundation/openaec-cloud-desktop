@@ -55,6 +55,51 @@ pub enum Fout {
 /// Melding als de sessie verlopen is en vernieuwen niet meer lukt.
 pub const SESSIE_VERLOPEN: &str = "Je sessie is verlopen. Log opnieuw in.";
 
+/// Een melding van Frappe als platte tekst: Frappe zet er HTML in (`<strong>Naam</strong>`) en entiteiten
+/// (`&#39;`, `&nbsp;`), die in de statusregel en de vensters letterlijk zouden staan.
+pub fn platte_tekst(melding: &str) -> String {
+    let mut zonder_tags = String::with_capacity(melding.len());
+    let mut in_tag = false;
+    for teken in melding.chars() {
+        match teken {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => zonder_tags.push(teken),
+            _ => {}
+        }
+    }
+    let mut uit = String::with_capacity(zonder_tags.len());
+    let mut rest = zonder_tags.as_str();
+    while let Some(begin) = rest.find('&') {
+        uit.push_str(&rest[..begin]);
+        let staart = &rest[begin..];
+        let einde = staart.find(';').filter(|&e| e <= 10);
+        let vervanging = einde.and_then(|e| match &staart[1..e] {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            code if code.starts_with("#x") || code.starts_with("#X") => u32::from_str_radix(&code[2..], 16).ok().and_then(char::from_u32),
+            code if code.starts_with('#') => code[1..].parse().ok().and_then(char::from_u32),
+            _ => None,
+        });
+        match (einde, vervanging) {
+            (Some(e), Some(teken)) => {
+                uit.push(teken);
+                rest = &staart[e + 1..];
+            }
+            _ => {
+                uit.push('&');
+                rest = &staart[1..];
+            }
+        }
+    }
+    uit.push_str(rest);
+    uit.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// De melding van de server voor mensen uit een antwoord van Frappe: `_server_messages` (een JSON-lijst van
 /// JSON-teksten), anders `exception` (`frappe.exceptions.X: melding`).
 fn servermelding_uit(tekst: &str) -> Option<String> {
@@ -62,11 +107,11 @@ fn servermelding_uit(tekst: &str) -> Option<String> {
     let berichten = antwoord.get("_server_messages").and_then(|v| v.as_str()).and_then(|t| serde_json::from_str::<Vec<String>>(t).ok());
     let eerste = berichten.into_iter().flatten().find_map(|b| {
         let v: serde_json::Value = serde_json::from_str(&b).ok()?;
-        v.get("message").and_then(|m| m.as_str()).map(str::to_string)
+        v.get("message").and_then(|m| m.as_str()).map(platte_tekst)
     });
     eerste.or_else(|| {
         let e = antwoord.get("exception")?.as_str()?;
-        Some(e.split_once(": ").map_or(e, |(_, m)| m).to_string())
+        Some(platte_tekst(e.split_once(": ").map_or(e, |(_, m)| m)))
     })
 }
 
