@@ -1,6 +1,6 @@
 [package]
 name = "openaec-cloud"
-version = "2026.44.9"
+version = "2026.44.10"
 description = "OpenAEC Desktop App — sync-client en tools-overzicht"
 edition = "2021"
 rust-version = "1.77"
