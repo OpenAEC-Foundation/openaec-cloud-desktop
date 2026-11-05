@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 use crate::model::{
-    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, op_sleutel, stem_ankers_af,
-    Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
+    enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, op_sleutel, stem_ankers_af, Bron, Hash, Model,
+    Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::Fout;
 
@@ -156,6 +156,8 @@ pub(crate) fn vergelijk(ma: &Model, mb: &Model, relaties_gekoppeld: usize) -> Ve
         .map(|o| info(ma, o))
         .collect();
     let mut gewijzigd = Vec::new();
+    let mut vluchtig = Vec::new();
+    let mut paren = HashSet::new();
     for (oa, object) in ma.objecten.iter().enumerate() {
         let Some(&ob) = sb.get(object.sleutel.as_str()) else {
             continue;
@@ -163,31 +165,38 @@ pub(crate) fn vergelijk(ma: &Model, mb: &Model, relaties_gekoppeld: usize) -> Ve
         if mb.objecten[ob].hash != object.hash {
             gewijzigd.push(wijziging(ma, oa, mb, ob));
         }
+        vluchtige_velden(ma, oa, mb, ob, &mut paren, &mut vluchtig);
     }
+    vluchtige_header(ma, mb, &mut vluchtig);
     toegevoegd.sort();
     verwijderd.sort();
     gewijzigd.sort_by(|x, y| x.globalid.cmp(&y.globalid));
+    vluchtig.sort();
+    let groepen = |m: &Model| -> Groepen {
+        losse_groepen(m).into_iter().map(|(s, v)| (s, v.into_iter().map(|(h, i)| (h, i as usize)).collect())).collect()
+    };
     Verschil {
         toegevoegd,
         verwijderd,
         gewijzigd,
-        losse_knopen: losse_knopen(ma, mb),
+        losse_knopen: losse_knopen(ma, &groepen(ma), mb, &groepen(mb)),
         header: header_verschil(ma, mb),
-        vluchtig: vluchtige_velden(ma, mb, &sb),
+        vluchtig,
         statistiek: Statistiek { a: ma.statistiek.clone(), b: mb.statistiek.clone(), relaties_gekoppeld },
     }
 }
 
-pub(crate) fn info(m: &Model, o: usize) -> ObjectInfo {
-    let i = m.objecten[o].inst as usize;
-    ObjectInfo { globalid: m.objecten[o].globalid.clone(), type_naam: m.type_weergave(i), naam: m.object_naam(i) }
+pub(crate) fn info<B: Bron + ?Sized>(m: &B, o: usize) -> ObjectInfo {
+    let i = m.object_inst(o as u32);
+    ObjectInfo { globalid: m.globalid(o as u32).into_owned(), type_naam: m.type_weergave(i), naam: m.object_naam(i) }
 }
 
-fn wijziging(ma: &Model, oa: usize, mb: &Model, ob: usize) -> Wijziging {
-    let ia = ma.objecten[oa].inst as usize;
-    let ib = mb.objecten[ob].inst as usize;
+/// Wat er aan object `oa` in a en `ob` in b veranderde (de hashes verschillen).
+pub(crate) fn wijziging<B: Bron + ?Sized>(ma: &B, oa: usize, mb: &B, ob: usize) -> Wijziging {
+    let ia = ma.object_inst(oa as u32);
+    let ib = mb.object_inst(ob as u32);
     let mut attributen = Vec::new();
-    if ma.bestand.type_naam(ia) != mb.bestand.type_naam(ib) {
+    if ma.type_naam(ia) != mb.type_naam(ib) {
         attributen.push(AttribuutWijziging {
             attribuut: "type".into(),
             oud: ma.type_weergave(ia),
@@ -197,10 +206,10 @@ fn wijziging(ma: &Model, oa: usize, mb: &Model, ob: usize) -> Wijziging {
         });
     }
     attribuut_verschillen(ma, ia, mb, ib, 1, "", 0, &mut attributen);
-    let globalid_nieuw =
-        (ma.objecten[oa].globalid != mb.objecten[ob].globalid).then(|| mb.objecten[ob].globalid.clone());
+    let (ga, gb) = (ma.globalid(oa as u32), mb.globalid(ob as u32));
+    let globalid_nieuw = (ga != gb).then(|| gb.to_string());
     Wijziging {
-        globalid: ma.objecten[oa].globalid.clone(),
+        globalid: ga.into_owned(),
         globalid_nieuw,
         type_naam: mb.type_weergave(ib),
         naam: mb.object_naam(ib).or_else(|| ma.object_naam(ia)),
@@ -215,18 +224,18 @@ const MAX_DIEPTE: usize = 3;
 /// beide kanten één verwijzing naar een knoop van hetzelfde type, dan noemen we de gewijzigde velden van die knoop
 /// (`TaskTime.ScheduleStart`).
 #[allow(clippy::too_many_arguments)]
-fn attribuut_verschillen(
-    ma: &Model,
+fn attribuut_verschillen<B: Bron + ?Sized>(
+    ma: &B,
     ia: usize,
-    mb: &Model,
+    mb: &B,
     ib: usize,
     vanaf: usize,
     pad: &str,
     diepte: usize,
     uit: &mut Vec<AttribuutWijziging>,
 ) {
-    let na = ma.bestand.attributen(ia).len();
-    let nb = mb.bestand.attributen(ib).len();
+    let na = ma.aantal_attributen(ia);
+    let nb = mb.aantal_attributen(ib);
     for j in vanaf..na.max(nb) {
         let ha = (j < na).then(|| ma.attribuut_hash(ia, j));
         let hb = (j < nb).then(|| mb.attribuut_hash(ib, j));
@@ -239,14 +248,14 @@ fn attribuut_verschillen(
         let direct = diepte == 0;
         if j < na && j < nb && diepte < MAX_DIEPTE {
             if let (Some(ka), Some(kb)) =
-                (knoop_doel(ma, attribuut_tekst(ma, ia, j), direct), knoop_doel(mb, attribuut_tekst(mb, ib, j), direct))
+                (knoop_doel(ma, ma.attribuut(ia, j), direct), knoop_doel(mb, mb.attribuut(ib, j), direct))
             {
                 if direct {
                     // Met wie de knoop gedeeld is, telt mee (bijv. een gedeelde plaatsing die een kant splitst).
-                    let deel_a = ma.deelt_telt(ka).then(|| ma.anker_id[ka]);
-                    let deel_b = mb.deelt_telt(kb).then(|| mb.anker_id[kb]);
+                    let deel_a = ma.deelt_telt(ka).then(|| ma.anker_id(ka));
+                    let deel_b = mb.deelt_telt(kb).then(|| mb.anker_id(kb));
                     if deel_a != deel_b {
-                        let eigen = |m: &Model, i: usize| match m.soort[i] {
+                        let eigen = |m: &B, i: usize| match m.soort(i) {
                             Soort::Object(o) => Some(o),
                             Soort::Knoop => None,
                         };
@@ -258,14 +267,14 @@ fn attribuut_verschillen(
                             eraf: Vec::new(),
                         });
                     }
-                    if ma.knoop_hash[ka] == mb.knoop_hash[kb] {
+                    if ma.knoop_hash(ka) == mb.knoop_hash(kb) {
                         continue;
                     }
                 }
-                let zelfde_vorm = ma.bestand.type_naam(ka) == mb.bestand.type_naam(kb)
-                    && !ma.bestand.instanties[ka].complex
-                    && !mb.bestand.instanties[kb].complex
-                    && ma.bestand.attributen(ka).len() == mb.bestand.attributen(kb).len();
+                let zelfde_vorm = ma.type_naam(ka) == mb.type_naam(kb)
+                    && !ma.is_complex(ka)
+                    && !mb.is_complex(kb)
+                    && ma.aantal_attributen(ka) == mb.aantal_attributen(kb);
                 if zelfde_vorm {
                     attribuut_verschillen(ma, ka, mb, kb, 0, &format!("{naam}."), diepte + 1, uit);
                     continue;
@@ -277,23 +286,22 @@ fn attribuut_verschillen(
 }
 
 /// De knoop als de tekst precies één verwijzing naar een knoop is (niet `direct`: alleen een knoop zonder anker).
-fn knoop_doel(m: &Model, tekst: &[u8], direct: bool) -> Option<usize> {
-    let n = enkele_verwijzing(tekst)?;
-    let k = *m.bestand.index.get(&n)? as usize;
-    (m.soort[k] == Soort::Knoop && (direct || m.anker_id[k].is_none())).then_some(k)
+fn knoop_doel<B: Bron + ?Sized>(m: &B, tekst: &[u8], direct: bool) -> Option<usize> {
+    let k = m.zoek(enkele_verwijzing(tekst)?)?;
+    (m.soort(k) == Soort::Knoop && (direct || m.anker_id(k).is_none())).then_some(k)
 }
 
-fn attribuut_wijziging(
-    ma: &Model,
+fn attribuut_wijziging<B: Bron + ?Sized>(
+    ma: &B,
     ia: usize,
-    mb: &Model,
+    mb: &B,
     ib: usize,
     j: usize,
     attribuut: String,
     direct: bool,
 ) -> AttribuutWijziging {
-    let ta = (j < ma.bestand.attributen(ia).len()).then(|| attribuut_tekst(ma, ia, j));
-    let tb = (j < mb.bestand.attributen(ib).len()).then(|| attribuut_tekst(mb, ib, j));
+    let ta = (j < ma.aantal_attributen(ia)).then(|| ma.attribuut(ia, j));
+    let tb = (j < mb.aantal_attributen(ib)).then(|| mb.attribuut(ib, j));
     let (mut erbij, mut eraf) = (Vec::new(), Vec::new());
     if let (Some(ta), Some(tb)) = (ta, tb) {
         if let (Some(la), Some(lb)) = (ma.verwijzingslijst(ta, direct), mb.verwijzingslijst(tb, direct)) {
@@ -334,7 +342,7 @@ fn attribuut_wijziging(
 }
 
 /// Gewijzigde velden in FILE_DESCRIPTION en FILE_NAME, zonder de tijdstempel.
-fn header_verschil(ma: &Model, mb: &Model) -> Vec<AttribuutWijziging> {
+pub(crate) fn header_verschil<B: Bron + ?Sized>(ma: &B, mb: &B) -> Vec<AttribuutWijziging> {
     let mut uit = Vec::new();
     for (regel, velden) in HEADER_VELDEN {
         for (j, veld) in velden.iter().enumerate() {
@@ -346,9 +354,8 @@ fn header_verschil(ma: &Model, mb: &Model) -> Vec<AttribuutWijziging> {
             if a.map(|x| x.0) == b.map(|x| x.0) {
                 continue;
             }
-            let toon = |m: &Model, w: Option<(Hash, &[u8])>| {
-                w.map_or_else(|| "—".into(), |(_, t)| m.toon(t, false, MAX_TEKST))
-            };
+            let toon =
+                |m: &B, w: Option<(Hash, &[u8])>| w.map_or_else(|| "—".into(), |(_, t)| m.toon(t, false, MAX_TEKST));
             uit.push(AttribuutWijziging {
                 attribuut: format!("{regel}.{veld}"),
                 oud: toon(ma, a),
@@ -361,57 +368,64 @@ fn header_verschil(ma: &Model, mb: &Model) -> Vec<AttribuutWijziging> {
     uit
 }
 
-/// Vluchtige velden die veranderden: van objecten in beide versies, van de knopen waar zo'n object rechtstreeks naar
-/// verwijst (bijv. zijn IfcOwnerHistory; elke knoop één keer), en de tijdstempel in de HEADER.
-fn vluchtige_velden(ma: &Model, mb: &Model, sb: &HashMap<&str, usize>) -> Vec<VluchtigeWijziging> {
-    let mut uit = Vec::new();
-    let mut paren: HashSet<(usize, usize)> = HashSet::new();
-    let toon = |m: &Model, i: usize, j: usize, direct: bool| m.toon(attribuut_tekst(m, i, j), direct, MAX_TEKST);
+/// De vluchtige velden die veranderden van object `oa` in a en `ob` in b: van het object zelf en van de knopen waar
+/// het rechtstreeks naar verwijst (bijv. zijn IfcOwnerHistory). Elk paar knopen (a, b) noemen we één keer
+/// (`paren`), bij het eerste object in de volgorde van a.
+pub(crate) fn vluchtige_velden<B: Bron + ?Sized>(
+    ma: &B,
+    oa: usize,
+    mb: &B,
+    ob: usize,
+    paren: &mut HashSet<(usize, usize)>,
+    uit: &mut Vec<VluchtigeWijziging>,
+) {
+    let toon = |m: &B, i: usize, j: usize, direct: bool| m.toon(m.attribuut(i, j), direct, MAX_TEKST);
     let anders = |ia: usize, ib: usize, j: usize, direct: bool| {
-        ma.waarde_hash(attribuut_tekst(ma, ia, j), direct) != mb.waarde_hash(attribuut_tekst(mb, ib, j), direct)
+        ma.waarde_hash(ma.attribuut(ia, j), direct) != mb.waarde_hash(mb.attribuut(ib, j), direct)
     };
-    for (oa, object) in ma.objecten.iter().enumerate() {
-        let Some(&ob) = sb.get(object.sleutel.as_str()) else { continue };
-        let (ia, ib) = (object.inst as usize, mb.objecten[ob].inst as usize);
-        if ma.bestand.type_naam(ia) != mb.bestand.type_naam(ib) {
+    let (ia, ib) = (ma.object_inst(oa as u32), mb.object_inst(ob as u32));
+    if ma.type_naam(ia) != mb.type_naam(ib) {
+        return;
+    }
+    let n = ma.aantal_attributen(ia).min(mb.aantal_attributen(ib));
+    for j in 1..n {
+        if ma.is_vluchtig(ia, j) && mb.is_vluchtig(ib, j) && anders(ia, ib, j, true) {
+            uit.push(VluchtigeWijziging {
+                waar: ma.object_weergave(oa),
+                globalid: Some(ma.globalid(oa as u32).into_owned()),
+                attribuut: ma.attribuut_naam(ia, j),
+                oud: toon(ma, ia, j, true),
+                nieuw: toon(mb, ib, j, true),
+            });
             continue;
         }
-        let n = ma.bestand.attributen(ia).len().min(mb.bestand.attributen(ib).len());
-        for j in 1..n {
-            if ma.is_vluchtig(ia, j) && mb.is_vluchtig(ib, j) && anders(ia, ib, j, true) {
+        let (Some(ka), Some(kb)) =
+            (knoop_doel(ma, ma.attribuut(ia, j), true), knoop_doel(mb, mb.attribuut(ib, j), true))
+        else {
+            continue;
+        };
+        let vluchtig = ma.entiteit(ka).is_some_and(|e| e.attributen.iter().any(|a| a.vluchtig));
+        if !vluchtig || ma.type_naam(ka) != mb.type_naam(kb) || !paren.insert((ka, kb)) {
+            continue;
+        }
+        for jj in 0..ma.aantal_attributen(ka) {
+            if ma.is_vluchtig(ka, jj) && mb.is_vluchtig(kb, jj) && anders(ka, kb, jj, false) {
+                let anderen = ma.verankerd_door(ka).saturating_sub(1);
+                let gedeeld = if anderen > 0 { format!(" (+{anderen})") } else { String::new() };
                 uit.push(VluchtigeWijziging {
-                    waar: ma.object_weergave(oa),
-                    globalid: Some(object.globalid.clone()),
-                    attribuut: ma.attribuut_naam(ia, j),
-                    oud: toon(ma, ia, j, true),
-                    nieuw: toon(mb, ib, j, true),
+                    waar: format!("{} van {}{gedeeld}", ma.attribuut_naam(ia, j), ma.object_weergave(oa)),
+                    globalid: None,
+                    attribuut: format!("{}.{}", ma.attribuut_naam(ia, j), ma.attribuut_naam(ka, jj)),
+                    oud: toon(ma, ka, jj, false),
+                    nieuw: toon(mb, kb, jj, false),
                 });
-                continue;
-            }
-            let (Some(ka), Some(kb)) =
-                (knoop_doel(ma, attribuut_tekst(ma, ia, j), true), knoop_doel(mb, attribuut_tekst(mb, ib, j), true))
-            else {
-                continue;
-            };
-            let vluchtig = ma.entiteit(ka).is_some_and(|e| e.attributen.iter().any(|a| a.vluchtig));
-            if !vluchtig || ma.bestand.type_naam(ka) != mb.bestand.type_naam(kb) || !paren.insert((ka, kb)) {
-                continue;
-            }
-            for jj in 0..ma.bestand.attributen(ka).len() {
-                if ma.is_vluchtig(ka, jj) && mb.is_vluchtig(kb, jj) && anders(ka, kb, jj, false) {
-                    let anderen = ma.verankerd_door[ka].saturating_sub(1);
-                    let gedeeld = if anderen > 0 { format!(" (+{anderen})") } else { String::new() };
-                    uit.push(VluchtigeWijziging {
-                        waar: format!("{} van {}{gedeeld}", ma.attribuut_naam(ia, j), ma.object_weergave(oa)),
-                        globalid: None,
-                        attribuut: format!("{}.{}", ma.attribuut_naam(ia, j), ma.attribuut_naam(ka, jj)),
-                        oud: toon(ma, ka, jj, false),
-                        nieuw: toon(mb, kb, jj, false),
-                    });
-                }
             }
         }
     }
+}
+
+/// De tijdstempel in de HEADER, als die veranderde.
+pub(crate) fn vluchtige_header<B: Bron + ?Sized>(ma: &B, mb: &B, uit: &mut Vec<VluchtigeWijziging>) {
     for (regel, velden) in HEADER_VELDEN {
         for (j, veld) in velden.iter().enumerate() {
             let (Some(a), Some(b)) = (ma.header_parameter(regel, j), mb.header_parameter(regel, j)) else { continue };
@@ -426,8 +440,6 @@ fn vluchtige_velden(ma: &Model, mb: &Model, sb: &HashMap<&str, usize>) -> Vec<Vl
             }
         }
     }
-    uit.sort();
-    uit
 }
 
 /// Losse knopen per sleutel als een gesorteerde lijst van inhoudshashes.
@@ -442,20 +454,21 @@ pub(crate) fn losse_groepen(m: &Model) -> HashMap<Hash, Vec<(Hash, u32)>> {
     groepen
 }
 
-fn losse_knopen(ma: &Model, mb: &Model) -> LosseKnopen {
-    let ga = losse_groepen(ma);
-    let gb = losse_groepen(mb);
+/// Losse knopen per sleutel: per groep de inhoudshashes met de instantie, gesorteerd.
+pub(crate) type Groepen = HashMap<Hash, Vec<(Hash, usize)>>;
+
+pub(crate) fn losse_knopen<B: Bron + ?Sized>(ma: &B, ga: &Groepen, mb: &B, gb: &Groepen) -> LosseKnopen {
     let mut uit = LosseKnopen::default();
     let leeg = Vec::new();
-    for (sleutel, a) in &ga {
+    for (sleutel, a) in ga {
         let b = gb.get(sleutel).unwrap_or(&leeg);
         let (weg, bij) = multiset_verschil(a, b);
-        uit.verwijderd.extend(weg.into_iter().map(|i| knoop_info(ma, i as usize)));
-        uit.toegevoegd.extend(bij.into_iter().map(|i| knoop_info(mb, i as usize)));
+        uit.verwijderd.extend(weg.into_iter().map(|i| knoop_info(ma, i)));
+        uit.toegevoegd.extend(bij.into_iter().map(|i| knoop_info(mb, i)));
     }
-    for (sleutel, b) in &gb {
+    for (sleutel, b) in gb {
         if !ga.contains_key(sleutel) {
-            uit.toegevoegd.extend(b.iter().map(|&(_, i)| knoop_info(mb, i as usize)));
+            uit.toegevoegd.extend(b.iter().map(|&(_, i)| knoop_info(mb, i)));
         }
     }
     uit.toegevoegd.sort();
@@ -464,7 +477,7 @@ fn losse_knopen(ma: &Model, mb: &Model) -> LosseKnopen {
 }
 
 /// Wat alleen in a staat en wat alleen in b staat (beide gesorteerd op hash).
-pub(crate) fn multiset_verschil(a: &[(Hash, u32)], b: &[(Hash, u32)]) -> (Vec<u32>, Vec<u32>) {
+pub(crate) fn multiset_verschil<T: Copy>(a: &[(Hash, T)], b: &[(Hash, T)]) -> (Vec<T>, Vec<T>) {
     let (mut i, mut j) = (0, 0);
     let (mut weg, mut bij) = (Vec::new(), Vec::new());
     while i < a.len() || j < b.len() {
@@ -495,6 +508,6 @@ pub(crate) fn multiset_verschil(a: &[(Hash, u32)], b: &[(Hash, u32)]) -> (Vec<u3
     (weg, bij)
 }
 
-pub(crate) fn knoop_info(m: &Model, i: usize) -> KnoopInfo {
+pub(crate) fn knoop_info<B: Bron + ?Sized>(m: &B, i: usize) -> KnoopInfo {
     KnoopInfo { type_naam: m.type_weergave(i), tekst: m.toon_instantie(i, MAX_TEKST) }
 }

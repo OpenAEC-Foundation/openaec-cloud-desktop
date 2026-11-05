@@ -148,9 +148,17 @@ conflict is er niets geschreven.
   relatief aan elkaar): `verschil` geeft een fout (`Fout::Kring`), `voeg_samen` een conflict.
 - Waarden die dieper dan 256 niveaus in elkaar zitten (lijsten en getypte waarden in één attribuut): dat geeft een
   fout (`Fout::Ongeldig`) met het regelnummer.
-- Bestanden van 4 GiB of groter.
+- Bestanden van 4 GiB of groter in `verschil` en `voeg_samen`. Voor grote bestanden is er `verschil_stromend` (zie
+  "Grote bestanden"); samenvoegen op die schaal is er nog niet.
 
 Bekende kleinere punten staan in `knownbugs.md`.
+
+## Grote bestanden
+
+`verschil_stromend(a, b)` geeft dezelfde uitkomst als `verschil`, met begrensd geheugen: het bestand blijft waar het
+is (geef bijv. een mmap), en per instantie onthoudt ze 5 bytes, per object 64. Ook boven 4 GiB. De opzet, de getallen
+en de grenzen staan in `docs/samenwerken/gb-schaal.md` (in de root van deze repo). Elke test van het verschil draait
+ook op deze weg (`tests/gemeen`, `tests/stromend.rs`).
 
 ## Opdrachtregel
 
@@ -170,7 +178,8 @@ Conflicten (1):
 Niet samengevoegd; er is geen uitvoerbestand geschreven.
 ```
 
-Exitcode: 0 = gelukt, 1 = conflicten (bij `voeg-samen`), 2 = fout.
+`verschil` leest de bestanden via mmap en gebruikt `verschil_stromend`. Exitcode: 0 = gelukt, 1 = conflicten (bij
+`voeg-samen`), 2 = fout.
 
 ## Meting
 

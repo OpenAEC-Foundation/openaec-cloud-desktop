@@ -76,3 +76,32 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     Een deel van de tests in `tests/samenvoegen.rs` controleert het resultaat met `zelfde`, dus met `verschil` uit
     deze bibliotheek. Een fout die in het verschil en in het samenvoegen samen zit, zien die tests niet. De tests
     uit de reviews gaan na met `Feiten` (een losse lezer). Die oudere tests kunnen ook naar `Feiten` over. — B
+
+### De stromende weg (`verschil_stromend`, PR "Verschil op GB-schaal", nummers 100 tot en met 109)
+
+100. **Nummers die niet oplopen in de tekst kosten 40 bytes per instantie** (eigen bevinding, 5 november 2026). De
+     compacte index (5 bytes per instantie) werkt als de nummers in de tekst oplopen, ook met gaten. Lopen ze niet
+     op, of liggen ze erg verspreid (meer dan 64 nummers per instantie), dan valt de index terug op een HashMap.
+     De uitkomst blijft gelijk (de tests met `hernummer` lopen zo), alleen het geheugen niet. — B
+101. **Gesloten: verwijzingen naar verderop in de tekst kostten 32 bytes per stuk** (eigen bevinding bij de meting,
+     5 november 2026). De eerste versie onthield elke verwijzing naar een nummer dat nog niet gelezen was, tot het
+     einde van het lezen. In het SketchUp-model van de meting wijst 45 % van de verwijzingen naar verderop (een
+     plaatsing naar haar assenstelsel, een vlak naar zijn rand); op 1,2 GB was dat ongeveer 1,2 GB. Nu krijgt zo'n
+     instantie een bit, en een tweede doorloop leest alleen die instanties opnieuw. — B
+102. **Een kring zoekt een tweede keer door alle knopen** (eigen bevinding, 5 november 2026). Is er een kring, dan
+     zoeken we opnieuw zoals `Model`, voor dezelfde eerste knoop in de foutmelding. Dat kost een doorloop extra (tijd,
+     geen geheugen: "bezocht" is een bit). Het resultaat is altijd een fout. — S
+103. **De verwijzende objecten van een gedeeld lid van een SET doorzoeken het hele bestand** (eigen bevinding,
+     5 november 2026). `koppel_leden` vraagt welke objecten naar een lid verwijzen. Heeft het lid één verwijzer, dan
+     is dat het object zelf. Anders lezen we het hele bestand, per laag van knopen, per lid (met een geheugen per
+     lid). Met veel gedeelde leden die veranderden, kost dat veel tijd. — S
+104. **"Gedeeld met" van een IfcOwnerHistory staat niet in de details** (eigen bevinding, 5 november 2026). Van een
+     ankerknoop die niet door een knoop gedeeld wordt en IfcOwnerHistory is, rekenen we de ankers niet uit. Wordt
+     een attribuut van een object aan de ene kant een gedeelde plaatsing en aan de andere kant een gedeelde
+     IfcOwnerHistory (een ander type), dan toont de wijziging "niet gedeeld" in plaats van de lijst van objecten.
+     Alleen tekst; of het object gewijzigd is, klopt. — S
+105. **Samenvoegen op GB-schaal is er nog niet** (eigen bevinding, 5 november 2026). `voeg_samen` gebruikt nog drie
+     keer `Model`. Het plan staat in `docs/samenwerken/gb-schaal.md`. — B
+106. **Losse knopen met verwijzingen zoeken een eigenaar door het hele model** (eigen bevinding, 5 november 2026).
+     Verwijst een losse knoop naar een knoop, dan zoeken we per object welke knopen erbij horen, met een tabel van
+     alle gedeelde knopen die we tegenkomen. Dat kost tijd en geheugen naar de grootte van het model. — S

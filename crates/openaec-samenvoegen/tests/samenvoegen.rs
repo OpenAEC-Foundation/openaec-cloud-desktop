@@ -4,9 +4,13 @@
 mod gemeen;
 
 use gemeen::*;
-use openaec_samenvoegen::{verschil, voeg_samen, ConflictSoort, Samenvoeging};
+use openaec_samenvoegen::{voeg_samen, ConflictSoort, Samenvoeging};
 
+/// Voegt samen. Vergelijkt ook de drie paren met beide wegen van het verschil ([`verschil`] uit `gemeen`).
 fn voeg(b: &str, o: &str, h: &str) -> Samenvoeging {
+    for (x, y) in [(b, o), (b, h), (o, h)] {
+        let _ = verschil(x.as_bytes(), y.as_bytes());
+    }
     voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes()).unwrap()
 }
 
@@ -17,6 +21,9 @@ fn gelukt(b: &str, o: &str, h: &str) -> String {
     assert!(s.gelukt && s.conflicten.is_empty(), "conflicten: {:#?}", s.conflicten);
     let r = String::from_utf8(s.inhoud.unwrap()).unwrap();
     bewaar(&r);
+    // Ook het resultaat tegen de basis en tegen ons, met beide wegen.
+    let _ = verschil(b.as_bytes(), r.as_bytes());
+    let _ = verschil(o.as_bytes(), r.as_bytes());
     r
 }
 

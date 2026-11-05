@@ -22,7 +22,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write as _;
 
-use crate::model::{attribuut_tekst, Hash, Model, Soort, Verwijzers, GEEN_EIGENAAR, MEER_EIGENAARS};
+use crate::model::{attribuut_tekst, Bron, Hash, Model, Soort, Verwijzers, GEEN_EIGENAAR, MEER_EIGENAARS};
 use crate::ontleden::{Token, Tokens};
 use crate::samenvoegen::{AnkerPlek, Besluit, Conflict, ConflictSoort, Deel, Gevonden, Plan, VluchtigVeld, B, H, O};
 use crate::verschil::losse_groepen;
