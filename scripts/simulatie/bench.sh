@@ -99,6 +99,15 @@ EOF
 
 start() {
   "$EERSTE/start.sh"  # MariaDB en Valkey (doet niets als ze al draaien)
+  # Op deze bench draait geen worker: de taken van Frappe zelf (bijv. create_contact bij elke opslag van een gebruiker)
+  # stapelen zich op, en bij 600 weigert Frappe nieuwe (QueueOverloaded). Alleen de wachtrijen van deze bench gaan leeg.
+  local vk="$EERSTE/valkey/usr/bin/valkey-cli -h 127.0.0.1 -p 6479"
+  export LD_LIBRARY_PATH="$EERSTE/valkey/usr/lib/x86_64-linux-gnu"
+  for q in $($vk --scan --pattern 'rq:queue:*bench-proef*'); do
+    for j in $($vk lrange "$q" 0 -1); do $vk del "rq:job:$j" >/dev/null; done
+    $vk del "$q" >/dev/null
+  done
+  grep -q '"max_queued_jobs"' "$FB/sites/$SIM_SITE/site_config.json" || frappe_op "$SIM_SITE" set-config max_queued_jobs 100000
   for unit in bench-proef-s3 bench-proef-web; do
     systemctl --user stop "$unit" 2>/dev/null || true
     systemctl --user reset-failed "$unit" 2>/dev/null || true
