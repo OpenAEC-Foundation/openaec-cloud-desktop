@@ -150,16 +150,23 @@ geheugen en ongeveer dezelfde tijd (binnen de ruis van belasting en cache): de b
 wijziging (hun voegt een hele kopie toe) vraagt iets meer, omdat hun groter is. Een conflict is goedkoper: de
 bibliotheek stopt vóór het schrijven en de zelfcontrole, dus zonder het vierde model.
 
-**Lezen alleen** (de opdracht `tel` van de meetkopie: ontleden en indelen in objecten en knopen, zonder hashes):
+**Lezen alleen** (de opdracht `tel` van de meetkopie: het bestand inlezen, en één keer `Model::lees`, dus ontleden en
+indelen in objecten en knopen, zonder hashes). Opnieuw gemeten in fixronde 1 (5 november 2026, 17:15), onder één
+plek van `zwaar.sh`; de logs staan in `groot/meting/tel-r1/`:
 
-| Model | Grootte | Tijd | Piek | MB per MB |
+| Model | Grootte | Tijd | Piek | MiB per MB |
 |---|---|---|---|---|
-| dicht (IFC2X3) | 174 MB | 3,2 s | 501 MB | 2,9 |
-| planning (OPS) | 167 MB | 3,5 s | 547 MB | 3,3 |
-| brug (IFC4) | 150 MB | 1,4 s | 163 MB | 1,1 |
+| dicht (IFC2X3) | 174 MB | 2,1 s | 481 MiB | 2,8 |
+| planning (OPS) | 167 MB | 2,9 s | 547 MiB | 3,3 |
+| brug (IFC4) | 150 MB | 1,0 s | 161 MiB | 1,1 |
+| dicht, 1,2 GB | 1 208 MB | niet opnieuw gemeten: er draaiden andere zware runs | | |
 
-Daarvan is het bestand zelf 1 MB per MB. Het ontleden kost ongeveer 76 bytes per instantie (de rij met de plek van
-elke instantie, de attributen en de verwijzingen), het indelen nog ongeveer 14.
+De eerste versie van `tel` (tot `2ca0c40`) ontleedde het bestand twee keer: eerst los, en daarna nog eens in
+`Model::lees`. Dat gaf 3,2, 3,5 en 1,4 s en 501, 547 en 163 MiB. De tijd was dus 20 tot 35 % te hoog; het
+piekgeheugen nauwelijks, want de eerste ronde was al opgeruimd voordat de tweede begon. Het bestand zelf is ongeveer
+1 MB per MB. Bij het dichte model kost het lezen daarbovenop ongeveer 95 bytes per instantie (de rij met de plek van
+elke instantie, de attributen, de verwijzingen en de indeling); bij de planning en de brug meer per instantie, omdat
+objecten meer kosten dan knopen.
 
 ## Groei
 
@@ -231,9 +238,9 @@ Gegenereerd uit het dichte model: `k847` is 1 208 MB (23,1 miljoen knopen, 156 0
 
 | Bestand | Opdracht | Wat er gebeurde | Tijd tot de stop | Piek |
 |---|---|---|---|---|
-| 1,2 GB | `tel` (alleen lezen) | Het bestand staat na 2,9 s in het geheugen (1 154 MB). Tijdens het ontleden stopt de grens het programma (exit 137) | 7,5 s | 2,0 GB |
-| 1,2 GB | `verschil` | Stopt tijdens het inlezen van het tweede bestand: twee keer 1,2 GB past niet in 2 GB | 6,8 s | 2,0 GB |
-| 6,3 GB | `tel` | Stopt tijdens het inlezen van het bestand zelf (`std::fs::read`). De controle op 4 GiB (`Fout::TeGroot`) komt nooit aan de beurt | 6,9 s | 2,0 GB |
+| 1,2 GB | `tel` (alleen lezen), eerste versie die twee keer ontleedde | Het bestand staat na 2,9 s in het geheugen (1 154 MiB). Tijdens het eerste ontleden stopt de grens het programma (exit 137). Met de nieuwe `tel` niet opnieuw gemeten (er draaiden andere zware runs); ook die heeft volgens de leestabel ongeveer 2,8 × 1 208 = 3,3 GiB nodig en stopt dus ook | 7,5 s | 2,0 GiB |
+| 1,2 GB | `verschil` | Stopt tijdens het inlezen van het tweede bestand: twee keer 1,2 GB past niet in 2 GB | 6,8 s | 2,0 GiB |
+| 6,3 GB | `tel` | Stopt tijdens het inlezen van het bestand zelf (`std::fs::read`). De controle op 4 GiB (`Fout::TeGroot`) komt nooit aan de beurt | 6,9 s | 2,0 GiB |
 
 Er is geen doorloop die alleen leest en telt in de bibliotheek zelf; `tel` zit alleen in de meetkopie
 (`scripts/meting/meetkopie.patch`).
@@ -243,11 +250,11 @@ lijken):
 
 | Model | Alleen lezen | verschil | voeg-samen |
 |---|---|---|---|
-| Dicht, 1 GB | 2,9 GB | 9 GB | 18,5 GB |
-| Dicht, 5 GB | 14 GB | 46 GB | 92 GB |
-| Planning (OPS), 1 GB | 3,3 GB | 10 GB | 21 GB |
-| Veel geometrie, 1 GB | 1,1 GB | 2,1 GB | 4,3 GB |
-| Veel geometrie, 5 GB | 5,4 GB | 11 GB | 22 GB |
+| Dicht, 1 GB | 2,7 GB | 9 GB | 18,5 GB |
+| Dicht, 5 GB | 13 GB | 46 GB | 92 GB |
+| Planning (OPS), 1 GB | 3,2 GB | 10 GB | 21 GB |
+| Veel geometrie, 1 GB | 1,0 GB | 2,1 GB | 4,3 GB |
+| Veel geometrie, 5 GB | 5,2 GB | 11 GB | 22 GB |
 
 - Een bestand van 4 GiB of groter kan de bibliotheek niet lezen: de plek van elke instantie is een `u32`. Een model
   van 5 GB geeft dus altijd een fout, ongeacht het geheugen. Dat is gemeten gedrag. De opdrachtregel leest het
@@ -329,7 +336,7 @@ De bestanden staan buiten git, in `/home/aia09/worktrees/metingen-data/` op aia0
 | `meetkopie-0655eda-mimalloc/` | Idem, met mimalloc als geheugenbeheer (zie Voorstellen) |
 | `reeks-0655eda.csv`, `.log` | De ruwe metingen van de reeks; `tabellen.md` is de uitvoer van `tabel.py` |
 | `alleen-0655eda.sh`, `.log` | De run onder `zwaar.sh --alleen`: de grootste stappen, `tel`, de grote modellen, het profiel en de spreiding |
-| `groot/meting/` | De metingen op de grote modellen (`*.tijd`, `*.fasen`); `groot/meting/tel/` is `tel` op de reeks |
+| `groot/meting/` | De metingen op de grote modellen (`*.tijd`, `*.fasen`); `groot/meting/tel/` is de eerste `tel` op de reeks (die twee keer ontleedde), `groot/meting/tel-r1/` de nieuwe |
 | `profiel/` | Het profiel per fase (`*.fasen`), met de systeembeheerder en met mimalloc |
 
 Een nieuwe versie van de bibliotheek meet je op dezelfde invoer zo:
@@ -348,6 +355,7 @@ M=<repo>/crates/openaec-samenvoegen/scripts/meting
 python3 -I $M/tabel.py reeks-<commit>.csv
 ```
 
-De invoer in `werk/` bestaat al, dus het script maakt hem niet opnieuw. Voor het profiel per fase pas je
+De invoer in `werk/` bestaat al (elke map heeft het bestand `klaar`), dus het script maakt hem niet opnieuw.
+`maak_invoer.py` schrijft alleen in een nieuwe of lege map en overschrijft niets; `proef_maak_invoer.py` toetst dat. Voor het profiel per fase pas je
 `meetkopie.patch` toe op een kopie van `src/` (`patch -p1 < meetkopie.patch`); de patch hoort bij `0655eda` en past
 misschien niet meer op een latere versie.
