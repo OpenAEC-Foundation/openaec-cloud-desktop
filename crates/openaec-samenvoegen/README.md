@@ -215,7 +215,8 @@ uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer
 ```
 
 Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
-regeleinde), met IfcOpenShell 0.9.0.post1.
+regeleinde), met IfcOpenShell 0.9.0.post1. Na werkstroom 7 (planningen, 5 november 2026): 190 van 190, met de resultaten van
+`tests/planning.rs` erbij (`cargo test --features cli`).
 
 ## Controle met Open Planner Studio
 
