@@ -7,7 +7,8 @@
 //! ankers, de weergave en het verschil per object staan in [`Bron`] en in [`crate::verschil`].
 //!
 //! Wat globaal is, rekenen we vooraf uit, in een paar doorlopen:
-//! 1. Lezen: per instantie de plek en de bits (object, wie ernaar verwijst), per object de GlobalId.
+//! 1. Lezen: per instantie de plek en de bits (object, wie ernaar verwijst), per object de GlobalId. Een tweede
+//!    doorloop leest alleen de instanties die naar verderop in de tekst verwijzen.
 //! 2. Kringen tussen knopen: dan geeft `verschil` een fout, hier ook.
 //! 3. Relaties met een nieuwe GlobalId koppelen, en welke objecten in beide versies staan.
 //! 4. De identiteit van de ankerknopen waar het op aankomt: waar een knoop naar verwijst (`A`), of die meer objecten
@@ -17,7 +18,7 @@
 //! 6. Vergelijken op sleutel; de details alleen voor wat veranderde.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,6 +50,9 @@ const MEER_ANKERS: u8 = 16;
 const DOOR_KNOOP: u8 = 32;
 /// Het type heeft vluchtige velden (bijv. IfcOwnerHistory).
 const VLUCHTIG_TYPE: u8 = 64;
+/// Een bit voor één doorloop, daarna weer uit: bij het lezen "verwijst naar verderop in de tekst", bij het zoeken
+/// naar kringen "bezocht".
+const TIJDELIJK: u8 = 128;
 
 const NUL: Hash = [0; 32];
 /// De identiteit van een ankerknoop die we niet uitrekenden: geen verwijzing van een knoop en niet gedeeld (zie
@@ -68,10 +72,13 @@ pub fn verschil_stromend(a: &[u8], b: &[u8]) -> Result<Verschil, Fout> {
         (a.join().unwrap_or_else(|_| Err(Fout::intern("lezen mislukt"))), b)
     });
     let (mut va, mut vb) = (va?, vb?);
-    for v in [&mut va, &mut vb] {
+    tegelijk(&mut va, &mut vb, &|v| {
         let (aantal, eerste) = v.kringen();
         v.statistiek.cycli = aantal;
-        if let Some(n) = eerste {
+        v.kring = eerste;
+    });
+    for v in [&va, &vb] {
+        if let Some(n) = v.kring {
             return Err(Fout::Kring { regel: regel(v.data, v.begin(n) as usize) });
         }
     }
@@ -79,9 +86,17 @@ pub fn verschil_stromend(a: &[u8], b: &[u8]) -> Result<Verschil, Fout> {
     markeer_gemeen(&mut va, &mut vb);
     va.bereken_ankers(None);
     vb.bereken_ankers(Some(&va));
-    va.bereken_hashes();
-    vb.bereken_hashes();
+    tegelijk(&mut va, &mut vb, &|v| v.bereken_hashes());
     Ok(vergelijk(&va, &vb, gekoppeld))
+}
+
+/// Roept `f` aan voor beide versies tegelijk, elk in een eigen thread. Een `Versie` is niet te delen tussen threads
+/// (de cache), wel door te geven.
+fn tegelijk(va: &mut Versie, vb: &mut Versie, f: &(dyn Fn(&mut Versie) + Sync)) {
+    std::thread::scope(|s| {
+        s.spawn(|| f(va));
+        f(vb);
+    });
 }
 
 /// Een object in een [`Versie`].
@@ -105,7 +120,7 @@ struct AnkerInfo {
 enum Plekken {
     Rang(Rang),
     /// Als de nummers niet oplopen in de tekst, of erg verspreid liggen: per instantie de plek en de bits.
-    Kaart(HashMap<u64, (u64, u8)>),
+    Kaart(HashMap<u64, (u64, Cell<u8>)>),
 }
 
 /// Lopen de nummers op in de tekst (zoals bijna altijd), dan staan de plek en de bits per instantie in de volgorde
@@ -119,7 +134,7 @@ struct Rang {
     /// Per [`BLOK`] instanties de plek van de eerste; `plek` is de afstand daarvandaan.
     basis: Vec<u64>,
     plek: Vec<u32>,
-    vlag: Vec<u8>,
+    vlag: Vec<Cell<u8>>,
     hoogste: Option<u64>,
 }
 
@@ -150,22 +165,22 @@ impl Rang {
         if self.hoogste.is_some_and(|h| n <= h) || w > aantal as u64 + (1 << 17) || u32::try_from(aantal).is_err() {
             return false;
         }
-        let basis = if aantal % BLOK == 0 { begin } else { self.basis[aantal / BLOK] };
+        let basis = if aantal.is_multiple_of(BLOK) { begin } else { self.basis[aantal / BLOK] };
         let Ok(afstand) = u32::try_from(begin - basis) else { return false };
         let w = w as usize;
         while self.bits.len() <= w {
-            if self.bits.len() % 8 == 0 {
+            if self.bits.len().is_multiple_of(8) {
                 // Alle nummers tot nu toe liggen vóór dit blok.
                 self.voor.push(aantal as u32);
             }
             self.bits.push(0);
         }
         self.bits[w] |= 1 << (n % 64);
-        if aantal % BLOK == 0 {
+        if aantal.is_multiple_of(BLOK) {
             self.basis.push(begin);
         }
         self.plek.push(afstand);
-        self.vlag.push(0);
+        self.vlag.push(Cell::new(0));
         self.hoogste = Some(n);
         true
     }
@@ -206,18 +221,26 @@ impl Plekken {
 
     fn vlag(&self, n: u64) -> u8 {
         match self {
-            Plekken::Rang(r) => r.rang(n).map_or(0, |i| r.vlag[i]),
-            Plekken::Kaart(k) => k.get(&n).map_or(0, |x| x.1),
+            Plekken::Rang(r) => r.rang(n).map_or(0, |i| r.vlag[i].get()),
+            Plekken::Kaart(k) => k.get(&n).map_or(0, |x| x.1.get()),
         }
     }
 
     /// Past de bits van `#n` aan met `f`. Geeft false als `#n` niet bestaat.
-    fn pas_aan(&mut self, n: u64, f: impl FnOnce(u8) -> u8) -> bool {
+    fn pas_aan(&self, n: u64, f: impl FnOnce(u8) -> u8) -> bool {
         let v = match self {
-            Plekken::Rang(r) => r.rang(n).map(|i| &mut r.vlag[i]),
-            Plekken::Kaart(k) => k.get_mut(&n).map(|x| &mut x.1),
+            Plekken::Rang(r) => r.rang(n).map(|i| &r.vlag[i]),
+            Plekken::Kaart(k) => k.get(&n).map(|x| &x.1),
         };
-        v.map(|v| *v = f(*v)).is_some()
+        v.map(|v| v.set(f(v.get()))).is_some()
+    }
+
+    /// Zet bit `b` uit bij alle instanties.
+    fn wis(&self, b: u8) {
+        match self {
+            Plekken::Rang(r) => r.vlag.iter().for_each(|v| v.set(v.get() & !b)),
+            Plekken::Kaart(k) => k.values().for_each(|x| x.1.set(x.1.get() & !b)),
+        }
     }
 
     /// Voegt `#n` toe op plek `begin`. Geeft false als het nummer al bestond.
@@ -226,27 +249,28 @@ impl Plekken {
             if r.voeg_toe(n, begin) {
                 return true;
             }
-            let kaart = r.nummers().map(|(n, i)| (n, (r.begin(i), r.vlag[i]))).collect();
+            let kaart = r.nummers().map(|(n, i)| (n, (r.begin(i), r.vlag[i].clone()))).collect();
             *self = Plekken::Kaart(kaart);
         }
         let Plekken::Kaart(k) = self else { return false };
         match k.entry(n) {
             Entry::Occupied(_) => false,
             Entry::Vacant(plek) => {
-                plek.insert((begin, 0));
+                plek.insert((begin, Cell::new(0)));
                 true
             }
         }
     }
 
-    /// Alle instanties in de volgorde van de tekst, met hun bits.
+    /// Alle instanties in de volgorde van de tekst, met hun bits (zoals ze zijn op het moment dat de instantie aan de
+    /// beurt is).
     fn op_volgorde(&self) -> Box<dyn Iterator<Item = (u64, u8)> + '_> {
         match self {
-            Plekken::Rang(r) => Box::new(r.nummers().map(|(n, i)| (n, r.vlag[i]))),
+            Plekken::Rang(r) => Box::new(r.nummers().map(|(n, i)| (n, r.vlag[i].get()))),
             Plekken::Kaart(k) => {
-                let mut lijst: Vec<(u64, u64, u8)> = k.iter().map(|(&n, &(b, v))| (b, n, v)).collect();
+                let mut lijst: Vec<(u64, u64)> = k.iter().map(|(&n, x)| (x.0, n)).collect();
                 lijst.sort_unstable();
-                Box::new(lijst.into_iter().map(|(_, n, v)| (n, v)))
+                Box::new(lijst.into_iter().map(|(_, n)| (n, k[&n].1.get())))
             }
         }
     }
@@ -289,6 +313,8 @@ pub(crate) struct Versie<'d> {
     /// De sleutel van een gekoppelde relatie: de GlobalId in de basis.
     gekoppeld: HashMap<u32, String>,
     ankers: HashMap<u64, AnkerInfo>,
+    /// De eerste knoop van een kring ([`Versie::kringen`]).
+    kring: Option<u64>,
     pub statistiek: VersieStatistiek,
     cache: RefCell<Cache>,
     knoop_memo: RefCell<HashMap<u64, Hash>>,
@@ -316,8 +342,6 @@ impl<'d> Versie<'d> {
         let mut gekozen: Option<Option<&'static schema::Schema>> = None;
         let mut aantal = 0usize;
         let mut dubbel: Option<(usize, u64)> = None;
-        // Verwijzingen naar een nummer dat we (nog) niet zagen: (verwijzer, begin ervan, doel, bits voor het doel).
-        let mut later: Vec<(u64, u64, u64, u8)> = Vec::new();
         let mut vooruit: Vec<u64> = Vec::new();
         let mut doelen: Vec<u64> = Vec::new();
         let kop = doorloop(data, &mut |kop, g| {
@@ -358,13 +382,16 @@ impl<'d> Versie<'d> {
             doelen.sort_unstable();
             doelen.dedup();
             let nieuw = VERWEZEN | if object { ANKER } else { DOOR_KNOOP };
+            let mut later = false;
             for &d in &doelen {
                 if d == g.id && !object {
                     vooruit.push(g.id);
                 }
-                if !plekken.pas_aan(d, |v| verwezen(v, nieuw)) {
-                    later.push((g.id, begin, d, nieuw));
-                }
+                // Een nummer dat we nog niet zagen: in de tweede doorloop.
+                later |= !plekken.pas_aan(d, |v| verwezen(v, nieuw));
+            }
+            if later {
+                plekken.pas_aan(g.id, |v| v | TIJDELIJK);
             }
             Ok(())
         })?;
@@ -375,18 +402,37 @@ impl<'d> Versie<'d> {
                 melding: format!("instantie #{n} komt twee keer voor"),
             });
         }
+        // De tweede doorloop: alleen de instanties die naar verderop in de tekst verwijzen. Een doel vóór de
+        // instantie telde de eerste doorloop al.
         let mut wees = None;
-        for &(n, begin, d, nieuw) in &later {
-            if !plekken.pas_aan(d, |v| verwezen(v, nieuw)) {
-                wees.get_or_insert(begin);
-            } else if nieuw & DOOR_KNOOP != 0 && plekken.vlag(d) & OBJECT == 0 {
-                vooruit.push(n);
+        let mut delen = Delen::default();
+        for (n, v) in plekken.op_volgorde().filter(|x| x.1 & TIJDELIJK != 0) {
+            let begin = plekken.begin(n).unwrap_or(0);
+            instantie_op(data, begin as usize, &mut delen);
+            doelen.clear();
+            doelen.extend_from_slice(&delen.refs);
+            doelen.sort_unstable();
+            doelen.dedup();
+            let object = v & OBJECT != 0;
+            let nieuw = VERWEZEN | if object { ANKER } else { DOOR_KNOOP };
+            for &d in &doelen {
+                match plekken.begin(d) {
+                    None => {
+                        wees.get_or_insert(begin);
+                    }
+                    Some(b) if b > begin => {
+                        plekken.pas_aan(d, |x| verwezen(x, nieuw));
+                        if !object && plekken.vlag(d) & OBJECT == 0 {
+                            vooruit.push(n);
+                        }
+                    }
+                    Some(_) => {}
+                }
             }
         }
-        drop(later);
+        plekken.wis(TIJDELIJK);
         if let Some(begin) = wees {
             // De eerste verwijzing van die instantie naar een nummer dat niet bestaat, zoals `ontleden::lees`.
-            let mut delen = Delen::default();
             let n = instantie_op(data, begin as usize, &mut delen).map_or(0, |x| x.0);
             let d = delen.refs.iter().copied().find(|&d| plekken.begin(d).is_none()).unwrap_or(0);
             return Err(Fout::Ongeldig {
@@ -421,6 +467,7 @@ impl<'d> Versie<'d> {
             vooruit,
             gekoppeld: HashMap::new(),
             ankers: HashMap::new(),
+            kring: None,
             statistiek,
             cache: RefCell::default(),
             knoop_memo: RefCell::default(),
@@ -499,13 +546,14 @@ impl<'d> Versie<'d> {
         self.zoek_kringen(self.plekken.op_volgorde().filter(|x| x.1 & OBJECT == 0).map(|x| x.0))
     }
 
-    /// Diepte-eerst vanaf elke knoop in `starts` die nog niet bezocht is, langs verwijzingen naar knopen.
+    /// Diepte-eerst vanaf elke knoop in `starts` die nog niet bezocht is, langs verwijzingen naar knopen. Een knoop
+    /// die klaar is, krijgt de bit [`TIJDELIJK`]; daarna gaat die bit weer uit.
     fn zoek_kringen(&self, starts: impl Iterator<Item = u64>) -> (usize, Option<u64>) {
-        let mut klaar: HashSet<u64> = HashSet::new();
+        let klaar = |n: u64| self.vlag(n) & TIJDELIJK != 0;
         let mut op_stapel: HashSet<u64> = HashSet::new();
         let (mut aantal, mut eerste) = (0, None);
         for start in starts {
-            if klaar.contains(&start) {
+            if klaar(start) {
                 continue;
             }
             op_stapel.insert(start);
@@ -514,7 +562,7 @@ impl<'d> Versie<'d> {
                 if *volgende < g.refs.len() {
                     let c = g.refs[*volgende];
                     *volgende += 1;
-                    if self.vlag(c) & OBJECT != 0 || klaar.contains(&c) {
+                    if self.vlag(c) & OBJECT != 0 || klaar(c) {
                         continue;
                     }
                     if !op_stapel.insert(c) {
@@ -527,10 +575,11 @@ impl<'d> Versie<'d> {
                     continue;
                 }
                 op_stapel.remove(&g.n);
-                klaar.insert(g.n);
+                self.plekken.pas_aan(g.n, |v| v | TIJDELIJK);
                 stapel.pop();
             }
         }
+        self.plekken.wis(TIJDELIJK);
         (aantal, eerste)
     }
 

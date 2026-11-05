@@ -83,12 +83,14 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
      compacte index (5 bytes per instantie) werkt als de nummers in de tekst oplopen, ook met gaten. Lopen ze niet
      op, of liggen ze erg verspreid (meer dan 64 nummers per instantie), dan valt de index terug op een HashMap.
      De uitkomst blijft gelijk (de tests met `hernummer` lopen zo), alleen het geheugen niet. — B
-101. **Verwijzingen naar verderop in de tekst onthouden we tot het einde van het lezen** (eigen bevinding,
-     5 november 2026). Per verwijzing naar een nummer dat we nog niet zagen, 32 bytes. In de bestanden die we zagen,
-     is dat ongeveer één per object; een bestand dat alles vooruit verwijst, kost 32 bytes per verwijzing. — S
-102. **Een kring zoekt door alle knopen** (eigen bevinding, 5 november 2026). Is er een kring, dan zoeken we opnieuw
-     zoals `Model`, voor dezelfde eerste knoop in de foutmelding, met een set van alle bezochte knopen. Op een groot
-     kapot bestand kost dat veel geheugen. Het resultaat is altijd een fout. — S
+101. **Gesloten: verwijzingen naar verderop in de tekst kostten 32 bytes per stuk** (eigen bevinding bij de meting,
+     5 november 2026). De eerste versie onthield elke verwijzing naar een nummer dat nog niet gelezen was, tot het
+     einde van het lezen. In het SketchUp-model van de meting wijst 45 % van de verwijzingen naar verderop (een
+     plaatsing naar haar assenstelsel, een vlak naar zijn rand); op 1,2 GB was dat ongeveer 1,2 GB. Nu krijgt zo'n
+     instantie een bit, en een tweede doorloop leest alleen die instanties opnieuw. — B
+102. **Een kring zoekt een tweede keer door alle knopen** (eigen bevinding, 5 november 2026). Is er een kring, dan
+     zoeken we opnieuw zoals `Model`, voor dezelfde eerste knoop in de foutmelding. Dat kost een doorloop extra (tijd,
+     geen geheugen: "bezocht" is een bit). Het resultaat is altijd een fout. — S
 103. **De verwijzende objecten van een gedeeld lid van een SET doorzoeken het hele bestand** (eigen bevinding,
      5 november 2026). `koppel_leden` vraagt welke objecten naar een lid verwijzen. Heeft het lid één verwijzer, dan
      is dat het object zelf. Anders lezen we het hele bestand, per laag van knopen, per lid (met een geheugen per

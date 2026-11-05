@@ -14,6 +14,10 @@ Eén functie erbij: `verschil_stromend(a: &[u8], b: &[u8]) -> Result<Verschil, F
 uitkomst als `verschil`, met begrensd geheugen. De opdrachtregel (`openaec-samenvoegen verschil`) gebruikt haar, met
 een mmap van beide bestanden.
 
+De opdrachtregel `voeg-samen` gebruikt nog `Model` en kan hoogstens 4 GiB aan. Ze toetst de grootte nu vóór het lezen
+en geeft dan meteen een fout met de grootte en de grens; vroeger las ze eerst het hele bestand en werd ze bij 6,3 GB
+gedood (knownbug 90 van PR #16).
+
 ### De opzet
 
 - **Het bestand blijft waar het is.** De invoer is een `&[u8]`; de aanroeper geeft een mmap. Het besturingssysteem
@@ -33,15 +37,18 @@ een mmap van beide bestanden.
 ### De doorlopen
 
 1. **Lezen** (beide versies tegelijk, elk in een eigen thread): per instantie de plek en de bits, per object de
-   GlobalId. Dezelfde fouten als `verschil`, in dezelfde volgorde: kapotte tekst, een nummer dat twee keer voorkomt,
-   een verwijzing naar een nummer dat niet bestaat, een dubbele GlobalId.
-2. **Kringen tussen knopen.** Elke kring gaat door een knoop die naar een knoop verderop in de tekst verwijst. We
-   zoeken alleen vanaf die knopen. Is er een kring, dan zoeken we opnieuw zoals `Model`, voor dezelfde foutmelding.
+   GlobalId. Een verwijzing naar een nummer dat nog niet gelezen is (verderop in de tekst), geeft de instantie een
+   bit; een tweede doorloop leest alleen die instanties opnieuw. Dezelfde fouten als `verschil`, in dezelfde
+   volgorde: kapotte tekst, een nummer dat twee keer voorkomt, een verwijzing naar een nummer dat niet bestaat, een
+   dubbele GlobalId.
+2. **Kringen tussen knopen** (beide versies tegelijk). Elke kring gaat door een knoop die naar een knoop verderop in
+   de tekst verwijst. We zoeken alleen vanaf die knopen; "bezocht" is een bit per instantie. Is er een kring, dan
+   zoeken we opnieuw zoals `Model`, voor dezelfde foutmelding.
 3. **Relaties koppelen en gemeen markeren**, op de sleutels.
 4. **Ankers.** Alleen de identiteit van ankerknopen waar een regel naar kijkt: een knoop verwijst ernaar (`A` in de
    canonieke vorm), of meer objecten delen hem en dat telt (`D`, niet bij IfcOwnerHistory). Van alle andere
    ankerknopen telt alleen dát het een ankerknoop is. In een SET of BAG stemmen we af met de basis, zoals `Model`.
-5. **Hashes per object.** De knopen eronder rekenen we uit als we ze tegenkomen, zonder recursie. Een knoop met meer
+5. **Hashes per object** (beide versies tegelijk). De knopen eronder rekenen we uit als we ze tegenkomen, zonder recursie. Een knoop met meer
    verwijzers onthouden we, tot ongeveer een miljoen hashes (50 MB); daarna beginnen we opnieuw.
 6. **Vergelijken** op sleutel. Alleen bij een andere hash lezen we het object en zijn knopen opnieuw, voor de details.
 
@@ -69,10 +76,10 @@ GETALLEN VOLGEN
   valt de index terug op een HashMap, ongeveer 40 bytes per instantie in plaats van 5. De uitkomst blijft gelijk.
   Geen van de bestanden die we zagen, heeft dit; een programma dat bij het opslaan opnieuw nummert, schrijft de
   nummers op volgorde.
-- **Verwijzingen naar verderop in de tekst** onthouden we tot het einde van het lezen: 25 bytes per verwijzing. In de
-  bestanden die we zagen, is dat ongeveer één per object (een plaatsing die naar haar assenstelsel verwijst).
-- **Een kring** is een fout. Voor dezelfde foutmelding als `verschil` zoeken we dan door alle knopen, met een set
-  van alle bezochte knopen. Dat kost op een groot kapot bestand veel geheugen.
+- **Verwijzingen naar verderop in de tekst** kosten een tweede doorloop over de instanties die zo verwijzen. In het
+  SketchUp-model van de meting is dat 45 % van de verwijzingen. (De eerste versie onthield ze in een lijst: op
+  1,2 GB was dat 1,2 GB. Zie knownbug 101.)
+- **Een kring** is een fout. Voor dezelfde foutmelding als `verschil` zoeken we dan nog een keer door alle knopen.
 - **De tijd.** Een gedeelde knoop die we vergaten, rekenen we opnieuw uit. Elke knoop lezen we minstens twee keer:
   bij het lezen en bij de hash. De hashes per object rekenen we in één thread per versie uit.
 - **Losse knopen met verwijzingen** (bijv. een losse IfcShapeRepresentation): dan zoeken we per object welke knopen
