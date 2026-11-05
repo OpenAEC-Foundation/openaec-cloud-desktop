@@ -44,16 +44,32 @@ pub fn regel<'t>(tekst: &'t str, begin: &str) -> &'t str {
     tekst.lines().find(|r| r.starts_with(begin)).unwrap_or_else(|| panic!("geen regel {begin}"))
 }
 
-/// Voegt regels toe vlak voor de ENDSEC van de DATA-sectie.
-pub fn voeg_toe(tekst: &str, regels: &str) -> String {
-    let plek = tekst.rfind("ENDSEC;").unwrap();
-    format!("{}{}\n{}", &tekst[..plek], regels.trim_end(), &tekst[plek..])
+/// Het regeleinde van `tekst`: `\r\n` (Windows) of `\n`.
+pub fn regeleinde(tekst: &str) -> &'static str {
+    if tekst.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 
-/// Verwijdert de regel die met `begin` begint.
+/// Voegt regels toe vlak voor de ENDSEC van de DATA-sectie, met het regeleinde van `tekst`.
+pub fn voeg_toe(tekst: &str, regels: &str) -> String {
+    let nl = regeleinde(tekst);
+    let plek = tekst.rfind("ENDSEC;").unwrap();
+    let regels = regels.trim_end().replace("\r\n", "\n").replace('\n', nl);
+    format!("{}{regels}{nl}{}", &tekst[..plek], &tekst[plek..])
+}
+
+/// Verwijdert de regel die met `begin` begint, met zijn regeleinde.
 pub fn verwijder_regel(tekst: &str, begin: &str) -> String {
     let r = regel(tekst, begin).to_string();
-    vervang(tekst, &format!("{r}\n"), "")
+    vervang(tekst, &format!("{r}{}", regeleinde(tekst)), "")
+}
+
+/// `tekst` met `\r\n` als regeleinde, zoals veel Windows-programma's schrijven.
+pub fn met_crlf(tekst: &str) -> String {
+    tekst.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 /// Een kleine, voorspelbare toevalsgenerator (xorshift).
