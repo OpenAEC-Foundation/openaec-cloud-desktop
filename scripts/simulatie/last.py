@@ -317,6 +317,7 @@ def opzet(frappe, n: int) -> tuple[str, str, list[str]]:
 	from frappe.core.doctype.user.user import generate_keys
 
 	sleutels = []
+	frappe.flags.in_import = True  # Frappe remt anders het aanmaken van gebruikers (throttle_user_creation)
 	for i in range(n):
 		email = f"last-{i}@sim.localhost"
 		if not frappe.db.exists("User", email):
