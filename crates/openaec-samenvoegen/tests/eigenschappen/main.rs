@@ -10,6 +10,7 @@
 //!   komen bij de startbestanden.
 //! - `EIGENSCHAPPEN_UITVOER`: een map; bij een fout staan daar de basis, ons en hun van het kleinste geval.
 //! - `SAMENVOEGEN_UITVOER`: een map; elk resultaat komt daarin, voor `scripts/valideer_met_ifcopenshell.py`.
+//! - `EIGENSCHAPPEN_STRENG`: ook een conflict van de zelfcontrole is een fout (om een klein voorbeeld te vinden).
 
 #[path = "../gemeen/mod.rs"]
 mod gemeen;
@@ -25,7 +26,7 @@ use std::sync::OnceLock;
 
 use bewerk::{deel_plaatsing, pas_toe, Bewerking};
 use gemeen::{alle_bestanden, gebouw, gid, hernummer, vervang, SCHEMAS};
-use openaec_samenvoegen::{verschil, voeg_samen, Samenvoeging};
+use openaec_samenvoegen::{verschil, voeg_samen, ConflictSoort, Samenvoeging};
 use proptest::collection::vec;
 use proptest::option;
 use proptest::prelude::*;
@@ -284,6 +285,14 @@ fn controleer_versies(v: &Versies, telling: &RefCell<Telling>) -> Result<(), Tes
     let r2 = voeg_samen(b, y, x).map_err(fout)?;
     conflict_is_netjes(&r1, "voeg_samen(b, x, y)")?;
     conflict_is_netjes(&r2, "voeg_samen(b, y, x)")?;
+    // Streng: een conflict van de zelfcontrole is een fout in de schrijver (het samenvoegen besloot dat het kon, maar
+    // het geschreven resultaat klopte niet). Er gaat niets verloren, maar zo krijgen we een klein voorbeeld.
+    if std::env::var_os("EIGENSCHAPPEN_STRENG").is_some() {
+        for r in [&r1, &r2] {
+            let zelf: Vec<_> = r.conflicten.iter().filter(|c| c.soort == ConflictSoort::Zelfcontrole).collect();
+            prop_assert!(zelf.is_empty(), "{naam}: zelfcontrole: {zelf:#?}");
+        }
+    }
     {
         let mut t = telling.borrow_mut();
         t.gevallen += 1;
