@@ -1476,3 +1476,32 @@ fn twee_objecten_vragen_elk_een_andere_waarde() {
         }
     }
 }
+
+/// Sol ronde 3 op #6 (bevinding 1), bij het samenvoegen. Het project heeft twee contexten met dezelfde inhoud; W
+/// hangt aan de ene, V aan de andere. Ons zet W aan de context van V, hun wisselt de volgorde van de contexten.
+/// Geen stil verlies: in het resultaat hangt W aan dezelfde context als V, en het project heeft twee contexten.
+#[test]
+fn wand_naar_een_gelijke_context_en_omwisselen() {
+    for schema in SCHEMAS {
+        let b = met_contexten(schema, Some(GELIJK));
+        let o = vervang(&b, "*,#7,$,.MODEL_VIEW.", "*,#70,$,.MODEL_VIEW.");
+        let h = vervang(&b, ",(#7,#70),#8);", ",(#70,#7),#8);");
+        // Los nagegaan: in ons hangen W en V aan dezelfde context, in de basis en bij hun niet.
+        let f = Feiten::lees(&o);
+        assert_eq!(context_van(&f, "WandW"), context_van(&f, "WandV"), "{schema}");
+        for f in [Feiten::lees(&b), Feiten::lees(&h)] {
+            assert_ne!(context_van(&f, "WandW"), context_van(&f, "WandV"), "{schema}");
+        }
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, &hernummer(hh, 37));
+            let f = Feiten::lees(&r);
+            let project = f.met_globalid(&gid("Project"));
+            let contexten = f.verwijzingen(project, 7);
+            assert_eq!(contexten.len(), 2, "{schema}: {r}");
+            let (w, v) = (context_van(&f, "WandW"), context_van(&f, "WandV"));
+            assert_eq!(w, v, "{schema}: W hangt niet aan de context van V\n{r}");
+            assert!(contexten.contains(&w), "{schema}: {r}");
+            assert_eq!(f.van_type("IFCGEOMETRICREPRESENTATIONCONTEXT").len(), 2, "{schema}: {r}");
+        }
+    }
+}
