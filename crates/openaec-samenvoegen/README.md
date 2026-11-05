@@ -40,9 +40,13 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   hangt nu onder verdieping Q in plaats van P" een wijziging, ook als de plaatsingen van P en Q dezelfde inhoud
   hebben. Een knoop die meer objecten gebruiken, heeft als identiteit al zijn ankers samen. Daarin tellen alleen
   objecten die in beide versies staan: een nieuw object aan een gedeelde IfcOwnerHistory verandert de andere
-  objecten niet. Een anker in een SET of BAG houdt zijn identiteit als zijn inhoud verandert: we zoeken het
-  element in de basis dat niet ongewijzigd terugkomt, per type van de knoop. Zo is een andere Precision van de
-  context alleen een wijziging van het project, niet van elk object met een vorm.
+  objecten niet.
+- **Ankers in een SET of BAG** (ontwerp §5.6). Een SET heeft geen volgorde, dus de leden hebben geen vaste plek.
+  We koppelen een lid aan een lid van de basis alleen als dat eenduidig kan: eerst op gelijke inhoud die aan beide
+  kanten één keer voorkomt, daarna per type op dezelfde objecten die ernaar verwijzen en de meeste gelijke
+  attributen, als elk van beide de enige beste keuze van de ander is. Een lid zonder koppeling is nieuw; elk object
+  dat er dieper naar verwijst, telt als gewijzigd. Zo verbergt een andere volgorde nooit een wijziging. Een andere
+  Precision van een context, of een nieuwe context ernaast, is alleen een wijziging van het project.
 - **Delen telt.** Delen twee objecten een knoop (bijv. W en V één plaatsing) en krijgt V in de andere versie een
   eigen kopie met dezelfde inhoud, dan zijn W en V gewijzigd (`ObjectPlacement (gedeeld)`: "gedeeld met V" ->
   "niet gedeeld"). Bij IfcOwnerHistory telt delen niet: sommige programma's geven een gewijzigd object een eigen
@@ -142,6 +146,8 @@ conflict is er niets geschreven.
   dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop.
 - Knopen die zonder object ertussen in een kring naar elkaar verwijzen, ook via ankers (bijv. twee plaatsingen
   relatief aan elkaar): `verschil` geeft een fout (`Fout::Kring`), `voeg_samen` een conflict.
+- Waarden die dieper dan 256 niveaus in elkaar zitten (lijsten en getypte waarden in één attribuut): dat geeft een
+  fout (`Fout::Ongeldig`) met het regelnummer.
 - Bestanden van 4 GiB of groter.
 
 Bekende kleinere punten staan in `knownbugs.md`.
