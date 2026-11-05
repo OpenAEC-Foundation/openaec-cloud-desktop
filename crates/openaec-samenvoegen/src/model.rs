@@ -647,6 +647,34 @@ impl<'a> Model<'a> {
         Self::object_hash_uit(self.bestand.type_naam(i), &hashes)
     }
 
+    /// De knoop waar attribuut `j` van object-instantie `i` als enige verwijzing naar wijst, als die knoop alleen bij
+    /// dat object hoort: één anker (dit attribuut), niet gedeeld. Bijv. de IfcTaskTime van een IfcTask.
+    pub fn eigen_knoop(&self, i: usize, j: usize) -> Option<usize> {
+        let n = enkele_verwijzing(attribuut_tekst(self, i, j))?;
+        let c = *self.bestand.index.get(&n)? as usize;
+        (self.soort[c] == Soort::Knoop && self.anker_id[c].is_some() && self.ankers(c).len() == 1).then_some(c)
+    }
+
+    /// De hash van een attribuut dat rechtstreeks naar een eigen knoop wijst ([`Model::eigen_knoop`]), waarvan elk
+    /// attribuut uit een andere versie kan komen: per attribuut het model en de knoop. Dezelfde vorm als
+    /// [`Model::attribuut_hash`] bij zo'n verwijzing (`K` en de inhoud van de knoop).
+    pub fn samengestelde_knoop_hash(type_naam: &str, delen: &[(&Model, usize)]) -> Hash {
+        let mut buffer = vec![b'T'];
+        lengte_en(type_naam.as_bytes(), &mut buffer);
+        buffer.push(b'(');
+        for (l, &(m, c)) in delen.iter().enumerate() {
+            if m.is_vluchtig(c, l) {
+                buffer.push(b'V');
+            } else {
+                m.canon().attribuut(c, l, false, &mut buffer);
+            }
+        }
+        buffer.push(b')');
+        let mut attribuut = vec![b'K'];
+        attribuut.extend_from_slice(blake3::hash(&buffer).as_bytes());
+        *blake3::hash(&attribuut).as_bytes()
+    }
+
     /// Hash van een object uit zijn type en de hashes van zijn attributen (zonder de GlobalId).
     pub fn object_hash_uit(type_naam: &str, attribuut_hashes: &[Hash]) -> Hash {
         let mut hasher = blake3::Hasher::new();
@@ -823,6 +851,22 @@ impl<'a> Model<'a> {
             }
         }
         gevonden.then(|| *hasher.finalize().as_bytes())
+    }
+
+    /// Staat elke verwijzing naar een object (behalve de GlobalId) alleen in een attribuut? Een relatie met een SET of
+    /// LIST van objecten (bijv. IfcRelContainedInSpatialStructure) is niet door haar objecten bepaald.
+    pub fn alleen_enkele_verwijzingen(&self, o: usize) -> bool {
+        let i = self.objecten[o].inst as usize;
+        self.bestand.attributen(i).iter().skip(1).all(|&attr| {
+            let tekst = self.bestand.tekst(attr);
+            enkele_verwijzing(tekst).is_some()
+                || Tokens::nieuw(tekst).all(|(_, t)| match t {
+                    Token::Verwijzing(n) => {
+                        !self.bestand.index.get(&n).is_some_and(|&k| matches!(self.soort[k as usize], Soort::Object(_)))
+                    }
+                    _ => true,
+                })
+        })
     }
 
     /// Het type zoals een mens het leest: de naam uit het schema (`IfcTask`), anders de naam uit het bestand.
@@ -1400,6 +1444,38 @@ pub(crate) fn koppel_relaties(basis: &Model, x: &mut Model) -> usize {
     for (b, xs) in kandidaten.into_values() {
         if let ([b], [o]) = (b.as_slice(), xs.as_slice()) {
             x.objecten[*o].sleutel = basis.objecten[*b].globalid.clone();
+            aantal += 1;
+        }
+    }
+    aantal
+}
+
+/// Koppelt een relatie die ons en hun allebei nieuw toevoegden, met een andere GlobalId: een relatie die alleen
+/// enkele verwijzingen naar objecten heeft (bijv. IfcRelSequence van taak A naar taak B) is door die objecten
+/// bepaald. Heeft hun precies één nieuwe relatie met hetzelfde type en dezelfde objecten als precies één nieuwe
+/// relatie van ons, dan krijgt die van hun de sleutel van ons. Bij gelijke inhoud blijft er dan één over (die van
+/// ons), bij een andere inhoud (bijv. een andere SequenceType) is het een conflict. Geeft het aantal koppelingen.
+pub(crate) fn koppel_toevoegingen(basis: &Model, ons: &Model, hun: &mut Model) -> usize {
+    let nieuw = |x: &Model, ander: &Model| -> HashMap<Hash, Vec<usize>> {
+        let in_basis: HashSet<&str> = basis.objecten.iter().map(|o| o.sleutel.as_str()).collect();
+        let in_ander: HashSet<&str> = ander.objecten.iter().map(|o| o.sleutel.as_str()).collect();
+        let mut uit: HashMap<Hash, Vec<usize>> = HashMap::new();
+        for (o, object) in x.objecten.iter().enumerate() {
+            if in_basis.contains(object.sleutel.as_str()) || in_ander.contains(object.sleutel.as_str()) {
+                continue;
+            }
+            if let Some(s) = x.natuurlijke_sleutel(o).filter(|_| x.alleen_enkele_verwijzingen(o)) {
+                uit.entry(s).or_default().push(o);
+            }
+        }
+        uit
+    };
+    let bij_ons = nieuw(ons, hun);
+    let bij_hun = nieuw(hun, ons);
+    let mut aantal = 0;
+    for (s, h) in bij_hun {
+        if let (Some([o]), [h]) = (bij_ons.get(&s).map(Vec::as_slice), h.as_slice()) {
+            hun.objecten[*h].sleutel = ons.objecten[*o].sleutel.clone();
             aantal += 1;
         }
     }

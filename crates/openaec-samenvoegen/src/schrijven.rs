@@ -303,6 +303,10 @@ impl Schrijver<'_, '_, '_> {
                             self.vertaal(attribuut_tekst(&m[H], self.inst(H, s), j), Modus::Direct { lijst: false });
                         uit.extend_from_slice(&t);
                     }
+                    Deel::Knoop(kanten) => {
+                        uit.extend_from_slice(attribuut_tekst(&m[O], self.inst(O, s), j));
+                        self.eigen_knoop(s, j, kanten);
+                    }
                     Deel::Lijst(elementen) => {
                         if elementen.is_empty() {
                             let optioneel = m[O].entiteit(i).is_some_and(|e| e.attributen[j].optioneel);
@@ -333,6 +337,25 @@ impl Schrijver<'_, '_, '_> {
         }
         uit.push(b')');
         uit
+    }
+
+    /// Een eigen knoop van object s op attribuut j, per attribuut samengevoegd ([`Deel::Knoop`]): de regel van ons
+    /// met per attribuut de tekst van de gekozen kant. Een attribuut van hun heeft geen verwijzingen, dus de tekst
+    /// kan letterlijk over.
+    fn eigen_knoop(&mut self, s: usize, j: usize, kanten: &[usize]) {
+        let m = self.m;
+        let knoop = |k: usize| m[k].eigen_knoop(self.inst(k, s), j).expect("gecontroleerd in het plan");
+        let c = [0, knoop(O), knoop(H)];
+        let mut uit = m[O].bestand.tekst(m[O].bestand.instanties[c[O]].type_bereik).to_vec();
+        uit.push(b'(');
+        for (l, &k) in kanten.iter().enumerate() {
+            if l > 0 {
+                uit.push(b',');
+            }
+            uit.extend_from_slice(attribuut_tekst(&m[k], c[k], l));
+        }
+        uit.push(b')');
+        self.vervangen.insert(c[O] as u32, uit);
     }
 
     /// Groepen losse knopen die van hun komen: die van ons eruit, die van hun erbij.
@@ -839,6 +862,7 @@ impl Schrijver<'_, '_, '_> {
             Besluit::Heel(_) => None,
             Besluit::Samen(delen) => match delen.get(j as usize) {
                 Some(Deel::Van(k)) if *k == O => ons(self),
+                Some(Deel::Knoop(_)) => ons(self),
                 Some(Deel::Van(_)) => self.hun_anker(s, j, p, false),
                 Some(Deel::Lijst(elementen)) => {
                     let plek = m[H].op_positie(self.inst(H, s), j as usize, p).map(|x| x.1);
