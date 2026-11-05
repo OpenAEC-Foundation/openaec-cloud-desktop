@@ -71,7 +71,7 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 | Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
 | Beide wijzigden dezelfde losse knopen (bijv. een kleur) of hetzelfde HEADER-veld anders | Conflict |
 | Beide vervingen dezelfde relatie door een nieuwe (bijv. een ander materiaal, met een nieuwe GlobalId) | Conflict |
-| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons. Nooit een conflict |
+| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons, welke kant de rest van het object ook levert. Geen conflict, behalve als objecten die één knoop delen elk een andere waarde vragen |
 
 Na het samenvoegen controleren we, en elk probleem is een conflict:
 
@@ -99,8 +99,18 @@ versie als conflictkopie, met het rapport erbij.
 
 **Schrijven.** Het resultaat begint bij de tekst van ons. Alleen de regels van gewijzigde objecten en hun
 plaatsing of geometrie veranderen. Wat van hun komt, krijgt nieuwe nummers boven het hoogste nummer van ons. Een
-knoop van ons met dezelfde inhoud gebruiken we opnieuw, maar alleen als hij bij hetzelfde object hoort en nog niet
-voor een andere knoop van hun gebruikt is; een gelijk STEP-nummer zegt niets. Knopen waar niets meer naar
+knoop van ons met dezelfde inhoud gebruiken we opnieuw, maar alleen als hij bij dezelfde objecten hoort en nog niet
+voor een andere knoop van hun gebruikt is; een gelijk STEP-nummer zegt niets. Hoort een knoop bij meer objecten,
+dan moeten het dezelfde objecten zijn: alleen "allebei bij meer objecten" is niet genoeg (bijv. de vorm van X en Y
+is niet die van W en V, ook al is de inhoud gelijk).
+
+**Vluchtige velden van een knoop** (bijv. een IfcOwnerHistory) tellen per object dat de knoop gebruikt, niet per
+knoop. Zo komt een tijdstempel van hun ook over als ons het object een eigen IfcOwnerHistory gaf. We kijken alleen
+naar de ankers waar ons en hun verschillen, en zetten de gekozen waarde in de knoop die het object in het resultaat
+heeft. Geeft de kant waarvan de waarde komt het object een eigen knoop, en is de knoop verder gelijk, dan krijgt
+het object die eigen knoop. Is dat niet mogelijk en vragen objecten die in het resultaat één knoop delen een andere
+waarde, of verandert de waarde voor een object dat hem bij ons en hun gelijk had, dan is dat een conflict. Een veld
+dat niet over te nemen is, laten we nooit stil weg. Knopen waar niets meer naar
 verwijst, halen we weg. De HEADER blijft van ons, behalve de velden die alleen hun wijzigde. Het regeleinde (`\n` of
 `\r\n`) is dat van ons. Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte.
 
@@ -168,7 +178,10 @@ Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote best
 | `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,7 s (9,4 tot 10,3) | 1,9 GB |
 | `voeg-samen` op een planning van OPS (52 kB, 39 taken) | 0,02 s | 7 MB |
 
-Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). De tijd is de middelste van drie runs, met de
+Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). Na de review daarvan (vluchtige velden per object,
+eigenaars per object) opnieuw vergeleken met de vorige versie (`422f9cb`), om en om onder dezelfde belasting:
+`voeg-samen` 9,99 s tegen 9,86 s, beide 1,9 GB, met hetzelfde resultaat. Wijzigt hun ook de gedeelde
+IfcOwnerHistory van alle elementen (een vluchtige waarde op 200 000 ankers): 11,5 s tegen 11,1 s. De tijd is de middelste van drie runs, met de
 spreiding erbij; het piekgeheugen is de "Maximum resident set size" van `/usr/bin/time -v`. Vóór fixronde 1 was
 het 2,8 s en 870 MB voor `verschil`, en 9,5 s en 1,9 GB voor `voeg-samen`. Het geheugen is ongeveer 20 keer de
 bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de zelfcontrole). Zelf meten:
