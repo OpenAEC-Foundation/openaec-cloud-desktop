@@ -11,7 +11,7 @@ Conflicten (1):
   ! beide_gewijzigd IfcPropertySet 'Pset_SlabCommon' [3IPHMao9vAlQSQdn4mt1Bm]: beide kanten wijzigden 'FireRating' in HasProperties anders
       HasProperties[FireRating]: basis IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $), ons IfcPropertySingleValue('FireRating', $, IFCLABEL('REI90'), $), hun IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $)
 Niet samengevoegd; er is geen uitvoerbestand geschreven.
-tijd: 55 ms (exitcode 1)
+tijd: 17 ms (exitcode 1)
 
 == Controle: een conflict, geen uitvoerbestand, en het rapport noemt de drie waarden
 conflict: beide_gewijzigd op IfcPropertySet [3IPHMao9vAlQSQdn4mt1Bm], attribuut HasProperties[FireRating]

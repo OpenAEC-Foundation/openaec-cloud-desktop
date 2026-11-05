@@ -12,7 +12,7 @@ versie 14 is byte voor byte gelijk aan versie 12
 == Anna slaat op. Haar basis (13) is verouderd: samenvoegen met basis 13, ons Anna, hun 14.
 Samengevoegd naar v15.ifc: 2581 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
 Regels: 0 nieuw, 1 herschreven, 0 weggehaald.
-tijd: 171 ms (exitcode 0)
+tijd: 110 ms (exitcode 0)
 
 == Controle: versie 15 is versie 12 plus de wijziging van Anna
 Gewijzigd (1):

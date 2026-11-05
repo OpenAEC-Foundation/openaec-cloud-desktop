@@ -9,7 +9,7 @@ showcase-appartementencomplex.ifc: 481752 bytes, sha256 640148841af81215
 == Piet slaat op. Zijn basis (12) is verouderd: de opslaan-lus voegt samen met basis 12, ons Piet, hun 13.
 Samengevoegd naar v14.ifc: 2581 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
 Regels: 0 nieuw, 1 herschreven, 0 weggehaald.
-tijd: 194 ms (exitcode 0)
+tijd: 99 ms (exitcode 0)
 
 == Controle: versie 14 bevat beide wijzigingen, en verder niets
 Gewijzigd (2):

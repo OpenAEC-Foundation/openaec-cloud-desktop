@@ -20,6 +20,10 @@ verwacht.
 | `07-blokken.txt` | Hoeveel blokken van 8 MiB van een model van 92 MB over het netwerk gaan, met en zonder samenvoegen | F24 |
 | `08-storage-tests.txt` | De bestaande tests van openaec-storage (main) voor conflictkopie, slot, delen, versies en blokken | F5, F13, F15, F17, F19, F21, F24 |
 
+Code van de bibliotheek: proef 01 tot en met 06 draaiden op 5 november op de basis `e9e601a` van PR #7 (na de
+merge in deze branch), proef 07 op `0655eda`. Proef 08 draaide op de code van openaec-storage `main` (`e87b870`);
+de log noemt `9393365`, de ontwerp-branch, die buiten `docs/` gelijk is aan main.
+
 Alles draait zonder server, behalve proef 08 (een Frappe-bench met een testsite). De weg van de desktop-app naar
 openaec-storage is voor samenvoegen nog niet gebouwd; deze proeven bewijzen die dus niet.
 
