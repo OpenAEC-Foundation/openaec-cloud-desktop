@@ -183,7 +183,8 @@ SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test samenvoegen
 uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer_met_ifcopenshell.py /tmp/resultaten
 ```
 
-Laatste run (5 november 2026, fixronde 1): 109 van 109 resultaten geldig, met IfcOpenShell 0.9.0.post1.
+Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
+regeleinde), met IfcOpenShell 0.9.0.post1.
 
 ## Bronnen
 

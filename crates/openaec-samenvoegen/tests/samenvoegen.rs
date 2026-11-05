@@ -1192,3 +1192,36 @@ fn ander_file_schema_is_een_conflict() {
         assert!(c.melding.contains("IFC4_ADD2"), "{}", c.melding);
     }
 }
+
+/// Windows-programma's schrijven vaak `\r\n` als regeleinde. Samenvoegen werkt met elk regeleinde, en het resultaat
+/// houdt dat van ons, ook voor de regels die van hun komen.
+#[test]
+fn regeleinden_van_windows_bij_samenvoegen() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        // Hun hernoemt V en voegt X toe (nieuwe regels).
+        let x = format!(
+            "#70=IFCLOCALPLACEMENT(#20,#71);\n#71=IFCAXIS2PLACEMENT3D(#72,$,$);\n#72=IFCCARTESIANPOINT((5.,0.,0.));\n\
+             #73=IFCBUILDINGELEMENTPROXY('{}',#5,'X',$,$,#70,$,$,$);",
+            gid("X")
+        );
+        let wijzig = |t: &str| met(t, &[("#5,'V',$", "#5,'V-hun',$"), (&bevat("#43,#44"), &bevat("#43,#44,#73"))], &x);
+        let h = wijzig(&b);
+        let verwacht = wijzig(&o);
+        let zet = |t: &str, crlf: bool| if crlf { met_crlf(t) } else { t.to_string() };
+        for (bc, oc, hc) in [(true, true, true), (false, true, false), (true, false, true), (false, false, true)] {
+            let r = gelukt(&zet(&b, bc), &zet(&o, oc), &zet(&h, hc));
+            let (crlf, nl) = (r.matches("\r\n").count(), r.matches('\n').count());
+            if oc {
+                assert_eq!(crlf, nl, "{schema} ({bc}, {oc}, {hc}): niet overal \\r\\n\n{r}");
+            } else {
+                assert_eq!(crlf, 0, "{schema} ({bc}, {oc}, {hc}): \\r\\n in een resultaat van ons met \\n\n{r}");
+            }
+            zelfde(&r, &verwacht);
+            let f = Feiten::lees(&r);
+            assert_eq!(f.attr(f.met_globalid(&gid("X")), 2), "'X'");
+            assert_eq!(f.attr(f.met_globalid(&gid("WandV")), 2), "'V-hun'");
+        }
+    }
+}
