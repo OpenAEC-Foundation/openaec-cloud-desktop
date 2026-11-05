@@ -84,8 +84,9 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     }
 
     /// Een placeholder die alleen online staat (of wordt), zet de schil zelf neer: daar is geen lokaal werk te
-    /// beschermen. Kan dat niet (meer), dan None: de motor downloadt dan via zijn veilige routine.
-    async fn plaats_zelf(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
+    /// beschermen. Geeft het kenmerk dat de placeholder kreeg. Kan dat niet (meer), dan None: de motor downloadt dan via
+    /// zijn veilige routine.
+    async fn plaats_zelf(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(u64, u128), Fout>> {
         if let Some(r) = self.placeholders.and_then(|p| placeholder::plaats(p, &self.root, bestand, lokaal)) {
             return Some(r);
         }
@@ -143,11 +144,12 @@ mod placeholder {
     pub trait Placeholders: Sync {
         /// Attributen van een pad (zonder op te halen); None als het niet bestaat.
         fn attributen(&self, pad: &Path) -> Option<u32>;
-        /// Maak een bestand dat alleen online staat. Weigert als er al iets op `pad` staat.
-        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()>;
+        /// Maak een bestand dat alleen online staat. Weigert als er al iets op `pad` staat. Geeft de grootte en de
+        /// wijzigingstijd die het bestand kreeg (zoals de sync-motor ze meet), niet gemeten achteraf.
+        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)>;
         /// Werk een bestand dat alleen online staat bij naar een nieuwe versie. Weigert als het niet meer in sync is
-        /// (opgehaald en gewijzigd).
-        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()>;
+        /// (opgehaald en gewijzigd). Geeft het kenmerk zoals [`Placeholders::maak`].
+        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)>;
     }
 
     /// De echte: de Cloud Filter API.
@@ -159,10 +161,10 @@ mod placeholder {
         fn attributen(&self, pad: &Path) -> Option<u32> {
             crate::cloudfilter::attributen(pad)
         }
-        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()> {
+        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)> {
             crate::cloudfilter::maak_alleen_online(pad, grootte, bestand)
         }
-        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()> {
+        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)> {
             crate::cloudfilter::werk_alleen_online_bij(pad, grootte, bestand)
         }
     }
@@ -204,8 +206,8 @@ mod placeholder {
     /// Een download in de hoofdmap: een nieuw bestand wordt een placeholder die alleen online staat (behalve onder een
     /// vastgezette map), een bestand dat alleen online staat krijgt alleen de nieuwe grootte. None: geen placeholder,
     /// ook als de bewerking geweigerd werd omdat er intussen een bestand van de gebruiker staat (of het opgehaald en
-    /// gewijzigd is); de motor downloadt dan via zijn veilige routine.
-    pub fn plaats(p: &dyn Placeholders, root: &Path, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
+    /// gewijzigd is); de motor downloadt dan via zijn veilige routine. Bij succes het kenmerk dat de placeholder kreeg.
+    pub fn plaats(p: &dyn Placeholders, root: &Path, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(u64, u128), Fout>> {
         let a = p.attributen(lokaal);
         if !zonder_inhoud(p, root, lokaal, a) {
             return None;
@@ -217,7 +219,7 @@ mod placeholder {
                 .and_then(|()| p.maak(lokaal, bestand.grootte, &bestand.bestand)),
         };
         match r {
-            Ok(()) => Some(Ok(())),
+            Ok(k) => Some(Ok(k)),
             Err(e) if !zonder_inhoud(p, root, lokaal, p.attributen(lokaal)) => {
                 log::info!("{}: geen placeholder ({e}); gewone download", lokaal.display());
                 None
@@ -348,6 +350,8 @@ mod tests {
     #[derive(Default)]
     struct Server {
         bestanden: Mutex<std::collections::BTreeMap<String, (u64, Vec<u8>)>>,
+        /// Elke versie die ooit op de server kwam (pad, inhoud).
+        versies: Mutex<Vec<(String, Vec<u8>)>>,
     }
 
     impl Server {
@@ -355,6 +359,7 @@ mod tests {
             let mut b = self.bestanden.lock().unwrap();
             let versie = b.get(pad).map_or(1, |x| x.0 + 1);
             b.insert(pad.into(), (versie, inhoud.to_vec()));
+            self.versies.lock().unwrap().push((pad.into(), inhoud.to_vec()));
         }
         fn inhoud(&self, pad: &str) -> Option<Vec<u8>> {
             self.bestanden.lock().unwrap().get(pad).map(|x| x.1.clone())
@@ -395,12 +400,32 @@ mod tests {
 
     /// De Cloud Filter API nagebootst: attributen per pad (een gewoon bestand zonder vermelding heeft
     /// FILE_ATTRIBUTE_ARCHIVE). `maak` weigert als er al iets staat, `werk_bij` als het bestand niet meer alleen online
-    /// is. `tussendoor` loopt één keer, direct na de eerste toets van de attributen: zo verschijnt er een bestand van de
-    /// gebruiker tussen de toets en de bewerking.
+    /// is. Een placeholder krijgt de grootte van de versie en "nu" als wijzigingstijd, zoals de echte. `tussendoor` loopt
+    /// één keer, direct na de eerste toets van de attributen: zo verschijnt er een bestand van de gebruiker tussen de
+    /// toets en de bewerking. `na_bewerking` loopt één keer, direct na een geslaagde bewerking: zo opent en bewaart de
+    /// gebruiker het bestand voordat de motor iets doet.
     #[derive(Default)]
     struct NepWolk {
         attributen: Mutex<std::collections::HashMap<PathBuf, u32>>,
         tussendoor: Mutex<Option<Haak>>,
+        na_bewerking: Mutex<Option<Haak>>,
+    }
+
+    impl NepWolk {
+        /// Grootte en wijzigingstijd zetten zoals de Cloud Filter API, en dat kenmerk teruggeven; daarna `na_bewerking`.
+        fn zet(&self, pad: &Path, grootte: u64) -> anyhow::Result<(u64, u128)> {
+            let f = std::fs::File::options().write(true).open(pad)?;
+            f.set_len(grootte)?;
+            let nu = std::time::SystemTime::now();
+            f.set_modified(nu)?;
+            drop(f);
+            let k = (grootte, nu.duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+            let haak = self.na_bewerking.lock().unwrap().take();
+            if let Some(h) = haak {
+                h(self);
+            }
+            Ok(k)
+        }
     }
 
     impl Placeholders for NepWolk {
@@ -414,16 +439,17 @@ mod tests {
             }
             a
         }
-        fn maak(&self, pad: &Path, _grootte: u64, _bestand: &str) -> anyhow::Result<()> {
+        fn maak(&self, pad: &Path, grootte: u64, _bestand: &str) -> anyhow::Result<(u64, u128)> {
             std::fs::OpenOptions::new().write(true).create_new(true).open(pad)?;
             self.attributen.lock().unwrap().insert(pad.to_path_buf(), placeholder::OFFLINE | placeholder::OPHALEN_BIJ_OPENEN);
-            Ok(())
+            self.zet(pad, grootte)
         }
-        fn werk_bij(&self, pad: &Path, _grootte: u64, _bestand: &str) -> anyhow::Result<()> {
-            match self.attributen.lock().unwrap().get(pad) {
-                Some(a) if a & placeholder::OFFLINE != 0 => Ok(()),
-                _ => Err(anyhow::anyhow!("niet in sync")),
+        fn werk_bij(&self, pad: &Path, grootte: u64, _bestand: &str) -> anyhow::Result<(u64, u128)> {
+            let alleen_online = self.attributen.lock().unwrap().get(pad).is_some_and(|a| a & placeholder::OFFLINE != 0);
+            if !alleen_online {
+                return Err(anyhow::anyhow!("niet in sync"));
             }
+            self.zet(pad, grootte)
         }
     }
 
@@ -491,6 +517,37 @@ mod tests {
         let r = openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
         assert_eq!(r.conflicten, 1);
         assert_eq!(server.inhoud("a (conflict).txt").unwrap(), b"opgehaald + mijn werk");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Proef (review Sol ronde 2 op bbdfad1, punt 1): de placeholder voor serverinhoud A verschijnt; de gebruiker opent het
+    /// bestand en bewaart B voordat de motor iets meet. Daarna schrijft een collega C. B moet als versie op de server
+    /// staan voordat C hier komt: het mag niet als "al op de server" gelden.
+    #[tokio::test]
+    async fn opslaan_na_een_geplaatste_placeholder_gaat_niet_verloren() {
+        let dir = proefmap("na-placeholder");
+        let server = Server::default();
+        server.zet("a.txt", b"A van de server");
+        let wolk = NepWolk::default();
+        let pad = dir.join("a.txt");
+        let p = pad.clone();
+        *wolk.na_bewerking.lock().unwrap() = Some(Box::new(move |w: &NepWolk| {
+            w.attributen.lock().unwrap().insert(p.clone(), 0x20);
+            sla_op(&p, "B van de gebruiker");
+        }));
+        let schil = Verkenneropslag::new(&server, &dir, true, NieuweMappen::Automatisch, &[]).met_placeholders(&wolk);
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert!(wolk.na_bewerking.lock().unwrap().is_none(), "de gebruiker bewaarde B na de placeholder");
+
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        server.zet("a.txt", b"C van een collega");
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+
+        assert!(
+            server.versies.lock().unwrap().iter().any(|(pad, inhoud)| pad == "a.txt" && inhoud == b"B van de gebruiker"),
+            "B staat als versie op de server"
+        );
+        assert_eq!(std::fs::read_to_string(&pad).unwrap(), "C van een collega");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
