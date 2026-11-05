@@ -83,7 +83,7 @@ def main():
         print(f"| {kol[0]} {kol[1]} | {len(fout)} | {a:.2f} | {b * 1.048576:.0f} | {c * 1.048576:.0f} | {d:.0f} "
               f"| {boven * 100:.0f} % | {alle * 100:.1f} % |")
 
-    print("\n### Fit van de tijd: seconden = a*S + b*K + c*O (zonder vaste term; ruw, de machine was druk)\n")
+    print("\n### Fit van de tijd: seconden = a*S + b*K + c*O (zonder vaste term; ruw: drukke machine en wisselende bestandscache)\n")
     print("| opdracht | a (s per 100 MB) | b (µs per knoop) | c (µs per object) |")
     print("|---|---|---|---|")
     for kol in KOLOMMEN:

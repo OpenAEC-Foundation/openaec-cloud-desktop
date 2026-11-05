@@ -6,20 +6,25 @@ start). Ontwerp: openaec-storage, `docs/samenwerken/ontwerp.md` §5.6 en §5.14.
 ## Samenvatting
 
 De bibliotheek houdt alles in het geheugen: de bestanden zelf, en per versie een model met een rij en hashes per
-instantie. Het geheugen groeit lineair met de grootte. De dichtheid van het bestand bepaalt hoe steil: per MB
-invoer vraagt samenvoegen 4,4 MB bij een model met lange geometrieregels, 17 MB bij een dicht model zoals een
-gewone BIM-export, en 20 MB bij een planning van OPS. Met de huidige opzet vraagt een dicht model van 1 GB naar
-schatting 19 GB om samen te voegen en 9 GB voor een verschil. Een gewone laptop kan dat niet. Een bestand van
-5 GB kan de bibliotheek helemaal niet lezen: de grens is 4 GiB. Op een laptop met 8 GB vrij ligt de grens voor
-samenvoegen rond 430 MB voor een dicht model en rond 1,8 GB voor een model met veel geometrie. De tijd is een kleiner
-probleem: samenvoegen kost 3 tot 7 s per 100 MB (bij een planning van OPS 19 s), en een derde daarvan is de
-zelfcontrole.
+instantie. Gemeten is tot 174 MB, op vijf kleine open modellen die ik heb vermenigvuldigd. Binnen die modellen groeit
+het geheugen ongeveer lineair met de grootte. De opbouw van het bestand bepaalt hoe steil: per MB invoer vraagt
+samenvoegen 4,4 MB bij een model met lange geometrieregels, 17 MB bij een dicht model, en 20 MB bij een planning van
+OPS. Doorgetrokken (een schatting, geen meting) vraagt een dicht model van 1 GB zo'n 19 GB om samen te voegen en 9 GB
+voor een verschil. Dat is geen bewezen grens voor echte modellen, maar wel een teken dat de huidige opzet niet tot
+meerdere GB gaat. Een bestand van 4 GiB of meer kan de bibliotheek nooit lezen, en de opdrachtregel loopt dan eerst
+het geheugen vol (`knownbugs.md`, punt 90, BLOKKEERT). De tijd is een kleiner probleem: samenvoegen kostte 3 tot 7 s
+per 100 MB (bij een planning van OPS 19 s), en een derde daarvan is de zelfcontrole. De tijden zijn ruw: de machine
+was druk en de bestandscache wisselde.
 
 ## Opzet
 
 **Machine.** aia09-mp50: 8 kernen, 13 GB geheugen, Linux Mint 22.3. Op dezelfde machine draaiden tegelijk zo'n
-16 andere agents, met builds en testruns (load 10 tot 50). De tijden zijn daarom ruw: herhaal je een meting, dan kan
-hij 30 tot 50 % anders uitkomen. Het piekgeheugen is wel stabiel (binnen 1 %).
+16 andere agents, met builds en testruns (load 10 tot 50). Ook de bestandscache wisselde: `meet.py` maakt de invoer
+vlak vóór de eerste meting, en hervatte metingen draaiden later op dezelfde bestanden. Zo las de ene meting de invoer
+uit de cache en de andere van de schijf (bijv. `ifc2x3-infra-landscaping-k68-weinig`: 0 "File system inputs" bij
+`verschil`, 526 104 bij `voeg-samen`). De tijden zijn daarom ruw: herhaal je een meting, dan kan hij 30 tot 50 %
+anders uitkomen. Een vast protocol voor opwarmen en herhalen was er niet (`knownbugs.md`, punt 95). Het
+piekgeheugen is wel stabiel (binnen 1 %).
 
 **Grens.** Elke run had een harde grens van 2 GB (`systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0`).
 Ging een run eroverheen, dan stopte systemd hem. Zo bleven de andere processen op de machine heel. Een stap waarvan de
@@ -136,12 +141,12 @@ gemeten: de stap zou boven 1,8 GB komen. De grootste stappen (vanaf 900 MB verwa
 | 166.5 | 1524550 | 12.26 s, 1511 MB (9.1/MB) | 12.44 s, 1557 MB (9.4/MB) | - | - | - | - |
 
 **Spreiding.** Drie keer dezelfde samenvoeging, met `zwaar.sh --alleen` en load 3: het brugmodel van 150 MB in 5,0,
-6,8 en 6,3 s (piek 684 tot 686 MB), het dichte model van 45 MB in 3,5, 4,3 en 3,7 s (piek 805 tot 812 MB). Het
+6,8 en 6,3 s (piek 668 tot 670 MB), het dichte model van 45 MB in 3,5, 4,3 en 3,7 s (piek 787 tot 793 MB). Het
 geheugen herhaalt zich dus binnen 1 %, de tijd binnen ongeveer 35 %. In de reeks staan een paar uitschieters
 (bijv. 9,08 s voor 21 MB): die vielen samen met zware builds van andere agents.
 
 **De soort wijziging maakt weinig uit.** Weinig of veel wijzigingen (0,1 of 10 % van de objecten) geven hetzelfde
-geheugen en ongeveer dezelfde tijd: de bibliotheek leest en hasht altijd alle drie de versies helemaal. Eén grote
+geheugen en ongeveer dezelfde tijd (binnen de ruis van belasting en cache): de bibliotheek leest en hasht altijd alle drie de versies helemaal. Eén grote
 wijziging (hun voegt een hele kopie toe) vraagt iets meer, omdat hun groter is. Een conflict is goedkoper: de
 bibliotheek stopt vóór het schrijven en de zelfcontrole, dus zonder het vierde model.
 
@@ -162,27 +167,29 @@ elke instantie, de attributen en de verwijzingen), het indelen nog ongeveer 14.
 constant: dicht 21,7 → 17,2 MB per MB voor samenvoegen van 1,2 tot 92 MB, brug 8,2 → 4,5 van 1,7 tot 150 MB. De
 tijd per MB is ook ongeveer constant: dicht 0,085 → 0,068 s per MB, brug 0,04 tot 0,08 (ruis). Alleen de planning
 van OPS groeit iets sneller dan lineair in tijd: 0,15 s per MB bij 11 MB, 0,19 bij 88 MB (vermoeden: de tabellen op
-GlobalId, met 5,8 miljoen objecten bij 88 MB; niet nagegaan).
+GlobalId, met 458 217 objecten en 354 838 knopen bij 88 MB; niet nagegaan). Ook deze tijden zijn ruw.
 
-**Het schema maakt geen verschil.** Hetzelfde brugmodel in IFC4 en in IFC4X3_ADD2 geeft binnen 1 % hetzelfde
-geheugen, en dezelfde tijd binnen de ruis (150 MB: 664 tegen 670 MB). Wat telt, is hoe het bestand is opgebouwd:
-veel kleine instanties of weinig grote.
+**Het schema, alleen voor de brug.** Hetzelfde brugmodel in IFC4 en in IFC4X3_ADD2 geeft binnen 1 % hetzelfde
+geheugen, en dezelfde tijd binnen de ruis (150 MB: 664 tegen 670 MB). Een vergelijkbare proef met IFC2X3 (hetzelfde
+model in IFC2X3 en IFC4) is niet gedaan. Tussen de bronnen telt vooral hoe het bestand is opgebouwd: veel kleine
+instanties of weinig grote.
 
 **Een formule voor het geheugen.** Het geheugen hangt af van drie dingen: de bytes (S), het aantal knopen (K) en het
-aantal objecten (O). Een fit met de kleinste kwadraten over alle 214 punten (`scripts/meting/tabel.py`):
+aantal objecten (O). Per opdracht een fit met de kleinste kwadraten (`scripts/meting/tabel.py`): zes fits op elk 35
+of 37 punten uit dezelfde vijf bronmodellen, samen 214 punten:
 
 #### Fit: piek = a*S + b*K + c*O + d
 
-| opdracht | a (MB per MB) | b (bytes per knoop) | c (bytes per object) | d (MB) | grootste afwijking boven 50 MB |
-|---|---|---|---|---|---|
-| verschil weinig | 1.92 | 331 | 1196 | 7 | 8 % |
-| verschil veel | 1.92 | 331 | 1262 | 7 | 8 % |
-| voeg-samen weinig | 3.87 | 669 | 2781 | 6 | 7 % |
-| voeg-samen veel | 3.87 | 665 | 2767 | 7 | 7 % |
-| voeg-samen groot | 3.83 | 689 | 2751 | 15 | 9 % |
-| voeg-samen conflict | 2.88 | 497 | 2471 | 6 | 6 % |
+| opdracht | punten | a (MB per MB) | b (bytes per knoop) | c (bytes per object) | d (MB) | grootste afwijking, punten boven 50 MB | grootste afwijking, alle punten |
+|---|---|---|---|---|---|---|---|
+| verschil weinig | 37 | 1.92 | 331 | 1196 | 7 | 8 % | 18.7 % |
+| verschil veel | 37 | 1.92 | 331 | 1262 | 7 | 8 % | 15.0 % |
+| voeg-samen weinig | 35 | 3.87 | 669 | 2781 | 6 | 7 % | 10.1 % |
+| voeg-samen veel | 35 | 3.87 | 665 | 2767 | 7 | 7 % | 12.3 % |
+| voeg-samen groot | 35 | 3.83 | 689 | 2751 | 15 | 9 % | 32.3 % |
+| voeg-samen conflict | 35 | 2.88 | 497 | 2471 | 6 | 6 % | 10.0 % |
 
-#### Fit van de tijd: seconden = a*S + b*K + c*O (zonder vaste term; ruw, de machine was druk)
+#### Fit van de tijd: seconden = a*S + b*K + c*O (zonder vaste term; ruw: drukke machine en wisselende bestandscache)
 
 | opdracht | a (s per 100 MB) | b (µs per knoop) | c (µs per object) |
 |---|---|---|---|
@@ -193,7 +200,10 @@ aantal objecten (O). Een fit met de kleinste kwadraten over alle 214 punten (`sc
 | voeg-samen groot | 2.87 | 3.68 | 27.2 |
 | voeg-samen conflict | 3.44 | -0.27 | 14.5 |
 
-Lees de formule zo:
+De fit beschrijft deze vermenigvuldigde modellen goed: boven 50 MB piek hoogstens 9 % afwijking. Over alle punten
+is dat tot 32,3 %, bij de kleinste bestanden (een vaste voet die de fit slecht vangt). De fits zijn geen
+onafhankelijke toets: ze komen uit dezelfde punten die ze beschrijven. Of echte modellen van dezelfde grootte
+hetzelfde doen, is niet gemeten. Lees de formule zo:
 
 - **verschil** ≈ 1,9 × S + 330 bytes per knoop + 1,2 kB per object. Dat is per versie het bestand zelf, ongeveer
   165 bytes per knoop en 600 bytes per object, voor twee versies.
@@ -201,11 +211,12 @@ Lees de formule zo:
   basis, ons, hun en het resultaat, dat de zelfcontrole opnieuw leest.
 - Een **conflict** ≈ 2,9 × S + 500 bytes per knoop + 2,5 kB per object: drie versies, zonder resultaat.
 
-Hoeveel MB per MB dat wordt, hangt dus af van het aantal bytes per instantie:
+Hoeveel MB per MB dat wordt, hangt dus af van het aantal bytes per instantie. De laatste kolom is een schatting met
+de fit, voor een model dat op de bron lijkt:
 
-| Soort model | Bytes per instantie | verschil | voeg-samen | Grens voeg-samen bij 8 GB vrij |
+| Soort model | Bytes per instantie | verschil | voeg-samen | Geschatte grens voeg-samen bij 8 GB vrij |
 |---|---|---|---|---|
-| Dicht, zoals een gewone BIM-export (`ifc2x3-infra-landscaping`) | 43 | 8,5 MB per MB | 17 tot 19 MB per MB | ongeveer 430 MB |
+| Dicht, met veel kleine regels (`ifc2x3-infra-landscaping`) | 43 | 8,5 MB per MB | 17 tot 19 MB per MB | ongeveer 430 MB |
 | Planning van OPS (veel objecten) | 98 | 9,5 MB per MB | 20 tot 22 MB per MB | ongeveer 375 MB |
 | Veel geometrie in lange regels (`ifc4-infra-bridge`) | 1 900 | 2,2 MB per MB | 4,4 MB per MB | ongeveer 1,8 GB |
 
@@ -227,7 +238,8 @@ Gegenereerd uit het dichte model: `k847` is 1 208 MB (23,1 miljoen knopen, 156 0
 Er is geen doorloop die alleen leest en telt in de bibliotheek zelf; `tel` zit alleen in de meetkopie
 (`scripts/meting/meetkopie.patch`).
 
-**Wat dat betekent** (schatting met de formule hierboven, niet gemeten):
+**Wat dat betekent** (schatting met de formule hierboven, niet gemeten; alleen voor modellen die op de bron
+lijken):
 
 | Model | Alleen lezen | verschil | voeg-samen |
 |---|---|---|---|
@@ -238,9 +250,12 @@ Er is geen doorloop die alleen leest en telt in de bibliotheek zelf; `tel` zit a
 | Veel geometrie, 5 GB | 5,4 GB | 11 GB | 22 GB |
 
 - Een bestand van 4 GiB of groter kan de bibliotheek niet lezen: de plek van elke instantie is een `u32`. Een model
-  van 5 GB geeft dus altijd een fout, ongeacht het geheugen. De opdrachtregel leest het bestand eerst helemaal in;
-  zonder grens vraagt dat al 5 GB voordat die fout komt (zie `knownbugs.md`, punt 90).
-- Een dicht model van 1 GB lukt alleen op een machine met meer dan 20 GB vrij. Op een laptop met 16 GB niet.
+  van 5 GB geeft dus altijd een fout, ongeacht het geheugen. Dat is gemeten gedrag. De opdrachtregel leest het
+  bestand eerst helemaal in; bij 6,3 GB werd het proces tijdens het lezen gedood (SIGKILL, exit 137) en kwam de
+  nette fout nooit. Dat is een bestaand probleem van de opdrachtregel, geen regressie door deze meting, en voor
+  werk op GB-schaal blokkeert het (`knownbugs.md`, punt 90). De fix hoort in de PR voor de GB-schaal.
+- Volgens de schatting lukt samenvoegen van een dicht model van 1 GB alleen met meer dan 20 GB vrij, dus niet op een
+  laptop met 16 GB.
 - De tijd is het probleem niet: lineair doorgetrokken kost samenvoegen van 1 GB ongeveer 70 s (dicht) of 35 s (veel
   geometrie). Dat is ook een schatting.
 
@@ -280,9 +295,9 @@ en het geheugen (VmRSS en VmHWM) aan het eind van elke fase. Het profiel van de 
 Niet gebouwd in de bibliotheek; een andere agent werkt erin. Per voorstel de verwachte winst, uit de metingen
 hierboven.
 
-1. **Controleer de grootte vóór het inlezen.** De opdrachtregel (en elke client) kan met `metadata().len()` de
-   grens van 4 GiB nagaan voordat hij het bestand leest. Dat geeft een nette fout in plaats van een proces dat het
-   geheugen volloopt. Klein, en geen verandering in de bibliotheek zelf.
+1. **Controleer de grootte vóór het inlezen, en lees begrensd.** De opdrachtregel (en elke client) kan met
+   `metadata().len()` de grens van 4 GiB nagaan voordat hij het bestand leest. Dat geeft een nette fout in plaats van
+   een proces dat het geheugen volloopt. Dit hoort in de PR voor de GB-schaal (`samenvoegen/gb-schaal`, nu #20).
 2. **Een smallere zelfcontrole.** Lees het resultaat niet helemaal opnieuw in, maar controleer alleen de objecten en
    knopen die het plan raakt, plus de tellingen. Winst: tot een derde van de tijd, en het vierde model (bij het dichte
    model ongeveer 400 MB van 1,6 GB). Risico: de zelfcontrole is het vangnet tegen fouten in het schrijven; de
@@ -297,8 +312,8 @@ hierboven.
    basis en ons vergelijken, dan basis en hun, en alleen de hashes per object bewaren. Dat is het werk van de andere
    agent. Zijn meting hoort bij deze tabellen.
 6. **Een andere geheugenbeheerder: geen winst.** Gemeten met mimalloc (in de meetkopie, `#[global_allocator]`):
-   dicht 92 MB 8,2 s en 1 669 MB tegen 6,6 s en 1 617 MB met de systeembeheerder; brug 150 MB 5,8 s en 707 MB tegen
-   5,6 s en 686 MB. Niet doen.
+   dicht 92 MB 8,2 s en 1 630 MB tegen 6,6 s en 1 579 MB met de systeembeheerder; brug 150 MB 5,8 s en 691 MB tegen
+   5,6 s en 670 MB. Niet doen.
 
 ## Zelf meten
 
