@@ -21,7 +21,7 @@ use std::io::Write as _;
 
 use crate::model::{attribuut_tekst, Hash, Model, Soort};
 use crate::ontleden::{Token, Tokens};
-use crate::samenvoegen::{Besluit, Conflict, ConflictSoort, Deel, Gevonden, Plan, H, O};
+use crate::samenvoegen::{Besluit, Conflict, ConflictSoort, Deel, Gevonden, Plan, B, H, O};
 use crate::verschil::losse_groepen;
 
 pub(crate) struct Geschreven {
@@ -65,6 +65,10 @@ struct Schrijver<'p, 'm, 'a> {
     /// Hun-knopen om te kopiëren: instantie, nummer, en het object waar het om gaat.
     wachtrij: Vec<(u32, u64, Option<usize>)>,
     anker_memo: HashMap<(usize, u32, u32), Option<u64>>,
+    /// Ankers van objecten van ons die naar een andere knoop gaan wijzen (de deling van hun).
+    omleiding: HashMap<(usize, u32, u32), u64>,
+    /// Kopie (nummer) -> hun-knoop.
+    kopie_van: HashMap<u64, u32>,
     ons_op_anker: Option<HashMap<Hash, u32>>,
     ons_herbruikbaar: Option<HashMap<Hash, Vec<u32>>>,
     ons_op_waarde: Option<HashMap<Hash, Vec<u32>>>,
@@ -89,6 +93,8 @@ pub(crate) fn schrijf(m: &[Model; 3], plan: &Plan) -> Result<Geschreven, Gevonde
         weg: vec![false; m[O].bestand.instanties.len()],
         wachtrij: Vec::new(),
         anker_memo: HashMap::new(),
+        omleiding: HashMap::new(),
+        kopie_van: HashMap::new(),
         ons_op_anker: None,
         ons_herbruikbaar: None,
         ons_op_waarde: None,
@@ -102,6 +108,7 @@ pub(crate) fn schrijf(m: &[Model; 3], plan: &Plan) -> Result<Geschreven, Gevonde
     s.objecten();
     s.losse_knopen();
     s.wachtrij_af();
+    s.omleidingen();
     if !s.conflicten.is_empty() {
         return Err(s.conflicten);
     }
@@ -495,6 +502,7 @@ impl Schrijver<'_, '_, '_> {
     fn kopie(&mut self, c: u32) -> u64 {
         let n = self.nieuw_nummer();
         self.vertaald.insert(c, (n, false));
+        self.kopie_van.insert(n, c);
         self.wachtrij.push((c, n, self.huidig));
         n
     }
@@ -529,16 +537,19 @@ impl Schrijver<'_, '_, '_> {
 
     /// Een verwijzing dieper naar een ankerknoop van hun: de knoop die de objecten van die ankers in het resultaat
     /// hebben. Dat moet precies één knoop zijn.
+    ///
+    /// Deelt of splitst hun een knoop anders dan de basis, en liet ons die deling ongemoeid, dan nemen we de deling
+    /// van hun over: we laten de objecten van ons naar de knoop van hun wijzen. Hun inhoud blijft gelijk, dus de
+    /// objecten zelf veranderen niet.
     fn via_anker(&mut self, d: u32) -> Option<u64> {
         let m = self.m;
-        let ankers = m[H].ankers(d as usize);
-        let mut doel: Option<u64> = None;
+        let mut doelen: Vec<((usize, u32, u32), Option<u64>)> = Vec::new();
         let mut eigenaars = Vec::new();
         let mut verwijderd = false;
-        let mut eenduidig = true;
-        for a in ankers {
+        let mut onbekend = false;
+        for a in m[H].ankers(d as usize) {
             let Some(s) = self.sleutel_van(H, a.object) else {
-                eenduidig = false;
+                onbekend = true;
                 continue;
             };
             eigenaars.push(s);
@@ -546,12 +557,8 @@ impl Schrijver<'_, '_, '_> {
                 verwijderd = true;
                 continue;
             }
-            match (doel, self.anker_doel(s, a.attribuut, a.positie)) {
-                (_, None) => eenduidig = false,
-                (None, Some(x)) => doel = Some(x),
-                (Some(y), Some(x)) if x != y => eenduidig = false,
-                _ => {}
-            }
+            let t = self.anker_doel(s, a.attribuut, a.positie);
+            doelen.push(((s, a.attribuut, a.positie), t));
         }
         if verwijderd {
             let anker = m[H].anker_weergave(d as usize);
@@ -562,7 +569,37 @@ impl Schrijver<'_, '_, '_> {
             );
             return None;
         }
-        if !eenduidig || doel.is_none() {
+        let eerste = doelen.first().and_then(|x| x.1);
+        let mut eenduidig = !onbekend && eerste.is_some() && doelen.iter().all(|x| x.1.is_some());
+        if let (true, Some(doel)) = (eenduidig, eerste) {
+            // Hun deelt wat ons apart heeft.
+            let inhoud = self.inhoud_van(doel);
+            for &(e, t) in &doelen {
+                if t != Some(doel) && !inhoud.is_some_and(|h| self.leid_om(e, doel, h)) {
+                    eenduidig = false;
+                }
+            }
+            // Hun splitste wat ons deelt: de andere ankers van die knoop van ons krijgen de knoop van hun.
+            if let (true, Some(ok)) = (eenduidig, self.ons_knoop(doel)) {
+                let van_hun: Vec<(usize, u32, u32)> = doelen.iter().map(|x| x.0).collect();
+                for a in m[O].ankers(ok) {
+                    let Some(s) = self.sleutel_van(O, a.object) else { continue };
+                    let e = (s, a.attribuut, a.positie);
+                    if van_hun.contains(&e) {
+                        continue;
+                    }
+                    let Some(c) = self.hun_knoop_op(e) else { continue };
+                    if m[H].knoop_hash[c as usize] != m[O].knoop_hash[ok] {
+                        continue;
+                    }
+                    let x = self.direct(c, false);
+                    if x != doel {
+                        self.leid_om(e, x, m[H].knoop_hash[c as usize]);
+                    }
+                }
+            }
+        }
+        if !eenduidig {
             let anker = m[H].anker_weergave(d as usize);
             self.conflict(
                 ConflictSoort::GedeeldAnker,
@@ -574,11 +611,114 @@ impl Schrijver<'_, '_, '_> {
             );
             return None;
         }
-        doel
+        eerste
+    }
+
+    /// De inhoud die knoop `n` in het resultaat krijgt.
+    fn inhoud_van(&self, n: u64) -> Option<Hash> {
+        let m = self.m;
+        if let Some(&c) = self.kopie_van.get(&n) {
+            return Some(m[H].knoop_hash[c as usize]);
+        }
+        let k = *m[O].bestand.index.get(&n)?;
+        if let Some(&(c, _)) = self.herschrijf.get(&k) {
+            return Some(m[H].knoop_hash[c as usize]);
+        }
+        (m[O].soort[k as usize] == Soort::Knoop).then(|| m[O].knoop_hash[k as usize])
+    }
+
+    /// De knoop van ons met nummer `n` (geen kopie).
+    fn ons_knoop(&self, n: u64) -> Option<usize> {
+        if self.kopie_van.contains_key(&n) {
+            return None;
+        }
+        let k = *self.m[O].bestand.index.get(&n)? as usize;
+        (self.m[O].soort[k] == Soort::Knoop).then_some(k)
+    }
+
+    /// De knoop van hun op anker e.
+    fn hun_knoop_op(&self, (s, j, p): (usize, u32, u32)) -> Option<u32> {
+        let m = self.m;
+        let o = self.plan.sleutels[s].obj[H]?;
+        let i = m[H].objecten[o].inst as usize;
+        let (n, _) = verwijzing_op(attribuut_tekst(&m[H], i, j as usize), p)?;
+        let &c = m[H].bestand.index.get(&n)?;
+        (m[H].soort[c as usize] == Soort::Knoop).then_some(c)
+    }
+
+    /// Laat anker e (van een object dat we van ons houden) naar knoop `naar` wijzen, als dat het object niet
+    /// verandert (dezelfde inhoud) en ons de deling op dat anker niet wijzigde ten opzichte van de basis.
+    fn leid_om(&mut self, e: (usize, u32, u32), naar: u64, inhoud: Hash) -> bool {
+        let m = self.m;
+        let (s, j, p) = e;
+        let sl = &self.plan.sleutels[s];
+        if sl.besluit != Besluit::Heel(O) {
+            return false;
+        }
+        let (Some(o), Some(ob)) = (sl.obj[O], sl.obj[B]) else { return false };
+        let knoop_op = |model: &Model, i: usize| -> Option<usize> {
+            let (n, _) = verwijzing_op(attribuut_tekst(model, i, j as usize), p)?;
+            model.bestand.index.get(&n).map(|&k| k as usize)
+        };
+        let Some(ok) = knoop_op(&m[O], m[O].objecten[o].inst as usize) else { return false };
+        let Some(kb) = knoop_op(&m[B], m[B].objecten[ob].inst as usize) else {
+            return false;
+        };
+        if m[O].soort[ok] != Soort::Knoop || m[O].knoop_hash[ok] != inhoud {
+            return false;
+        }
+        if m[B].anker_id[kb].is_none() || m[B].anker_id[kb] != m[O].anker_id[ok] {
+            return false;
+        }
+        if self.omleiding.get(&e).is_some_and(|&x| x != naar) {
+            return false;
+        }
+        self.omleiding.insert(e, naar);
+        self.anker_memo.insert(e, Some(naar));
+        true
+    }
+
+    /// Schrijft de objecten van ons opnieuw waarvan een anker naar een andere knoop wijst ([`Self::leid_om`]).
+    fn omleidingen(&mut self) {
+        let m = self.m;
+        let mut per_object: HashMap<usize, Vec<(u32, u32, u64)>> = HashMap::new();
+        for (&(s, j, p), &n) in &self.omleiding {
+            per_object.entry(s).or_default().push((j, p, n));
+        }
+        for (s, lijst) in per_object {
+            let i = self.inst(O, s);
+            let mut uit = m[O].bestand.tekst(m[O].bestand.instanties[i].type_bereik).to_vec();
+            uit.push(b'(');
+            for j in 0..m[O].bestand.attributen(i).len() {
+                if j > 0 {
+                    uit.push(b',');
+                }
+                let tekst = attribuut_tekst(&m[O], i, j);
+                let mut vorige = 0;
+                let mut p = 0u32;
+                let mut tokens = Tokens::nieuw(tekst);
+                while let Some((begin, token)) = tokens.next() {
+                    let Token::Verwijzing(_) = token else { continue };
+                    let eind = tokens.positie();
+                    if let Some(&(_, _, n)) = lijst.iter().find(|x| x.0 == j as u32 && x.1 == p) {
+                        uit.extend_from_slice(&tekst[vorige..begin]);
+                        let _ = write!(uit, "#{n}");
+                        vorige = eind;
+                    }
+                    p += 1;
+                }
+                uit.extend_from_slice(&tekst[vorige..]);
+            }
+            uit.push(b')');
+            self.vervangen.insert(i as u32, uit);
+        }
     }
 
     /// De knoop op anker (object s, attribuut j, positie p) in het resultaat.
     fn anker_doel(&mut self, s: usize, j: u32, p: u32) -> Option<u64> {
+        if let Some(&n) = self.omleiding.get(&(s, j, p)) {
+            return Some(n);
+        }
         if let Some(&n) = self.anker_memo.get(&(s, j, p)) {
             return n;
         }

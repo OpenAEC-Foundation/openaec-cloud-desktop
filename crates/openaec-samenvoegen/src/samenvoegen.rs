@@ -276,8 +276,13 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8], opties: &Opties) -> Resu
     }
     let mut conflicten = Vec::new();
     let mut plan = besluit(&m, opties, &mut conflicten);
-    // Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte.
-    let ongewijzigd = if gelijk(&m[B], &m[H]) || gelijk(&m[O], &m[H]) {
+    // Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte. Eerst op bytes, zodat
+    // (b, b, hun) = hun en (b, ons, b) = ons ook gelden als alle drie inhoudelijk gelijk zijn.
+    let ongewijzigd = if hun == basis {
+        Some(ons)
+    } else if ons == basis {
+        Some(hun)
+    } else if gelijk(&m[B], &m[H]) || gelijk(&m[O], &m[H]) {
         Some(ons)
     } else if gelijk(&m[B], &m[O]) {
         Some(hun)
