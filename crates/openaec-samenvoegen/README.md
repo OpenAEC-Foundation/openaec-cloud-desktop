@@ -56,7 +56,9 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   opslaan het huidige tijdstip, behalve bij een baseline), en in de HEADER de tijdstempel van FILE_NAME. Het
   verschil noemt ze wel, apart onder `vluchtig`. De auteur, de organisatie en FILE_SCHEMA tellen gewoon mee.
 - **Losse knopen**: knopen waar niets naar verwijst (bijv. IfcStyledItem, IfcIndexedColourMap). Die vergelijken we
-  per groep: het type, de naam en wat ze aanwijzen van een object (bijv. de geometrie onder een kleurkaart).
+  per groep: het type, de naam en wat ze aanwijzen van een object (bijv. de geometrie onder een kleurkaart). Hoort
+  die geometrie bij meer objecten, dan telt welke objecten: een stijl op de vorm van W en V valt in een andere
+  groep dan een stijl op de vorm van X en Y, ook als de geometrie gelijk is.
 - **Relaties met een nieuwe GlobalId.** Sommige programma's geven relaties (IfcRel*) bij elk opslaan een nieuwe
   GlobalId. Een nieuwe relatie koppelen we aan een verdwenen relatie van hetzelfde type, als ze dezelfde objecten
   aanwijzen in de attributen met één verwijzing (bijv. RelatingStructure), en er aan beide kanten precies één
@@ -75,7 +77,7 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 | Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
 | Beide wijzigden dezelfde losse knopen (bijv. een kleur) of hetzelfde HEADER-veld anders | Conflict |
 | Beide vervingen dezelfde relatie door een nieuwe (bijv. een ander materiaal, met een nieuwe GlobalId) | Conflict |
-| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons, welke kant de rest van het object ook levert. Geen conflict, behalve als objecten die één knoop delen elk een andere waarde vragen |
+| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons, welke kant de rest van het object ook levert. Nooit een conflict: vragen objecten die één knoop delen elk een andere waarde, dan krijgt elk een eigen kopie (bijv. een eigen IfcOwnerHistory) met de samengevoegde waarden |
 
 Na het samenvoegen controleren we, en elk probleem is een conflict:
 

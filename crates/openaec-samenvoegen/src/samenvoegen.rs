@@ -244,24 +244,16 @@ type VluchtigeKnopen = HashMap<u32, Vec<(usize, Hash)>>;
 fn vluchtige_knopen(m: &Model) -> VluchtigeKnopen {
     let mut uit = HashMap::new();
     for (k, anker) in m.anker_id.iter().enumerate() {
-        if anker.is_none() {
-            continue;
-        }
-        let velden = vluchtige_waarden(m, k);
+        let (Some(_), Some(e)) = (anker, m.entiteit(k)) else { continue };
+        let velden: Vec<(usize, Hash)> = (0..e.attributen.len())
+            .filter(|&f| e.attributen[f].vluchtig)
+            .map(|f| (f, m.waarde_hash(attribuut_tekst(m, k, f), false)))
+            .collect();
         if !velden.is_empty() {
             uit.insert(k as u32, velden);
         }
     }
     uit
-}
-
-/// De vluchtige velden van knoop `k` met de hash van hun waarde.
-pub(crate) fn vluchtige_waarden(m: &Model, k: usize) -> Vec<(usize, Hash)> {
-    let Some(e) = m.entiteit(k) else { return Vec::new() };
-    (0..e.attributen.len())
-        .filter(|&f| e.attributen[f].vluchtig)
-        .map(|f| (f, m.waarde_hash(attribuut_tekst(m, k, f), false)))
-        .collect()
 }
 
 /// De knoop met vluchtige velden op anker (attribuut `j`, positie `p`) van object `o` (index) in `m`.
@@ -285,8 +277,8 @@ fn zelfde_ankers(a: &Model, ka: &VluchtigeKnopen, b: &Model, kb: &VluchtigeKnope
     })
 }
 
-/// De vluchtige velden van een versie met de hash van hun waarde.
-fn vluchtige_velden(m: &Model) -> HashMap<Vluchtig, Hash> {
+/// De vluchtige velden van een versie met de hash van hun waarde, en bij een knoop de instantie.
+fn vluchtige_velden(m: &Model) -> HashMap<Vluchtig, (Hash, Option<u32>)> {
     let mut uit = HashMap::new();
     for object in &m.objecten {
         let i = object.inst as usize;
@@ -294,7 +286,7 @@ fn vluchtige_velden(m: &Model) -> HashMap<Vluchtig, Hash> {
         for (j, a) in e.attributen.iter().enumerate() {
             if a.vluchtig {
                 let h = m.waarde_hash(attribuut_tekst(m, i, j), true);
-                uit.insert(Vluchtig::Object(object.sleutel.clone(), j), h);
+                uit.insert(Vluchtig::Object(object.sleutel.clone(), j), (h, None));
             }
         }
     }
@@ -302,7 +294,7 @@ fn vluchtige_velden(m: &Model) -> HashMap<Vluchtig, Hash> {
         for j in 0..velden.len() {
             if header_vluchtig(regel, j) {
                 if let Some((h, _)) = m.header_parameter(regel, j) {
-                    uit.insert(Vluchtig::Header(regel, j), h);
+                    uit.insert(Vluchtig::Header(regel, j), (h, None));
                 }
             }
         }
@@ -364,7 +356,9 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
     // Wijzigde een kant niets (ook geen vluchtig veld), dan is het resultaat de andere kant, byte voor byte. Eerst op
     // bytes, zodat (b, b, hun) = hun en (b, ons, b) = ons ook gelden als alle drie inhoudelijk gelijk zijn.
     let zelfde = |a: usize, b: usize| {
-        gelijk(&m[a], &m[b]) && vluchtig[a] == vluchtig[b] && zelfde_ankers(&m[a], &knopen[a], &m[b], &knopen[b])
+        gelijk(&m[a], &m[b])
+            && zelfde_vluchtig(&vluchtig[a], &vluchtig[b])
+            && zelfde_ankers(&m[a], &knopen[a], &m[b], &knopen[b])
     };
     let ongewijzigd = if hun == basis {
         Some(ons)
@@ -427,6 +421,11 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
     statistiek.instanties_herschreven = g.herschreven;
     statistiek.instanties_verwijderd = g.verwijderd;
     Ok(Samenvoeging { inhoud: Some(g.inhoud), gelukt: true, conflicten, statistiek })
+}
+
+/// Hebben twee versies dezelfde waarden in hun vluchtige velden?
+fn zelfde_vluchtig(a: &HashMap<Vluchtig, (Hash, Option<u32>)>, b: &HashMap<Vluchtig, (Hash, Option<u32>)>) -> bool {
+    a.len() == b.len() && a.iter().all(|(k, (h, _))| b.get(k).is_some_and(|(x, _)| x == h))
 }
 
 /// Zijn twee versies inhoudelijk gelijk (dezelfde objecten met dezelfde inhoud, dezelfde losse knopen en HEADER)?
@@ -530,7 +529,7 @@ fn niet_ondersteund(m: &[Model; 3]) -> Vec<Conflict> {
 /// De besluiten per object, per groep losse knopen, per HEADER-veld en per vluchtig veld.
 fn besluit(
     m: &[Model; 3],
-    vluchtig: &[HashMap<Vluchtig, Hash>; 3],
+    vluchtig: &[HashMap<Vluchtig, (Hash, Option<u32>)>; 3],
     knopen: &[VluchtigeKnopen; 3],
     conflicten: &mut Vec<Conflict>,
 ) -> Plan {
@@ -553,9 +552,9 @@ fn besluit(
     let mut vluchtig_verwacht = HashMap::new();
     let mut vluchtige_knopen = Vec::new();
     let mut header = besluit_header(m, conflicten);
-    for (veld, &ho) in &vluchtig[O] {
-        let Some(&hh) = vluchtig[H].get(veld) else { continue };
-        let hb = vluchtig[B].get(veld).copied();
+    for (veld, &(ho, _)) in &vluchtig[O] {
+        let Some(&(hh, _)) = vluchtig[H].get(veld) else { continue };
+        let hb = vluchtig[B].get(veld).map(|x| x.0);
         let kant = vluchtige_kant(hb, ho, hh);
         vluchtig_verwacht.insert(veld.clone(), if kant == H { hh } else { ho });
         match veld {
@@ -584,9 +583,8 @@ fn besluit(
         .collect();
     volgorde.sort_unstable();
     // De vluchtige velden van knopen, per anker van een object dat ons en hun allebei hebben, en alleen waar ons en
-    // hun verschillen; ankers met dezelfde knopen bij ons, hun en de basis horen samen. Welke knoop elk object in het
-    // resultaat krijgt, beslist de schrijver: vragen objecten die een knoop delen andere waarden, dan krijgen ze elk
-    // een eigen kopie (ook als ons en hun de knoop anders delen).
+    // hun verschillen; ankers met dezelfde knopen bij ons, hun en de basis horen samen. Na de objectvelden:
+    // [`neem_deling_van`] kijkt naar het besluit per attribuut.
     let mut groepen: BTreeMap<(u32, u32, Option<u32>), Vec<AnkerPlek>> = BTreeMap::new();
     for &ko in &volgorde {
         for a in m[O].ankers(ko as usize) {
@@ -610,8 +608,9 @@ fn besluit(
                 (ho != hh).then_some((f, kant, if kant == H { hh } else { ho }))
             })
             .collect();
-        if velden.is_empty() {
-            continue;
+        let Some(&(_, kant, _)) = velden.first() else { continue };
+        for &(s, j, _) in &ankers {
+            neem_deling_van(m, &mut sleutels[s], j as usize, kant, [ko, kh]);
         }
         vluchtige_knopen.push(VluchtigeKnoop { knopen: [ko, kh], velden, ankers });
     }
@@ -648,6 +647,38 @@ fn neem_vluchtig_van(m: &[Model; 3], s: &mut Sleutel, j: usize, kant: usize) {
     delen[0] = Deel::Van(O);
     delen[j] = Deel::Van(kant);
     s.besluit = Besluit::Samen(delen);
+}
+
+/// Een vluchtig veld van de knoop op attribuut `j` komt van `kant` en is daar anders dan bij de andere kant, en
+/// `kant` deelt de knoop anders, met minder objecten (bijv. een eigen IfcOwnerHistory voor dit object). Is attribuut `j` verder aan beide kanten gelijk,
+/// dan nemen we het van `kant`: zo krijgt het object die deling, en botst de gekozen waarde niet met die van de
+/// andere objecten van de ruimer gedeelde knoop. `knopen`: de knoop op het anker bij ons en bij hun.
+fn neem_deling_van(m: &[Model; 3], s: &mut Sleutel, j: usize, kant: usize, knopen: [u32; 2]) {
+    let ander = if kant == H { O } else { H };
+    let door = |k: usize| m[k].verankerd_door[knopen[k - 1] as usize];
+    let id = |k: usize| m[k].anker_id[knopen[k - 1] as usize];
+    if id(kant) == id(ander) || door(kant) >= door(ander) {
+        return;
+    }
+    let (Some(o), Some(h)) = (s.obj[O], s.obj[H]) else { return };
+    let (io, ih) = (m[O].objecten[o].inst as usize, m[H].objecten[h].inst as usize);
+    let n = m[O].bestand.attributen(io).len();
+    if m[O].bestand.type_naam(io) != m[H].bestand.type_naam(ih) || m[H].bestand.attributen(ih).len() != n {
+        return;
+    }
+    if m[O].attribuut_hash(io, j) != m[H].attribuut_hash(ih, j) {
+        return;
+    }
+    match &mut s.besluit {
+        Besluit::Heel(k) if *k == ander => {
+            let mut delen = vec![Deel::Van(ander); n];
+            delen[0] = Deel::Van(O);
+            delen[j] = Deel::Van(kant);
+            s.besluit = Besluit::Samen(delen);
+        }
+        Besluit::Samen(delen) if delen[j] == Deel::Van(ander) => delen[j] = Deel::Van(kant),
+        _ => {}
+    }
 }
 
 fn besluit_object(m: &[Model; 3], s: &Sleutel, conflicten: &mut Vec<Conflict>) -> Besluit {
@@ -1301,7 +1332,7 @@ fn zelfcontrole(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
         .iter()
         .filter(|(veld, h)| match veld {
             Vluchtig::Object(sleutel, _) if !plan.in_resultaat(sleutel) => false,
-            _ => velden_r.get(*veld) != Some(*h),
+            _ => velden_r.get(*veld).is_none_or(|(x, _)| x != *h),
         })
         .map(|(veld, _)| match veld {
             Vluchtig::Object(sleutel, j) => format!("{sleutel} attribuut {}", j + 1),
