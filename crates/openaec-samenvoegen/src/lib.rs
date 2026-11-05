@@ -13,7 +13,10 @@ mod verschil;
 use serde::Serialize;
 
 pub use model::VersieStatistiek;
-pub use verschil::{verschil, AttribuutWijziging, KnoopInfo, LosseKnopen, ObjectInfo, Statistiek, Verschil, Wijziging};
+pub use verschil::{
+    verschil, AttribuutWijziging, KnoopInfo, LosseKnopen, ObjectInfo, Statistiek, Verschil, VluchtigeWijziging,
+    Wijziging,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize)]
 #[serde(tag = "soort", rename_all = "snake_case")]
@@ -26,6 +29,10 @@ pub enum Fout {
     /// Twee objecten met dezelfde GlobalId: dan weten we niet welk object welk is.
     #[error("regel {regel}: GlobalId {globalid} komt twee keer voor")]
     DubbeleGlobalId { globalid: String, regel: usize },
+    /// Knopen die (zonder object ertussen) in een kring naar elkaar verwijzen. Die kunnen we niet op inhoud
+    /// vergelijken zonder dat de volgorde in het bestand meetelt.
+    #[error("regel {regel}: knopen verwijzen in een kring naar elkaar; dat wordt niet ondersteund")]
+    Kring { regel: usize },
     /// Een fout in de bibliotheek zelf (bijv. een thread die stopte).
     #[error("interne fout: {0}")]
     Intern(String),

@@ -111,6 +111,12 @@ fn als_tekst(v: &Verschil) -> String {
             uit += &format!("  - {}\n", k.tekst);
         }
     }
+    if !v.vluchtig.is_empty() {
+        uit += &format!("Vluchtige velden (tellen niet als wijziging) ({}):\n", v.vluchtig.len());
+        for w in &v.vluchtig {
+            uit += &format!("  · {}: {}: {} -> {}\n", w.waar, w.attribuut, w.oud, w.nieuw);
+        }
+    }
     if v.is_leeg() {
         uit += "Geen verschil.\n";
     }

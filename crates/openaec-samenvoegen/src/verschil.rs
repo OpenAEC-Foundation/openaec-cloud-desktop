@@ -1,12 +1,12 @@
 //! Het verschil tussen twee versies van een IFC-bestand, per object.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
 use crate::model::{
-    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, op_sleutel, Hash, Model, Soort,
-    VersieStatistiek, HEADER_VELDEN,
+    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, op_sleutel, Hash, Model,
+    Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::Fout;
 
@@ -24,14 +24,18 @@ pub struct Verschil {
     pub gewijzigd: Vec<Wijziging>,
     /// Knopen waar niets naar verwijst (bijv. IfcStyledItem), die erbij kwamen of verdwenen.
     pub losse_knopen: LosseKnopen,
-    /// Gewijzigde velden in de HEADER (FILE_NAME.author, ...); de tijdstempel telt niet mee.
+    /// Gewijzigde velden in de HEADER (FILE_NAME.author, FILE_SCHEMA, ...); de tijdstempel telt niet mee.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub header: Vec<AttribuutWijziging>,
+    /// Vluchtige velden die veranderden (tijdstempels, CreationDate van een planning...). Ze maken een object niet
+    /// gewijzigd en [`Verschil::is_leeg`] telt ze niet.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vluchtig: Vec<VluchtigeWijziging>,
     pub statistiek: Statistiek,
 }
 
 impl Verschil {
-    /// Zijn a en b inhoudelijk gelijk?
+    /// Zijn a en b inhoudelijk gelijk? Vluchtige velden tellen niet mee.
     pub fn is_leeg(&self) -> bool {
         self.toegevoegd.is_empty()
             && self.verwijderd.is_empty()
@@ -78,6 +82,20 @@ pub struct AttribuutWijziging {
     pub eraf: Vec<String>,
 }
 
+/// Een vluchtig veld dat veranderde.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VluchtigeWijziging {
+    /// Waar het veld staat: `HEADER`, een object (`Basisplanning [GlobalId]`) of een knoop eraan
+    /// (`OwnerHistory van W [GlobalId] (+3)`).
+    pub waar: String,
+    /// De GlobalId als het veld van een object is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub globalid: Option<String>,
+    pub attribuut: String,
+    pub oud: String,
+    pub nieuw: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct LosseKnopen {
     pub toegevoegd: Vec<KnoopInfo>,
@@ -108,10 +126,16 @@ pub fn verschil(a: &[u8], b: &[u8]) -> Result<Verschil, Fout> {
     });
     let (mut ma, mut mb) = (ma?, mb?);
     let relaties_gekoppeld = koppel_relaties(&ma, &mut mb);
+    markeer_gemeen(&mut [&mut ma, &mut mb]);
     std::thread::scope(|s| {
         s.spawn(|| ma.bereken());
         mb.bereken();
     });
+    for m in [&ma, &mb] {
+        if let Some(k) = m.kring {
+            return Err(Fout::Kring { regel: m.bestand.regel(m.bestand.instanties[k as usize].bereik.0 as usize) });
+        }
+    }
     Ok(vergelijk(&ma, &mb, relaties_gekoppeld))
 }
 
@@ -144,6 +168,7 @@ pub(crate) fn vergelijk(ma: &Model, mb: &Model, relaties_gekoppeld: usize) -> Ve
         gewijzigd,
         losse_knopen: losse_knopen(ma, mb),
         header: header_verschil(ma, mb),
+        vluchtig: vluchtige_velden(ma, mb, &sb),
         statistiek: Statistiek { a: ma.statistiek.clone(), b: mb.statistiek.clone(), relaties_gekoppeld },
     }
 }
@@ -211,6 +236,27 @@ fn attribuut_verschillen(
             if let (Some(ka), Some(kb)) =
                 (knoop_doel(ma, attribuut_tekst(ma, ia, j), direct), knoop_doel(mb, attribuut_tekst(mb, ib, j), direct))
             {
+                if direct {
+                    // Met wie de knoop gedeeld is, telt mee (bijv. een gedeelde plaatsing die een kant splitst).
+                    let deel_a = ma.deelt_telt(ka).then(|| ma.anker_id[ka]);
+                    let deel_b = mb.deelt_telt(kb).then(|| mb.anker_id[kb]);
+                    if deel_a != deel_b {
+                        let eigen = |m: &Model, i: usize| match m.soort[i] {
+                            Soort::Object(o) => Some(o),
+                            Soort::Knoop => None,
+                        };
+                        uit.push(AttribuutWijziging {
+                            attribuut: format!("{naam} (gedeeld)"),
+                            oud: ma.gedeeld_met(ka, eigen(ma, ia)),
+                            nieuw: mb.gedeeld_met(kb, eigen(mb, ib)),
+                            erbij: Vec::new(),
+                            eraf: Vec::new(),
+                        });
+                    }
+                    if ma.knoop_hash[ka] == mb.knoop_hash[kb] {
+                        continue;
+                    }
+                }
                 let zelfde_vorm = ma.bestand.type_naam(ka) == mb.bestand.type_naam(kb)
                     && !ma.bestand.instanties[ka].complex
                     && !mb.bestand.instanties[kb].complex
@@ -307,6 +353,75 @@ fn header_verschil(ma: &Model, mb: &Model) -> Vec<AttribuutWijziging> {
             });
         }
     }
+    uit
+}
+
+/// Vluchtige velden die veranderden: van objecten in beide versies, van de knopen waar zo'n object rechtstreeks naar
+/// verwijst (bijv. zijn IfcOwnerHistory; elke knoop één keer), en de tijdstempel in de HEADER.
+fn vluchtige_velden(ma: &Model, mb: &Model, sb: &HashMap<&str, usize>) -> Vec<VluchtigeWijziging> {
+    let mut uit = Vec::new();
+    let mut paren: HashSet<(usize, usize)> = HashSet::new();
+    let toon = |m: &Model, i: usize, j: usize, direct: bool| m.toon(attribuut_tekst(m, i, j), direct, MAX_TEKST);
+    let anders = |ia: usize, ib: usize, j: usize, direct: bool| {
+        ma.waarde_hash(attribuut_tekst(ma, ia, j), direct) != mb.waarde_hash(attribuut_tekst(mb, ib, j), direct)
+    };
+    for (oa, object) in ma.objecten.iter().enumerate() {
+        let Some(&ob) = sb.get(object.sleutel.as_str()) else { continue };
+        let (ia, ib) = (object.inst as usize, mb.objecten[ob].inst as usize);
+        if ma.bestand.type_naam(ia) != mb.bestand.type_naam(ib) {
+            continue;
+        }
+        let n = ma.bestand.attributen(ia).len().min(mb.bestand.attributen(ib).len());
+        for j in 1..n {
+            if ma.is_vluchtig(ia, j) && mb.is_vluchtig(ib, j) && anders(ia, ib, j, true) {
+                uit.push(VluchtigeWijziging {
+                    waar: ma.object_weergave(oa),
+                    globalid: Some(object.globalid.clone()),
+                    attribuut: ma.attribuut_naam(ia, j),
+                    oud: toon(ma, ia, j, true),
+                    nieuw: toon(mb, ib, j, true),
+                });
+                continue;
+            }
+            let (Some(ka), Some(kb)) =
+                (knoop_doel(ma, attribuut_tekst(ma, ia, j), true), knoop_doel(mb, attribuut_tekst(mb, ib, j), true))
+            else {
+                continue;
+            };
+            let vluchtig = ma.entiteit(ka).is_some_and(|e| e.attributen.iter().any(|a| a.vluchtig));
+            if !vluchtig || ma.bestand.type_naam(ka) != mb.bestand.type_naam(kb) || !paren.insert((ka, kb)) {
+                continue;
+            }
+            for jj in 0..ma.bestand.attributen(ka).len() {
+                if ma.is_vluchtig(ka, jj) && mb.is_vluchtig(kb, jj) && anders(ka, kb, jj, false) {
+                    let anderen = ma.verankerd_door[ka].saturating_sub(1);
+                    let gedeeld = if anderen > 0 { format!(" (+{anderen})") } else { String::new() };
+                    uit.push(VluchtigeWijziging {
+                        waar: format!("{} van {}{gedeeld}", ma.attribuut_naam(ia, j), ma.object_weergave(oa)),
+                        globalid: None,
+                        attribuut: format!("{}.{}", ma.attribuut_naam(ia, j), ma.attribuut_naam(ka, jj)),
+                        oud: toon(ma, ka, jj, false),
+                        nieuw: toon(mb, kb, jj, false),
+                    });
+                }
+            }
+        }
+    }
+    for (regel, velden) in HEADER_VELDEN {
+        for (j, veld) in velden.iter().enumerate() {
+            let (Some(a), Some(b)) = (ma.header_parameter(regel, j), mb.header_parameter(regel, j)) else { continue };
+            if header_vluchtig(regel, j) && a.0 != b.0 {
+                uit.push(VluchtigeWijziging {
+                    waar: "HEADER".into(),
+                    globalid: None,
+                    attribuut: format!("{regel}.{veld}"),
+                    oud: ma.toon(a.1, false, MAX_TEKST),
+                    nieuw: mb.toon(b.1, false, MAX_TEKST),
+                });
+            }
+        }
+    }
+    uit.sort();
     uit
 }
 
