@@ -6,7 +6,9 @@
 //! - **Bestanden op aanvraag** (een ruimte in de hoofdmap, alleen Windows): een download wordt geen volledig bestand
 //!   maar een placeholder die alleen online staat, behalve in een vastgezette map ("Altijd op dit apparaat
 //!   behouden"). Een nieuwe versie van een bestand dat alleen online staat, past alleen de placeholder aan. Wat lokaal
-//!   staat, wordt gewoon gedownload.
+//!   staat, wordt gewoon gedownload, en dan via de veilige routine van de motor. Kan de placeholder niet (meer), omdat
+//!   er net een bestand van de gebruiker verscheen of de gebruiker het bestand ophaalde en wijzigde, dan zegt de schil
+//!   dat (`plaats_zelf` geeft None) en gaat de download door die routine; nooit rechtstreeks op het pad.
 //!
 //! Elke methode van `Opslag` gaat door naar de echte opslag; komt er een methode bij, dan moet hij hier ook door.
 //!
@@ -19,27 +21,34 @@ use openaec_sync::motor::{bekende_bestanden, Batchgrenzen, KleinUpload, Opslag, 
 use openaec_sync::selectie::{mappen_boven, nieuw_niet_gekozen, NieuweMappen};
 use openaec_sync::Fout;
 
+use placeholder::Placeholders;
+
 pub struct Verkenneropslag<'a, O> {
     binnen: &'a O,
     root: PathBuf,
-    /// Een ruimte in de hoofdmap: bestanden op aanvraag.
-    op_aanvraag: bool,
+    /// Een ruimte in de hoofdmap: bestanden op aanvraag, met de Cloud Filter API (alleen Windows).
+    placeholders: Option<&'a dyn Placeholders>,
     /// Alleen gekozen mappen: de mappen van de server bij het kiezen.
     alleen: Option<BTreeSet<String>>,
 }
 
+/// De echte placeholders: op Windows de Cloud Filter API, elders geen.
+#[cfg(windows)]
+const ECHT: Option<&dyn Placeholders> = Some(&placeholder::Cloudfilter);
+#[cfg(not(windows))]
+const ECHT: Option<&dyn Placeholders> = None;
+
 impl<'a, O: Opslag> Verkenneropslag<'a, O> {
     pub fn new(binnen: &'a O, root: &Path, op_aanvraag: bool, nieuwe: NieuweMappen, bekend: &[String]) -> Self {
         let alleen = (nieuwe == NieuweMappen::AlleenGekozen).then(|| bekend.iter().cloned().collect());
-        Self { binnen, root: root.to_path_buf(), op_aanvraag: op_aanvraag && cfg!(windows), alleen }
+        Self { binnen, root: root.to_path_buf(), placeholders: if op_aanvraag { ECHT } else { None }, alleen }
     }
 
-    /// Wat de schil doet met een download naar `lokaal`: zelf afhandelen als placeholder, of doorgeven.
-    fn als_placeholder(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
-        if !self.op_aanvraag {
-            return None;
-        }
-        placeholder::download(&self.root, bestand, lokaal)
+    /// Bestanden op aanvraag met andere placeholders dan de echte (de proeven bootsen de Cloud Filter API na).
+    #[cfg(test)]
+    fn met_placeholders(mut self, p: &'a dyn Placeholders) -> Self {
+        self.placeholders = Some(p);
+        self
     }
 }
 
@@ -62,10 +71,7 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     }
 
     async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
-        match self.als_placeholder(bestand, lokaal) {
-            Some(r) => r,
-            None => self.binnen.download(bestand, lokaal).await,
-        }
+        self.binnen.download(bestand, lokaal).await
     }
 
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
@@ -78,9 +84,12 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     }
 
     /// Een placeholder die alleen online staat (of wordt), zet de schil zelf neer: daar is geen lokaal werk te
-    /// beschermen, dus de motor downloadt rechtstreeks naar het pad.
-    fn plaatst_zelf(&self, lokaal: &Path) -> bool {
-        (self.op_aanvraag && placeholder::zonder_inhoud(&self.root, lokaal)) || self.binnen.plaatst_zelf(lokaal)
+    /// beschermen. Kan dat niet (meer), dan None: de motor downloadt dan via zijn veilige routine.
+    async fn plaats_zelf(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
+        if let Some(r) = self.placeholders.and_then(|p| placeholder::plaats(p, &self.root, bestand, lokaal)) {
+            return Some(r);
+        }
+        self.binnen.plaats_zelf(bestand, lokaal).await
     }
 
     async fn upload_met_voortgang(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>, voortgang: Voortgang<'_>) -> Result<Upload, Fout> {
@@ -88,10 +97,7 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     }
 
     async fn download_met_voortgang(&self, bestand: &OpslagBestand, lokaal: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
-        match self.als_placeholder(bestand, lokaal) {
-            Some(r) => r,
-            None => self.binnen.download_met_voortgang(bestand, lokaal, voortgang).await,
-        }
+        self.binnen.download_met_voortgang(bestand, lokaal, voortgang).await
     }
 
     async fn bereid_mappen(&self, mappen: &[String]) -> Result<(), Fout> {
@@ -107,37 +113,73 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     }
 
     async fn download_klein(&self, bestanden: &[(&OpslagBestand, &Path)]) -> Result<Vec<Result<(), Fout>>, Fout> {
-        // Placeholders hier; de rest in één verzoek naar de opslag, daarna weer op volgorde.
-        let mut uit: Vec<Option<Result<(), Fout>>> = bestanden.iter().map(|(b, l)| self.als_placeholder(b, l)).collect();
-        let rest: Vec<(&OpslagBestand, &Path)> = bestanden.iter().zip(&uit).filter(|(_, u)| u.is_none()).map(|(b, _)| *b).collect();
-        if !rest.is_empty() {
-            let mut van_opslag = self.binnen.download_klein(&rest).await?.into_iter();
-            for plek in uit.iter_mut().filter(|u| u.is_none()) {
-                *plek = Some(van_opslag.next().unwrap_or_else(|| Err(Fout::Controle("antwoord te kort".into()))));
-            }
-        }
-        Ok(uit.into_iter().map(|u| u.unwrap()).collect())
+        self.binnen.download_klein(bestanden).await
     }
 }
 
-#[cfg(windows)]
+/// Bestanden op aanvraag: de regels van de schil, los van de Cloud Filter API (die alleen op Windows bestaat), zodat ze
+/// ook elders te testen zijn.
 mod placeholder {
     use std::path::Path;
 
     use openaec_sync::motor::OpslagBestand;
     use openaec_sync::Fout;
 
-    use crate::cloudfilter;
+    // Attributen die de Cloud Files API op bestanden zet; gelijk aan die in `crate::cloudfilter` (daar gecontroleerd).
+    pub const OFFLINE: u32 = 0x0000_1000;
+    pub const VASTGEZET: u32 = 0x0008_0000;
+    pub const LOSGEMAAKT: u32 = 0x0010_0000;
+    pub const OPHALEN_BIJ_OPENEN: u32 = 0x0004_0000;
+    pub const OPHALEN_BIJ_LEZEN: u32 = 0x0040_0000;
+
+    #[cfg(windows)]
+    const _: () = {
+        use crate::cloudfilter as cf;
+        assert!(OFFLINE == cf::ATTR_OFFLINE && VASTGEZET == cf::ATTR_VASTGEZET && LOSGEMAAKT == cf::ATTR_LOSGEMAAKT);
+        assert!(OPHALEN_BIJ_OPENEN == cf::ATTR_OPHALEN_BIJ_OPENEN && OPHALEN_BIJ_LEZEN == cf::ATTR_OPHALEN_BIJ_LEZEN);
+    };
+
+    /// Wat de schil van de Cloud Filter API gebruikt.
+    pub trait Placeholders: Sync {
+        /// Attributen van een pad (zonder op te halen); None als het niet bestaat.
+        fn attributen(&self, pad: &Path) -> Option<u32>;
+        /// Maak een bestand dat alleen online staat. Weigert als er al iets op `pad` staat.
+        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()>;
+        /// Werk een bestand dat alleen online staat bij naar een nieuwe versie. Weigert als het niet meer in sync is
+        /// (opgehaald en gewijzigd).
+        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()>;
+    }
+
+    /// De echte: de Cloud Filter API.
+    #[cfg(windows)]
+    pub struct Cloudfilter;
+
+    #[cfg(windows)]
+    impl Placeholders for Cloudfilter {
+        fn attributen(&self, pad: &Path) -> Option<u32> {
+            crate::cloudfilter::attributen(pad)
+        }
+        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()> {
+            crate::cloudfilter::maak_alleen_online(pad, grootte, bestand)
+        }
+        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<()> {
+            crate::cloudfilter::werk_alleen_online_bij(pad, grootte, bestand)
+        }
+    }
+
+    fn is_ontwaterd(a: u32) -> bool {
+        a & (OFFLINE | OPHALEN_BIJ_LEZEN | OPHALEN_BIJ_OPENEN) != 0
+    }
 
     /// Staat er boven `pad` (tot en met `root`) een vastgezette map, en geen losgemaakte die dichterbij is?
-    fn vastgezet_boven(root: &Path, pad: &Path) -> bool {
+    fn vastgezet_boven(p: &dyn Placeholders, root: &Path, pad: &Path) -> bool {
         let mut map = pad.parent();
         while let Some(m) = map.filter(|m| m.starts_with(root)) {
-            if let Some(a) = cloudfilter::attributen(m) {
-                if a & cloudfilter::ATTR_VASTGEZET != 0 {
+            if let Some(a) = p.attributen(m) {
+                if a & VASTGEZET != 0 {
                     return true;
                 }
-                if a & cloudfilter::ATTR_LOSGEMAAKT != 0 {
+                if a & LOSGEMAAKT != 0 {
                     return false;
                 }
             }
@@ -146,48 +188,42 @@ mod placeholder {
         false
     }
 
+    /// Wordt een download naar `lokaal` (met attributen `a`) een placeholder zonder inhoud op deze computer? Een bestand
+    /// dat alleen online staat (niet vastgezet), of een nieuw bestand buiten een vastgezette map.
+    fn zonder_inhoud(p: &dyn Placeholders, root: &Path, lokaal: &Path, a: Option<u32>) -> bool {
+        match a {
+            Some(a) => is_ontwaterd(a) && a & VASTGEZET == 0,
+            None => !vastgezet_boven(p, root, lokaal),
+        }
+    }
+
     fn fout(e: anyhow::Error) -> Fout {
         Fout::Bestand(std::io::Error::other(e.to_string()))
     }
 
-    /// Wordt een download naar `lokaal` een placeholder zonder inhoud op deze computer? Een bestand dat alleen online
-    /// staat (niet vastgezet), of een nieuw bestand buiten een vastgezette map.
-    pub fn zonder_inhoud(root: &Path, lokaal: &Path) -> bool {
-        match cloudfilter::attributen(lokaal) {
-            Some(a) => cloudfilter::is_ontwaterd(a) && a & cloudfilter::ATTR_VASTGEZET == 0,
-            None => !vastgezet_boven(root, lokaal),
-        }
-    }
-
     /// Een download in de hoofdmap: een nieuw bestand wordt een placeholder die alleen online staat (behalve onder een
-    /// vastgezette map), een bestand dat alleen online staat krijgt alleen de nieuwe grootte. None: gewoon downloaden.
-    pub fn download(root: &Path, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
-        if !zonder_inhoud(root, lokaal) {
+    /// vastgezette map), een bestand dat alleen online staat krijgt alleen de nieuwe grootte. None: geen placeholder,
+    /// ook als de bewerking geweigerd werd omdat er intussen een bestand van de gebruiker staat (of het opgehaald en
+    /// gewijzigd is); de motor downloadt dan via zijn veilige routine.
+    pub fn plaats(p: &dyn Placeholders, root: &Path, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
+        let a = p.attributen(lokaal);
+        if !zonder_inhoud(p, root, lokaal, a) {
             return None;
         }
-        Some(match cloudfilter::attributen(lokaal) {
-            Some(_) => cloudfilter::werk_alleen_online_bij(lokaal, bestand.grootte, &bestand.bestand).map_err(fout),
-            None => (|| {
-                std::fs::create_dir_all(lokaal.parent().unwrap_or(root))?;
-                cloudfilter::maak_alleen_online(lokaal, bestand.grootte, &bestand.bestand).map_err(fout)
-            })(),
-        })
-    }
-}
-
-#[cfg(not(windows))]
-mod placeholder {
-    use std::path::Path;
-
-    use openaec_sync::motor::OpslagBestand;
-    use openaec_sync::Fout;
-
-    pub fn zonder_inhoud(_root: &Path, _lokaal: &Path) -> bool {
-        false
-    }
-
-    pub fn download(_root: &Path, _bestand: &OpslagBestand, _lokaal: &Path) -> Option<Result<(), Fout>> {
-        None
+        let r = match a {
+            Some(_) => p.werk_bij(lokaal, bestand.grootte, &bestand.bestand),
+            None => std::fs::create_dir_all(lokaal.parent().unwrap_or(root))
+                .map_err(anyhow::Error::from)
+                .and_then(|()| p.maak(lokaal, bestand.grootte, &bestand.bestand)),
+        };
+        match r {
+            Ok(()) => Some(Ok(())),
+            Err(e) if !zonder_inhoud(p, root, lokaal, p.attributen(lokaal)) => {
+                log::info!("{}: geen placeholder ({e}); gewone download", lokaal.display());
+                None
+            }
+            Err(e) => Some(Err(fout(e))),
+        }
     }
 }
 
@@ -305,6 +341,157 @@ mod tests {
 
     fn b(pad: &str) -> OpslagBestand {
         OpslagBestand { pad: pad.into(), bestand: format!("id-{pad}"), versie: 1, grootte: 3 }
+    }
+
+    /// Een server in het geheugen voor een hele ronde: downloadt rechtstreeks naar het gevraagde pad (met een rename die
+    /// een bestaand bestand vervangt, zoals de echte download), en maakt een conflictkopie bij een verouderde basis.
+    #[derive(Default)]
+    struct Server {
+        bestanden: Mutex<std::collections::BTreeMap<String, (u64, Vec<u8>)>>,
+    }
+
+    impl Server {
+        fn zet(&self, pad: &str, inhoud: &[u8]) {
+            let mut b = self.bestanden.lock().unwrap();
+            let versie = b.get(pad).map_or(1, |x| x.0 + 1);
+            b.insert(pad.into(), (versie, inhoud.to_vec()));
+        }
+        fn inhoud(&self, pad: &str) -> Option<Vec<u8>> {
+            self.bestanden.lock().unwrap().get(pad).map(|x| x.1.clone())
+        }
+    }
+
+    impl Opslag for Server {
+        async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
+            let b = self.bestanden.lock().unwrap();
+            Ok(b.iter()
+                .map(|(pad, (versie, inhoud))| OpslagBestand { pad: pad.clone(), bestand: format!("id-{pad}"), versie: *versie, grootte: inhoud.len() as u64 })
+                .collect())
+        }
+        async fn upload(&self, pad: &str, lokaal: &Path, basis: Option<u64>) -> Result<Upload, Fout> {
+            let inhoud = std::fs::read(lokaal)?;
+            let huidig = self.bestanden.lock().unwrap().get(pad).map(|x| x.0);
+            let doel = match huidig {
+                Some(h) if Some(h) != basis => pad.replace(".txt", " (conflict).txt"),
+                _ => pad.to_string(),
+            };
+            self.zet(&doel, &inhoud);
+            let versie = self.bestanden.lock().unwrap()[&doel].0;
+            Ok(Upload { pad: doel.clone(), bestand: format!("id-{doel}"), versie, conflict: doel != pad })
+        }
+        async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
+            let tijdelijk = lokaal.with_extension("download");
+            std::fs::write(&tijdelijk, self.inhoud(&bestand.pad).unwrap())?;
+            std::fs::rename(tijdelijk, lokaal)?;
+            Ok(())
+        }
+        async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
+            self.bestanden.lock().unwrap().remove(&bestand.pad);
+            Ok(())
+        }
+    }
+
+    type Haak = Box<dyn FnOnce(&NepWolk) + Send>;
+
+    /// De Cloud Filter API nagebootst: attributen per pad (een gewoon bestand zonder vermelding heeft
+    /// FILE_ATTRIBUTE_ARCHIVE). `maak` weigert als er al iets staat, `werk_bij` als het bestand niet meer alleen online
+    /// is. `tussendoor` loopt één keer, direct na de eerste toets van de attributen: zo verschijnt er een bestand van de
+    /// gebruiker tussen de toets en de bewerking.
+    #[derive(Default)]
+    struct NepWolk {
+        attributen: Mutex<std::collections::HashMap<PathBuf, u32>>,
+        tussendoor: Mutex<Option<Haak>>,
+    }
+
+    impl Placeholders for NepWolk {
+        fn attributen(&self, pad: &Path) -> Option<u32> {
+            let a = std::fs::symlink_metadata(pad)
+                .ok()
+                .map(|m| self.attributen.lock().unwrap().get(pad).copied().unwrap_or(if m.is_dir() { 0x10 } else { 0x20 }));
+            let haak = self.tussendoor.lock().unwrap().take();
+            if let Some(h) = haak {
+                h(self);
+            }
+            a
+        }
+        fn maak(&self, pad: &Path, _grootte: u64, _bestand: &str) -> anyhow::Result<()> {
+            std::fs::OpenOptions::new().write(true).create_new(true).open(pad)?;
+            self.attributen.lock().unwrap().insert(pad.to_path_buf(), placeholder::OFFLINE | placeholder::OPHALEN_BIJ_OPENEN);
+            Ok(())
+        }
+        fn werk_bij(&self, pad: &Path, _grootte: u64, _bestand: &str) -> anyhow::Result<()> {
+            match self.attributen.lock().unwrap().get(pad) {
+                Some(a) if a & placeholder::OFFLINE != 0 => Ok(()),
+                _ => Err(anyhow::anyhow!("niet in sync")),
+            }
+        }
+    }
+
+    /// Een bestand van de gebruiker, met een duidelijk andere wijzigingstijd.
+    fn sla_op(pad: &Path, inhoud: &str) {
+        std::fs::write(pad, inhoud).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        std::fs::File::options().write(true).open(pad).unwrap().set_modified(later).unwrap();
+    }
+
+    fn proefmap(naam: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("openaec-opaanvraag-{naam}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Proef (review Sol, PR #8, punt 2): het pad is leeg als de schil kijkt, maar vóór de placeholder er staat, slaat de
+    /// gebruiker daar een bestand op. Dat bestand blijft staan; de download gaat door de veilige routine (die het niet
+    /// vervangt), en de volgende ronde maakt er een conflictkopie van.
+    #[tokio::test]
+    async fn placeholder_wijkt_voor_een_bestand_dat_net_verschijnt() {
+        let dir = proefmap("verschijnt");
+        let server = Server::default();
+        server.zet("nieuw.txt", b"van de server");
+        let wolk = NepWolk::default();
+        let pad = dir.join("nieuw.txt");
+        *wolk.tussendoor.lock().unwrap() = Some(Box::new(move |_| sla_op(&pad, "van de gebruiker")));
+        let schil = Verkenneropslag::new(&server, &dir, true, NieuweMappen::Automatisch, &[]).met_placeholders(&wolk);
+
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert!(wolk.tussendoor.lock().unwrap().is_none(), "de gebruiker sloeg op tussen de toets en de bewerking");
+        assert_eq!(std::fs::read_to_string(dir.join("nieuw.txt")).unwrap(), "van de gebruiker");
+
+        let r = openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert_eq!(r.conflicten, 1);
+        assert_eq!(server.inhoud("nieuw (conflict).txt").unwrap(), b"van de gebruiker");
+        assert_eq!(std::fs::read_to_string(dir.join("nieuw (conflict).txt")).unwrap(), "van de gebruiker");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Proef (review Sol, PR #8, punt 2): het bestand staat alleen online als de schil kijkt, maar vóór het bijwerken
+    /// haalt de gebruiker het op en wijzigt het. Dat werk blijft staan en gaat daarna als conflictkopie naar de server.
+    #[tokio::test]
+    async fn placeholder_wijkt_voor_een_opgehaald_en_gewijzigd_bestand() {
+        let dir = proefmap("opgehaald");
+        let server = Server::default();
+        server.zet("a.txt", b"versie 1");
+        let wolk = NepWolk::default();
+        let schil = Verkenneropslag::new(&server, &dir, true, NieuweMappen::Automatisch, &[]).met_placeholders(&wolk);
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        let pad = dir.join("a.txt");
+        assert_eq!(wolk.attributen.lock().unwrap().get(&pad).copied(), Some(placeholder::OFFLINE | placeholder::OPHALEN_BIJ_OPENEN));
+
+        server.zet("a.txt", b"versie 2");
+        let p = pad.clone();
+        *wolk.tussendoor.lock().unwrap() = Some(Box::new(move |w: &NepWolk| {
+            sla_op(&p, "opgehaald + mijn werk");
+            w.attributen.lock().unwrap().insert(p.clone(), 0x20);
+        }));
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert!(wolk.tussendoor.lock().unwrap().is_none());
+        assert_eq!(std::fs::read_to_string(&pad).unwrap(), "opgehaald + mijn werk");
+
+        let r = openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert_eq!(r.conflicten, 1);
+        assert_eq!(server.inhoud("a (conflict).txt").unwrap(), b"opgehaald + mijn werk");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

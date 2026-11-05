@@ -14,11 +14,19 @@
 //!    ([`in_gebruik`]), volgt een laatste controle van de inhoud. Gelijk aan de verwerkte inhoud: de bron gaat weg.
 //!    Anders verwerkt de motor haar als lokale wijziging. Kan de sync het niet vaststellen, dan blijft de bron staan.
 //!
-//! Bij het begin van elke ronde maakt [`herstel`] onafgemaakte vervangingen af of terug, vóór de vergelijking. Een bron
-//! valt nooit onder opruimen. De motor bekijkt de bronnen elke ronde ([`rond_af`]); een wijziging die alleen in een bron
-//! gebeurt, komt zo ook mee.
+//! Bij het begin van elke ronde maakt [`herstel`] onafgemaakte vervangingen af of terug, vóór de vergelijking en vóór
+//! het eerste verzoek aan de server. Een bron valt nooit onder opruimen. De motor bekijkt de bronnen elke ronde
+//! ([`rond_af`]); een wijziging die alleen in een bron gebeurt, komt zo ook mee.
+//!
+//! Een verwijdering legt haar reden vast ([`Weg`]): een ander verwijderde het bestand op de server, of de map hoort niet
+//! meer op deze computer (het bestand blijft op de server). Is de bron van een verwijdering anders dan de verwerkte
+//! inhoud, dan komt ze terug op het pad; dat gebeurt hier, zonder de server, dus ook offline. De volgende vergelijking
+//! ziet haar dan als nieuw lokaal bestand.
+//!
+//! Een bron die er hoort te zijn maar niet te bekijken is (bijv. geen toegang), of die zonder afronding verdwenen is,
+//! wist het journaal niet: het pad blijft buiten de ronde, met een fout in het rapport.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -49,6 +57,20 @@ pub(crate) enum Stap {
     Verplaatst,
     /// De nieuwe inhoud staat op het pad, met deze grootte en wijzigingstijd.
     Geplaatst { grootte: u64, mtime_ns: u128 },
+    /// De bron gaat terug op het pad (of ernaast). Ontbreekt de bron daarna, dan staat ze daar.
+    Terug,
+    /// De bron is niet meer nodig: verwerkt, of haar inhoud staat op de server. Mag weg.
+    Afgerond,
+}
+
+/// Waarom een bestand hier weg moet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Weg {
+    /// Een ander verwijderde het op de server.
+    OpServer,
+    /// De map hoort niet meer op deze computer; op de server blijft het staan.
+    Uitgevinkt,
 }
 
 /// Eén vervanging of verwijdering in het journaal.
@@ -66,6 +88,9 @@ pub(crate) struct Vervanging {
     pub basis: Versie,
     /// De nieuwe inhoud; None bij een verwijdering.
     pub nieuw: Option<Versie>,
+    /// Bij een verwijdering: waarom.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weg: Option<Weg>,
     pub stap: Stap,
 }
 
@@ -79,6 +104,8 @@ pub(crate) struct Opdracht {
     pub bekend: Option<(Versie, (u64, u128))>,
     /// Het tijdelijke bestand met de nieuwe inhoud (in `.openaec/nieuw/`) en zijn versie op de server.
     pub nieuw: Option<(PathBuf, Versie)>,
+    /// Bij een verwijdering (`nieuw` None): waarom.
+    pub weg: Weg,
 }
 
 /// Uitkomst van [`vervang`].
@@ -125,7 +152,7 @@ pub(crate) fn hash(pad: &Path) -> io::Result<String> {
 }
 
 /// Maak een map duurzaam (de namen erin), waar het systeem dat kent.
-fn sync_map(map: &Path) -> io::Result<()> {
+pub(crate) fn sync_map(map: &Path) -> io::Result<()> {
     #[cfg(unix)]
     File::open(map)?.sync_all()?;
     #[cfg(not(unix))]
@@ -155,21 +182,36 @@ fn verwijder_journaal(root: &Path, id: &str) -> io::Result<()> {
     }
 }
 
-/// Alle vervangingen in het journaal. Een journaal dat niet te lezen is, blijft staan (met een logregel).
-pub(crate) fn lees(root: &Path) -> Vec<Vervanging> {
-    let Ok(items) = fs::read_dir(map(root, JOURNAAL)) else { return Vec::new() };
+/// Alle vervangingen in het journaal. Is de map of een journaal niet te lezen (bijv. geen toegang), dan een fout: zonder
+/// het journaal weet de motor niet welke paden halverwege een vervanging zijn. Een journaal dat geen geldige inhoud
+/// heeft, blijft staan (met een logregel).
+pub(crate) fn lees(root: &Path) -> io::Result<Vec<Vervanging>> {
+    let items = match fs::read_dir(map(root, JOURNAAL)) {
+        Ok(items) => items,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
     let mut uit = Vec::new();
-    for item in items.flatten() {
-        let pad = item.path();
+    for item in items {
+        let pad = item?.path();
         if pad.extension().is_some_and(|e| e == "json") {
-            match fs::read(&pad).map_err(|e| e.to_string()).and_then(|b| serde_json::from_slice(&b).map_err(|e| e.to_string())) {
+            match serde_json::from_slice(&fs::read(&pad)?) {
                 Ok(v) => uit.push(v),
                 Err(e) => log::warn!("journaal {} niet te lezen: {e}", pad.display()),
             }
         }
     }
     uit.sort_by(|a: &Vervanging, b| a.id.cmp(&b.id));
-    uit
+    Ok(uit)
+}
+
+/// Is er iets op `pad`? Ja, nee, of niet vast te stellen (een fout anders dan "bestaat niet").
+fn bestaat(pad: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(pad) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Vervang `o.lokaal` door de nieuwe inhoud, of verwijder het (zie de uitleg bovenaan). Een fout laat het lokale
@@ -214,6 +256,7 @@ fn vervang_binnen(o: &Opdracht) -> io::Result<Uitkomst> {
         verwacht,
         basis: basis.clone(),
         nieuw: o.nieuw.as_ref().map(|(_, versie)| versie.clone()),
+        weg: o.nieuw.is_none().then_some(o.weg),
         stap: Stap::Journaal,
     };
     schrijf(&o.root, &v)?;
@@ -224,6 +267,9 @@ fn vervang_binnen(o: &Opdracht) -> io::Result<Uitkomst> {
         verwijder_journaal(&o.root, &v.id)?;
         return Err(e);
     }
+    // Beide mappen duurzaam: na een stroomstoring staat het bestand op één van de twee plekken, en het journaal weet waar.
+    sync_map(bron.parent().unwrap())?;
+    sync_map(o.lokaal.parent().unwrap_or(&o.root))?;
     v.stap = Stap::Verplaatst;
     schrijf(&o.root, &v)?;
     let Some((nieuw, _)) = &o.nieuw else { return Ok(Uitkomst::Verwijderd) };
@@ -239,6 +285,8 @@ fn vervang_binnen(o: &Opdracht) -> io::Result<Uitkomst> {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Uitkomst::PadBezet),
         Err(e) => {
             // Terug zoals het was; lukt ook dat niet, dan doet herstel het bij de volgende ronde.
+            v.stap = Stap::Terug;
+            schrijf(&o.root, &v)?;
             if plaats(&bron, &o.lokaal).is_ok() {
                 verwijder_journaal(&o.root, &v.id)?;
             }
@@ -265,14 +313,23 @@ fn plaats_nieuw(nieuw: &Path, lokaal: &Path) -> io::Result<Uitkomst> {
 pub(crate) struct Herstel {
     /// Sleutels die de toestand als (versie, kenmerk) moet kennen: de nieuwe inhoud stond er al, de toestand nog niet.
     pub bijwerken: Vec<(String, Versie, (u64, u128))>,
-    /// Sleutels waarvan de bron niet terug kon: deze ronde niet aanraken.
-    pub geblokkeerd: BTreeSet<String>,
+    /// Sleutels die uit de toestand moeten: het bestand is hier verwijderd (de toestand was misschien nog niet bewaard).
+    /// Wat er nog van over is, staat in een bron, of komt (als nieuw werk) terug op het pad.
+    pub vergeten: Vec<String>,
+    /// Sleutels die deze ronde niet aangeraakt worden, met de reden (een fout voor het rapport): de bron kon niet terug,
+    /// is niet te bekijken, of ontbreekt zonder afronding.
+    pub geblokkeerd: BTreeMap<String, String>,
 }
 
-/// Maak onafgemaakte vervangingen af of terug, vóór de vergelijking van een ronde. `kent(sleutel, versie)`: staat
-/// die versie al in de bewaarde toestand? Zo ziet de vergelijking nooit een "lokaal verwijderd" bestand dat alleen
-/// halverwege een vervanging was. Wat daarna nog een bron heeft, wacht op [`rond_af`].
-pub(crate) fn herstel(root: &Path, lokaal: impl Fn(&str) -> PathBuf, kent: impl Fn(&str, &Versie) -> bool) -> Herstel {
+/// Maak onafgemaakte vervangingen af of terug, vóór de vergelijking en vóór het eerste verzoek aan de server. `kent(sleutel,
+/// versie)`: staat die versie al in de bewaarde toestand? Zo ziet de vergelijking nooit een "lokaal verwijderd" bestand dat
+/// alleen halverwege een vervanging was. Wat daarna nog een bron heeft, wacht op [`rond_af`] (verwijderingen worden hier
+/// al afgerond: zie [`rond_verwijdering_af`]). Een fout: het journaal is niet te lezen; dan begint de ronde niet.
+pub(crate) fn herstel(
+    root: &Path,
+    lokaal: impl Fn(&str) -> PathBuf,
+    kent: impl Fn(&str, &Versie) -> bool,
+) -> io::Result<Herstel> {
     let mut uit = Herstel::default();
     // Tijdelijke bestanden van een onderbroken ronde: alleen downloads en kopieën, nooit het werk zelf.
     for naam in [NIEUW, JOURNAAL] {
@@ -282,18 +339,54 @@ pub(crate) fn herstel(root: &Path, lokaal: impl Fn(&str) -> PathBuf, kent: impl 
             }
         }
     }
-    for v in lees(root) {
+    for mut v in lees(root)? {
         let bron = bron(root, &v.id);
         let hier = lokaal(&v.pad);
-        if fs::symlink_metadata(&bron).is_err() {
-            // Niet verplaatst (of al afgerond): niets te doen.
-            let _ = verwijder_journaal(root, &v.id);
+        let bron_er = match bestaat(&bron) {
+            Ok(b) => b,
+            Err(e) => {
+                // Niet te bekijken (bijv. geen toegang): misschien staat het werk er nog. Journaal en bron blijven.
+                log::warn!("{}: bron niet te bekijken: {e}", v.pad);
+                uit.geblokkeerd.insert(v.sleutel.clone(), format!("de bewaarde kopie in {} is niet te bekijken: {e}", TOESTANDSMAP));
+                continue;
+            }
+        };
+        if !bron_er {
+            match v.stap {
+                // Nooit verplaatst, al teruggezet, of afgerond: het journaal mag weg.
+                Stap::Journaal | Stap::Terug | Stap::Afgerond => {
+                    let _ = verwijder_journaal(root, &v.id);
+                }
+                // Verplaatst maar zonder afronding verdwenen: dat hoort niet. Het journaal blijft voor onderzoek.
+                Stap::Verplaatst | Stap::Geplaatst { .. } => {
+                    log::warn!("{}: de bron van vervanging {} ontbreekt zonder afronding", v.pad, v.id);
+                    uit.geblokkeerd.insert(
+                        v.sleutel.clone(),
+                        format!("de bewaarde kopie ontbreekt; zie {}/{JOURNAAL}/{}.json", TOESTANDSMAP, v.id),
+                    );
+                }
+            }
             continue;
         }
-        let pad_er = fs::symlink_metadata(&hier).is_ok();
+        if v.stap == Stap::Afgerond {
+            if let Err(e) = klaar(root, &v) {
+                log::warn!("{}: bron niet op te ruimen: {e}", v.pad);
+            }
+            continue;
+        }
+        let pad_er = bestaat(&hier).unwrap_or(true);
         let Some(nieuw) = &v.nieuw else {
-            // Een verwijdering is af zodra de bron er is: nooit terugzetten (dan zou een elders verwijderd bestand
-            // als nieuw terugkomen). De bron wacht op afronden.
+            // Een verwijdering staat, ook als de toestand dat nog niet wist: nooit terugzetten (dan zou een elders
+            // verwijderd bestand als nieuw terugkomen, of een bestand dat op de server blijft als verwijderd tellen).
+            uit.vergeten.push(v.sleutel.clone());
+            if v.stap == Stap::Journaal {
+                // Wel verplaatst (de bron is er), maar het journaal zei het nog niet.
+                v.stap = Stap::Verplaatst;
+                let _ = schrijf(root, &v);
+            }
+            if let Gebruik::Vrij = in_gebruik(std::slice::from_ref(&bron))[0] {
+                rond_verwijdering_af(root, &v, &hier);
+            }
             continue;
         };
         let bewaard = kent(&v.sleutel, nieuw);
@@ -304,25 +397,76 @@ pub(crate) fn herstel(root: &Path, lokaal: impl Fn(&str) -> PathBuf, kent: impl 
             _ if bewaard || pad_er => {}
             // Halverwege, en het pad is leeg: de bron terug, alsof er niets gebeurde.
             _ => {
-                let terug = hier.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| plaats(&bron, &hier));
+                v.stap = Stap::Terug;
+                let terug = schrijf(root, &v)
+                    .and_then(|()| hier.parent().map_or(Ok(()), fs::create_dir_all))
+                    .and_then(|()| plaats(&bron, &hier));
                 match terug.and_then(|()| verwijder_journaal(root, &v.id)) {
                     Ok(()) => log::info!("{}: onderbroken vervanging teruggezet", v.pad),
                     Err(e) => {
                         log::warn!("{}: bron niet terug te zetten: {e}", v.pad);
-                        uit.geblokkeerd.insert(v.sleutel.clone());
+                        uit.geblokkeerd.insert(v.sleutel.clone(), format!("de bewaarde kopie kon niet terug op het pad: {e}"));
                     }
                 }
             }
         }
     }
-    uit
+    Ok(uit)
+}
+
+/// Rond een verwijdering af waarvan geen proces de bron nog open heeft: gelijk aan de verwerkte inhoud, dan gaat de bron
+/// weg. Anders schreef een programma er nog in: dat werk komt terug op het pad (`hier`), zonder iets te vervangen, en de
+/// volgende vergelijking ziet het als nieuw lokaal bestand. Staat er intussen iets op het pad, dan blijft de bron (en
+/// geeft dit false): [`rond_af`] levert haar dan in bij de server.
+fn rond_verwijdering_af(root: &Path, v: &Vervanging, hier: &Path) -> bool {
+    let bron = bron(root, &v.id);
+    match hash(&bron) {
+        Ok(h) if h == v.verwacht => {
+            if let Err(e) = klaar(root, v) {
+                log::warn!("{}: bron niet op te ruimen: {e}", v.pad);
+            }
+            true
+        }
+        Ok(_) => {
+            let mut terug = v.clone();
+            terug.stap = Stap::Terug;
+            let gelukt = schrijf(root, &terug)
+                .and_then(|()| hier.parent().map_or(Ok(()), fs::create_dir_all))
+                .and_then(|()| plaats(&bron, hier))
+                .and_then(|()| sync_map(hier.parent().unwrap_or(root)))
+                .and_then(|()| verwijder_journaal(root, &v.id));
+            match gelukt {
+                Ok(()) => {
+                    log::info!("{}: na het verwijderen nog gewijzigd; terug op het pad", v.pad);
+                    true
+                }
+                Err(e) => {
+                    // Het journaal staat nu op "terug"; ontbreekt de bron later, dan staat ze op het pad.
+                    log::info!("{}: na het verwijderen nog gewijzigd; niet terug op het pad ({e})", v.pad);
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("{}: bron niet te lezen: {e}", v.pad);
+            false
+        }
+    }
 }
 
 /// Rond de open vervangingen af waarvan geen proces de bron nog open of gekoppeld heeft: is de inhoud gelijk aan de
-/// verwerkte inhoud, dan gaan bron en journaal weg. Geeft de vervangingen waarvan de bron afwijkt; de motor verwerkt
-/// die als lokale wijziging.
-pub(crate) fn rond_af(root: &Path) -> Vec<Vervanging> {
-    let open: Vec<Vervanging> = lees(root).into_iter().filter(|v| fs::symlink_metadata(bron(root, &v.id)).is_ok()).collect();
+/// verwerkte inhoud, dan gaan bron en journaal weg. Geeft de vervangingen waarvan de bron afwijkt (en bij een
+/// verwijdering niet terug op het pad kon); de motor verwerkt die als lokale wijziging.
+pub(crate) fn rond_af(root: &Path, lokaal: impl Fn(&str) -> PathBuf) -> Vec<Vervanging> {
+    let alle = match lees(root) {
+        Ok(alle) => alle,
+        Err(e) => {
+            log::warn!("journaal niet te lezen: {e}");
+            return Vec::new();
+        }
+    };
+    // Alleen bronnen die er zijn; een bron die niet te bekijken is, pakt herstel bij de volgende ronde op.
+    let open: Vec<Vervanging> = alle.into_iter().filter(|v| bestaat(&bron(root, &v.id)).unwrap_or(false)).collect();
     if open.is_empty() {
         return Vec::new();
     }
@@ -330,6 +474,16 @@ pub(crate) fn rond_af(root: &Path) -> Vec<Vervanging> {
     let mut afwijkend = Vec::new();
     for ((v, pad), gebruik) in open.into_iter().zip(&paden).zip(in_gebruik(&paden)) {
         match gebruik {
+            Gebruik::Vrij if v.stap == Stap::Afgerond => {
+                if let Err(e) = klaar(root, &v) {
+                    log::warn!("{}: bron niet op te ruimen: {e}", v.pad);
+                }
+            }
+            Gebruik::Vrij if v.nieuw.is_none() => {
+                if !rond_verwijdering_af(root, &v, &lokaal(&v.pad)) && hash(pad).is_ok_and(|h| h != v.verwacht) {
+                    afwijkend.push(v);
+                }
+            }
             // Eerst de controle op processen, dan pas de inhoud: wie daartussen schrijft en sluit, staat in de inhoud.
             Gebruik::Vrij => match hash(pad) {
                 Ok(h) if h == v.verwacht => {
@@ -347,8 +501,19 @@ pub(crate) fn rond_af(root: &Path) -> Vec<Vervanging> {
     afwijkend
 }
 
-/// Bron (als die er nog is) en journaal van een afgehandelde vervanging weg.
+/// Leg vast dat de bron van `v` niet meer nodig is (haar inhoud is verwerkt, of staat op de server). Daarna mag ze weg,
+/// ook als de sync tussendoor stopt; zie [`klaar`].
+pub(crate) fn afgerond(root: &Path, v: &Vervanging) -> io::Result<()> {
+    let mut a = v.clone();
+    a.stap = Stap::Afgerond;
+    schrijf(root, &a)
+}
+
+/// Bron (als die er nog is) en journaal van een afgehandelde vervanging weg; eerst vastgelegd als afgerond.
 pub(crate) fn klaar(root: &Path, v: &Vervanging) -> io::Result<()> {
+    if v.stap != Stap::Afgerond {
+        afgerond(root, v)?;
+    }
     match fs::remove_file(bron(root, &v.id)) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
@@ -634,13 +799,19 @@ pub(crate) mod proeven {
                 lokaal: self.a(),
                 bekend: Some((Versie { bestand: "b1".into(), versie: 1 }, self.oud)),
                 nieuw,
+                weg: Weg::OpServer,
             }
         }
 
         /// Herstel zoals bij het begin van een ronde; `kent`: staat versie 2 al in de bewaarde toestand?
         fn herstel(&self, kent: bool) -> Herstel {
             let root = self.root.clone();
-            herstel(&self.root, move |rel| root.join(rel), move |_, n| kent && n.versie == 2)
+            herstel(&self.root, move |rel| root.join(rel), move |_, n| kent && n.versie == 2).unwrap()
+        }
+
+        fn rond_af(&self) -> Vec<Vervanging> {
+            let root = self.root.clone();
+            rond_af(&self.root, move |rel| root.join(rel))
         }
 
         fn aantal(&self, naam: &str) -> usize {
@@ -703,7 +874,7 @@ pub(crate) mod proeven {
         let h = p.herstel(false);
         assert_eq!(h.bijwerken, vec![("a.txt".to_string(), Versie { bestand: "b1".into(), versie: 2 }, nieuw)]);
         assert_eq!(p.aantal(BRON), 1, "de bron wacht op afronden");
-        assert!(rond_af(&p.root).is_empty());
+        assert!(p.rond_af().is_empty());
         assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
         assert_eq!(p.lees().as_deref(), Some("nieuw"));
     }
@@ -716,7 +887,7 @@ pub(crate) mod proeven {
         // De toestand met versie 2 is bewaard; dan is er niets bij te werken.
         let h = p.herstel(true);
         assert!(h.bijwerken.is_empty() && h.geblokkeerd.is_empty());
-        assert!(rond_af(&p.root).is_empty());
+        assert!(p.rond_af().is_empty());
         assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
     }
 
@@ -740,10 +911,59 @@ pub(crate) mod proeven {
         assert!(vervang_binnen(&p.opdracht(None)).is_err());
         let h = p.herstel(false);
         assert!(h.bijwerken.is_empty() && h.geblokkeerd.is_empty());
-        assert_eq!(p.lees(), None, "een verwijdering is af zodra de bron er is");
-        assert_eq!(p.aantal(BRON), 1);
-        assert!(rond_af(&p.root).is_empty());
+        // De verwijdering staat, ook in de toestand; de bron is gelijk aan de verwerkte inhoud en gaat weg.
+        assert_eq!(h.vergeten, vec!["a.txt".to_string()]);
+        assert_eq!(p.lees(), None, "een verwijdering komt niet terug");
         assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn bron_die_zonder_afronding_ontbreekt_blijft_in_het_journaal() {
+        // Review Sol, PR #8, punt 3: een bron die na het verplaatsen weg is, is reden voor onderzoek, niet voor stil
+        // wissen. Het journaal blijft, het pad blijft buiten de ronde, met een reden voor het rapport.
+        let p = Proef::new();
+        onderbreek_na(|s| *s == Stap::Verplaatst);
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        let id = lees(&p.root).unwrap()[0].id.clone();
+        fs::remove_file(bron(&p.root, &id)).unwrap();
+        let h = p.herstel(false);
+        assert!(h.geblokkeerd.get("a.txt").is_some_and(|r| r.contains(&id)), "{:?}", h.geblokkeerd);
+        assert_eq!(p.aantal(JOURNAAL), 1);
+    }
+
+    #[test]
+    fn afgerond_maar_niet_opgeruimd_ruimt_bij_herstel_op() {
+        // Gestopt tussen "afgerond" en het weghalen van de bron: de bron is niet meer nodig.
+        let p = Proef::new();
+        assert!(matches!(vervang(p.opdracht(Some("nieuw"))).unwrap(), Uitkomst::Geplaatst(_)));
+        let v = lees(&p.root).unwrap().remove(0);
+        afgerond(&p.root, &v).unwrap();
+        let h = p.herstel(true);
+        assert!(h.geblokkeerd.is_empty() && h.vergeten.is_empty());
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+        assert_eq!(p.lees().as_deref(), Some("nieuw"));
+    }
+
+    #[test]
+    fn journaal_dat_niet_te_lezen_is_houdt_de_ronde_tegen() {
+        let p = Proef::new();
+        assert!(matches!(vervang(p.opdracht(Some("nieuw"))).unwrap(), Uitkomst::Geplaatst(_)));
+        let journaal = map(&p.root, JOURNAAL);
+        let dicht = fs::metadata(&journaal).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if unsafe { libc::geteuid() } == 0 {
+                return;
+            }
+            fs::set_permissions(&journaal, fs::Permissions::from_mode(0o000)).unwrap();
+            let root = p.root.clone();
+            let r = herstel(&p.root, move |rel| root.join(rel), |_, _| true);
+            fs::set_permissions(&journaal, dicht).unwrap();
+            assert!(r.is_err(), "zonder journaal weet de motor niet wat halverwege is");
+        }
+        #[cfg(not(unix))]
+        let _ = dicht;
     }
 
     #[test]
@@ -760,7 +980,7 @@ pub(crate) mod proeven {
         assert_eq!(p.lees().as_deref(), Some("van de gebruiker"));
         assert_eq!(p.aantal(NIEUW), 0);
         // De bron is de verwerkte inhoud (versie 1 staat op de server): mag weg.
-        assert!(rond_af(&p.root).is_empty());
+        assert!(p.rond_af().is_empty());
         assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
         assert_eq!(p.lees().as_deref(), Some("van de gebruiker"));
     }
@@ -777,9 +997,16 @@ pub(crate) mod proeven {
                 Ok(())
             });
             assert!(vervang(p.opdracht(nieuw)).is_ok());
-            let afwijkend = rond_af(&p.root);
-            assert_eq!(afwijkend.len(), 1, "het werk staat in de bron en gaat naar de server");
-            assert_eq!(fs::read_to_string(bron(&p.root, &afwijkend[0].id)).unwrap(), "oud + werk");
+            let afwijkend = p.rond_af();
+            if nieuw.is_some() {
+                assert_eq!(afwijkend.len(), 1, "het werk staat in de bron en gaat naar de server");
+                assert_eq!(fs::read_to_string(bron(&p.root, &afwijkend[0].id)).unwrap(), "oud + werk");
+            } else {
+                // Bij een verwijdering komt het werk terug op het (lege) pad, zonder de server.
+                assert!(afwijkend.is_empty());
+                assert_eq!(p.lees().as_deref(), Some("oud + werk"));
+                assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+            }
         }
     }
 

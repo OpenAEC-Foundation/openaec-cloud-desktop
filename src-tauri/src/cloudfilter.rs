@@ -767,7 +767,8 @@ fn nu_filetime() -> i64 {
 }
 
 /// Maak een bestand dat alleen online staat (placeholder, in sync, wolkje) op `pad`, met de grootte van de versie op
-/// de server en als bestandsidentiteit het bestand-id op de server. De map erboven moet bestaan.
+/// de server en als bestandsidentiteit het bestand-id op de server. De map erboven moet bestaan. Staat er al iets op
+/// `pad` (bijv. een bestand dat de gebruiker net opsloeg), dan een fout: nooit vervangen.
 pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<()> {
     let map = pad.parent().ok_or_else(|| anyhow!("{} heeft geen map", pad.display()))?;
     let naam = pad.file_name().ok_or_else(|| anyhow!("{} heeft geen naam", pad.display()))?.to_string_lossy().to_string();
@@ -786,7 +787,7 @@ pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<
         info.FsMetadata.FileSize = grootte as i64;
         info.FileIdentity = ident.as_ptr() as *const c_void;
         info.FileIdentityLength = (ident.len() * 2) as u32;
-        info.Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC | CF_PLACEHOLDER_CREATE_FLAG_SUPERSEDE;
+        info.Flags = CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC;
         let mut arr = [info];
         let mut verwerkt = 0u32;
         CfCreatePlaceholders(PCWSTR(wmap.as_ptr()), &mut arr, CF_CREATE_FLAG_NONE, Some(&mut verwerkt))
@@ -799,7 +800,8 @@ pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<
 }
 
 /// Werk een bestand dat alleen online staat bij naar een nieuwe versie op de server: nieuwe grootte en
-/// wijzigingstijd, blijft alleen online en in sync. Er wordt niets gedownload.
+/// wijzigingstijd, blijft alleen online en in sync. Er wordt niets gedownload. Is het bestand niet meer in sync (de
+/// gebruiker haalde het op en wijzigde het), dan een fout (`CF_UPDATE_FLAG_VERIFY_IN_SYNC`): nooit ontwateren.
 pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, bestand_id: &str) -> Result<()> {
     let f = open(pad)?;
     let ident = wide(bestand_id);
@@ -815,7 +817,7 @@ pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, bestand_id: &str) -> Res
             Some(ident.as_ptr() as *const c_void),
             (ident.len() * 2) as u32,
             None,
-            CF_UPDATE_FLAG_DEHYDRATE | CF_UPDATE_FLAG_MARK_IN_SYNC,
+            CF_UPDATE_FLAG_VERIFY_IN_SYNC | CF_UPDATE_FLAG_DEHYDRATE | CF_UPDATE_FLAG_MARK_IN_SYNC,
             None,
             None,
         )
