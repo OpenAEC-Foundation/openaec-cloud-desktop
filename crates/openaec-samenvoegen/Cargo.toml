@@ -13,6 +13,10 @@ thiserror = "2"
 # Alleen voor het opdrachtregelprogramma (feature "cli").
 clap = { version = "4", features = ["derive"], optional = true }
 
+[dev-dependencies]
+# Alleen voor de eigenschappentests (tests/eigenschappen).
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [features]
 cli = ["dep:clap"]
 

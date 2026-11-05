@@ -1,0 +1,38 @@
+[package]
+name = "openaec-samenvoegen-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+openaec-samenvoegen = { path = ".." }
+
+# Een eigen werkruimte, los van de crate.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "lees"
+path = "fuzz_targets/lees.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verschil"
+path = "fuzz_targets/verschil.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "samenvoegen"
+path = "fuzz_targets/samenvoegen.rs"
+test = false
+doc = false
+bench = false
