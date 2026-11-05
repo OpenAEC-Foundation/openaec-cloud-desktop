@@ -220,6 +220,48 @@ uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer
 Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
 regeleinde), met IfcOpenShell 0.9.0.post1.
 
+## Eigenschappen met willekeurige bewerkingen
+
+`tests/eigenschappen/` toetst de beloften van `voeg_samen` met veel willekeurige gevallen (proptest). Een geval is
+een startbestand (`gebouw` uit de tests in drie schema's, de bestanden in `tests/bestanden/`, en de planningen in
+`$OPS_VOORBEELDEN` als die map gezet is) met aan elke kant een paar bewerkingen: hernoemen, een omschrijving, een
+getal of tekst in een eigen knoop (bijv. een coördinaat of taakdatum), een eigenschap wijzigen of toevoegen, een
+element of taak kopiëren, een object wissen, een element naar een andere verdieping, een gedeelde plaatsing
+splitsen, een nieuwe eigenschappenset met relatie, een andere SET-volgorde, een tijdstempel, en hernummeren.
+
+Per geval gaan we na:
+
+- `voeg_samen(b, x, b)` is `x` en `voeg_samen(b, b, y)` is `y`, byte voor byte;
+- `voeg_samen(b, x, x)` is `x`;
+- `voeg_samen(b, x, y)` en `voeg_samen(b, y, x)` geven allebei een conflict, of allebei hetzelfde model;
+- geen stil verlies: lukt het, dan staat elke wijziging van beide kanten in het resultaat, per object en attribuut,
+  per eigenschap op naam, en voor een SET wat erbij kwam en wat eraf ging;
+- alleen een andere SET-volgorde en nummering geeft een leeg verschil;
+- het resultaat leest weer in en verwijst nergens naar iets dat er niet is.
+
+De controle deelt geen code met de bibliotheek: een eigen lezer, een eigen canonieke vorm per object (met ankers,
+delen en vluchtige velden zoals hierboven) en een eigen verwachting. Alleen de schematabellen leest ze mee, als data.
+
+```text
+cargo test --test eigenschappen                       # 128 gevallen per eigenschap
+EIGENSCHAPPEN_GEVALLEN=5000 EIGENSCHAPPEN_ZAAD=7 \
+OPS_VOORBEELDEN=../open-planner-studio/examples cargo test --release --test eigenschappen -- --nocapture
+```
+
+Bij een fout zet `EIGENSCHAPPEN_UITVOER=<map>` de basis, ons en hun van het kleinste geval in die map.
+
+## Fuzzen
+
+`fuzz/` heeft drie doelen voor `cargo fuzz` (nightly): `lees` (de lezer, en het verschil van een bestand met zichzelf
+is leeg), `verschil` (twee stukken uit één invoer, gescheiden door een NUL-byte) en `samenvoegen` (drie stukken). Een
+paniek, een invoer die langer dan 10 s duurt of meer dan 1 GB geheugen vraagt, is een vondst.
+
+```text
+cd fuzz && ./zaai.sh                                  # corpus uit tests/bestanden (en $OPS_VOORBEELDEN)
+cargo +nightly fuzz run -s none -a samenvoegen corpus/samenvoegen -- \
+    -dict=step.dict -max_len=200000 -rss_limit_mb=1024 -timeout=10 -max_total_time=900
+```
+
 ## Bronnen
 
 - De schematabellen in `src/schema/` zijn gemaakt met `scripts/genereer_schema.py` uit de officiële EXPRESS-schema's
