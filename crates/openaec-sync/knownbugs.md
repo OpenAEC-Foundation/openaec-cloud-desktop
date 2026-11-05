@@ -49,7 +49,8 @@ code), **S** = afgeleid, niet getoetst.
     2026). Het resultaat van een samenvoeging komt via de veilige routine op het pad, ook in een map met placeholders.
     De proeven draaien op Linux, zonder Cloud Filter API. — S
 
-De punten 20 tot en met 29 horen bij de offline wachtrij (werkstroom 6, `docs/samenwerken/offline.md`).
+De punten 20 tot en met 29 en 110 tot en met 119 horen bij de offline wachtrij (werkstroom 6,
+`docs/samenwerken/offline.md`).
 
 20. **Een eigen upload waarna een ander alweer schreef, wordt niet herkend** (eigen bevinding, 5 november 2026). Alleen
     de huidige versie telt. Kwam de upload aan (versie 2) en schreef een ander versie 3 vóór de volgende ronde, dan
@@ -83,21 +84,37 @@ De punten 20 tot en met 29 horen bij de offline wachtrij (werkstroom 6, `docs/sa
     Sol op PR #11, "dubbele volledige hashlezing"). Vóór elke upload hasht de motor het bestand (`Ronde::noteer_bestand`)
     en schrijft hij een klein bestand met fsync; de client hasht het daarna nog eens voor de upload zelf
     (`upload_poging` in `lib.rs`). Na elke download leest de motor het bestand nog eens voor de vingerafdruk
-    (`Ronde::inhoud`). Bij duizenden kleine bestanden of een heel groot bestand kost dat tijd; niet gemeten. Kan door de
-    hashes van de motor aan de client mee te geven, en bij een download de hashes te gebruiken die de client al
-    controleerde. — B
-27. **Verwijderen op de server: verkleind, niet gesloten** (ontwerp §5.5, review Sol over het geheel en op PR #11,
-    punt 3). Een verwijdering gaat alleen met een zekere basis (de versieregel in de toestand), als de lijst die basis
+    (`Ronde::inhoud`). Bij duizenden kleine bestanden of een heel groot bestand kost dat tijd; niet gemeten. Sol
+    bevestigt het (ronde 2 op `e2a79c6`). Richting: laat de voorbereiding van de upload en de controle van de download
+    de hashes teruggeven die ze al berekenden. Dan blijven één meting van de inhoud, één vingerafdruk en het duurzame
+    bestand onderweg over. — B
+27. **Verwijderen op de server: de race blijft open** (ontwerp §5.5, review Sol over het geheel en op PR #11, punt 3
+    en ronde 2). Een verwijdering gaat alleen met een zekere basis (de versieregel in de toestand), als de lijst die basis
     toont, en als het bestand vlak vóór het verwijderen opnieuw opgevraagd nog op die versie staat (`Opslag::huidig`).
-    De race tussen dat opvragen en het verwijderen sluit pas als de server `verwijder(bestand, basis_versie_id)` kent
-    (ontwerp §5.5, optie E in `offline.md`). Slaat een ander precies in dat gat op, dan gaat zijn nieuwe versie naar de
-    prullenbak op de server (terug te halen, maar weg uit het actieve dossier). Proef
-    `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` dekt het gat tussen de lijst en het opvragen. Dit punt is
-    geen vervolgpunt: het blokkeert tot de server met een basis verwijdert. — B
+    Die hercontrole is de tussenoplossing; het contract (ontwerp §5.5) accepteert haar, en Sol ook (ronde 2, ja op
+    `e2a79c6`). De race tussen het opvragen en het verwijderen blijft wel open: `Opslag::verwijder` stuurt nog alleen
+    het bestand-id. Slaat een ander precies in dat gat op, dan gaat zijn nieuwe versie naar de prullenbak op de server
+    (terug te halen, maar weg uit het actieve dossier). Het definitieve sluiten wacht op de server:
+    `verwijder(bestand, basis_versie_id)` (optie E in `offline.md`). Proef
+    `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` dekt het gat tussen de lijst en het opvragen. — B
 28. **Het bewijs van een eigen upload hangt aan het volgnummer** (review Sol op PR #11, punt 5). `eigen_upload`
     vergelijkt de blokhashes van de huidige versie, maar `ClientOpslag::blokhashes` vraagt ze op met het volgnummer
     (`api.blokken`), niet met de versieregel. Komt hetzelfde nummer met een andere regel terug tussen de lijst en die
     vraag, dan kan de toestand een regel krijgen waar de hashes niet bij horen. Zeldzaam (een herstel of verplaatsing
-    met overschrijven precies dan); de volgende ronde ziet dan een andere regel en haalt op of voegt samen. Kan met
-    `blokken` per versieregel op de server, of door na de vergelijking met `Opslag::huidig` na te gaan dat dezelfde regel
-    er nog staat (een extra verzoek), of met `lees_versie` als terugval (een volledige download). — B
+    met overschrijven precies dan); de volgende ronde ziet dan een andere regel en haalt op of voegt samen. Sol
+    bevestigt het (ronde 2 op `e2a79c6`): punt 5 van ronde 1 is niet gesloten. Richting: gebruik de exacte versieregel,
+    bijvoorbeeld via het bestaande `Opslag::lees_versie`; een nieuwe algemene bewijslaag is niet nodig. Andere wegen:
+    `blokken` per versieregel op de server, of na de vergelijking met `Opslag::huidig` nagaan dat dezelfde regel er nog
+    staat. — B
+29. **Een bulkverwijdering vraagt per bestand de hele map opnieuw op** (review Sol op PR #11, ronde 2 op `e2a79c6`).
+    `ClientOpslag::huidig` haalt voor elke verwijdering de volledige inhoud van de map op (`api.bladeren`). Honderden
+    verwijderingen in één map zijn zo honderden volledige mapaanvragen. De vertraging is niet gemeten. Kleiner kan het
+    met één gericht verzoek per bestand via `info(bestand)`: in de voorgestelde serverversie geeft die `versie_id` en
+    `verwijderd`, maar `BestandInfo` in `api.rs` leest die velden nog niet. De hercontrole blijft dezelfde. — B
+
+110. **De herstelmelding krijgt een verkeerd opschrift** (review Sol op PR #11, ronde 2 op `e2a79c6`). De melding "hier
+     verwijderd, maar de basis is niet zeker; teruggehaald" komt in `Rapport::meldingen`. De app zet boven alle meldingen
+     van een ronde "bestanden met een naam die niet kan" (`src-tauri/src/lib.rs`, de melding per map na de ronde). Een
+     gewone `planning.ifc` die terugkomt wegens een onzekere basis krijgt zo een verkeerde uitleg. Richting: maak het
+     opschrift neutraal (bijvoorbeeld "Meldingen van de sync"). Of de systeemmelding echt zichtbaar is, is niet
+     nagegaan. — B
