@@ -38,22 +38,24 @@ WK=$(realpath "$1") || exit 2
 code=99
 WERK=$(mktemp -d /tmp/proef-5b.XXXXXX)
 LINK="$BENCH_DIR/apps/openaec_storage"
+# Wat de opruimstap mag terugdraaien: alleen wat dit script zelf veranderde of startte.
 OUD_LINK=""
-DB_WAS_ACTIEF=0
+DB_GESTART=0
+SITE_GEMAAKT=0
 
 opruimen() {
 	echo "== opruimen"
 	systemctl --user stop proef-5b-web proef-5b-s3 2>/dev/null
 	systemctl --user reset-failed proef-5b-web proef-5b-s3 2>/dev/null
-	if [ -d "$BENCH_DIR/sites/$SITE" ]; then
+	if [ "$SITE_GEMAAKT" = 1 ] && [ -d "$BENCH_DIR/sites/$SITE" ]; then
 		(cd "$BENCH_DIR" && bench drop-site "$SITE" --db-root-password bench --no-backup --force >/dev/null 2>&1) \
 			&& echo "site $SITE verwijderd" || echo "LET OP: site $SITE niet te verwijderen"
 	fi
-	rm -rf "$BENCH_DIR/archived/sites/$SITE" "$BENCH_DIR/archived_sites/$SITE"
+	[ "$SITE_GEMAAKT" = 1 ] && rm -rf "$BENCH_DIR/archived/sites/$SITE" "$BENCH_DIR/archived_sites/$SITE"
 	if [ -n "$OUD_LINK" ]; then
 		ln -sfn "$OUD_LINK" "$LINK" && echo "apps/openaec_storage weer -> $OUD_LINK"
 	fi
-	if [ "$DB_WAS_ACTIEF" = 0 ]; then
+	if [ "$DB_GESTART" = 1 ]; then
 		systemctl --user stop bench-samen-mariadb bench-samen-valkey 2>/dev/null && echo "mariadb en valkey weer gestopt"
 	fi
 	rm -rf "$WERK"
@@ -85,13 +87,14 @@ echo "client: $(git -C "$REPO" rev-parse --abbrev-ref HEAD) $(git -C "$REPO" rev
 echo "server: $(git -C "$WK" rev-parse --abbrev-ref HEAD) $(git -C "$WK" rev-parse --short HEAD)$(git -C "$WK" diff --quiet HEAD && echo ", schoon" || echo ", MET LOKALE WIJZIGINGEN")"
 echo "voorbeeld: $VOORBEELD ($(grep -c 'IFCTASK(' "$VOORBEELD") taken)"
 
-systemctl --user is-active --quiet bench-samen-mariadb && DB_WAS_ACTIEF=1
+systemctl --user is-active --quiet bench-samen-mariadb || DB_GESTART=1
 "$B/start.sh" || exit
 OUD_LINK=$(readlink "$LINK")
 ln -sfn "$WK" "$LINK"
 cd "$BENCH_DIR" || exit
 
 echo "== site $SITE"
+SITE_GEMAAKT=1
 bench new-site "$SITE" --db-root-password bench --admin-password proef --mariadb-user-host-login-scope=% \
 	--install-app openaec_storage >"$WERK/new-site.log" 2>&1 || { tail -30 "$WERK/new-site.log"; exit; }
 for kv in "openaec_storage_endpoint=http://127.0.0.1:$S3POORT" openaec_storage_bucket=proef openaec_storage_region=eu-central-1; do
