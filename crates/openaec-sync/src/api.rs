@@ -59,6 +59,10 @@ pub struct UploadResultaat {
     pub naam: String,
     pub versie: u64,
     pub conflict: bool,
+    /// Het id van de nieuwe versieregel (een nieuwere server): de basis voor een volgende upload met
+    /// [`SchrijfAls`].
+    #[serde(default)]
+    pub versie_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +77,8 @@ pub struct Blokken {
 pub struct DownloadLink {
     pub url: String,
     pub versie: u64,
+    #[serde(default)]
+    pub versie_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +134,9 @@ pub struct BestandItem {
     pub grootte: u64,
     #[serde(default)]
     pub huidige_versie: u64,
+    /// Het id van de versieregel van de huidige versie (een nieuwere server).
+    #[serde(default)]
+    pub versie_id: Option<String>,
     #[serde(default)]
     pub modified: Option<String>,
 }
@@ -250,6 +259,12 @@ pub struct BestandInfo {
     pub map: Option<String>,
     #[serde(default)]
     pub huidige_versie: u64,
+    /// Het id van de versieregel van de huidige versie (een nieuwere server).
+    #[serde(default)]
+    pub versie_id: Option<String>,
+    /// In de prullenbak.
+    #[serde(default)]
+    pub verwijderd: bool,
     #[serde(default)]
     pub vergrendeling: Option<Vergrendeling>,
 }
@@ -285,6 +300,26 @@ pub struct Mogelijkheden {
     /// `overdracht.voeg_toe_van_opslag` en `maak_van_opslag`: versturen wat al in de opslag staat, zonder upload.
     #[serde(default)]
     pub overdracht_van_opslag: bool,
+    /// `bij_conflict="weiger"` bij een upload: een weigering in plaats van een conflictkopie (vergelijk-en-schrijf).
+    #[serde(default)]
+    pub bij_conflict_weiger: bool,
+    /// Een upload kan zeggen dat hij een samenvoeging is van twee versies (`samengevoegd_uit`).
+    #[serde(default)]
+    pub samengevoegd_uit: bool,
+    /// Een upload kan zeggen op welk bestand hij gebaseerd is (`basis_bestand`).
+    #[serde(default)]
+    pub basis_bestand: bool,
+    /// De basis van een upload is het id van de versieregel (`basis_versie_id`), en `download` leest op `versie_id`.
+    #[serde(default)]
+    pub basis_versie_id: bool,
+}
+
+impl Mogelijkheden {
+    /// Alles wat de opslaan-lus nodig heeft (ontwerp §5.6): weigeren bij een verouderde basis, de basis als versieregel,
+    /// en een samenvoeging aanmelden. Een oudere server kent dat niet; dan blijft alles zoals het was.
+    pub fn vergelijk_en_schrijf(&self) -> bool {
+        self.bij_conflict_weiger && self.samengevoegd_uit && self.basis_bestand && self.basis_versie_id
+    }
 }
 
 /// Iets dat een ander met mij deelde (`gedeeld_met_mij`): een map (te koppelen) of een bestand (te openen).
@@ -349,6 +384,9 @@ pub struct BoomBestand {
     pub grootte: u64,
     #[serde(default)]
     pub huidige_versie: u64,
+    /// Het id van de versieregel van de huidige versie (een nieuwere server).
+    #[serde(default)]
+    pub versie_id: Option<String>,
 }
 
 /// Alle mappen en (een pagina) bestanden van een ruimte (`api.boom`).
@@ -377,6 +415,8 @@ pub struct KleinBestand {
 pub struct KleinInhoud {
     pub bestand: String,
     pub versie: u64,
+    #[serde(default)]
+    pub versie_id: Option<String>,
     /// BLAKE3 van de inhoud, als de server die kent.
     pub blokhash: Option<String>,
     pub inhoud: Vec<u8>,
@@ -392,6 +432,8 @@ struct PerBestand {
     naam: Option<String>,
     #[serde(default)]
     versie: Option<u64>,
+    #[serde(default)]
+    versie_id: Option<String>,
     #[serde(default)]
     conflict: Option<bool>,
     #[serde(default)]
@@ -622,7 +664,13 @@ impl Client {
         Ok(r.into_iter()
             .map(|b| match (b.ok, &b.bestand, &b.naam, b.versie) {
                 (true, Some(bestand), Some(naam), Some(versie)) => Ok((
-                    UploadResultaat { bestand: bestand.clone(), naam: naam.clone(), versie, conflict: b.conflict.unwrap_or(false) },
+                    UploadResultaat {
+                        bestand: bestand.clone(),
+                        naam: naam.clone(),
+                        versie,
+                        conflict: b.conflict.unwrap_or(false),
+                        versie_id: b.versie_id.clone(),
+                    },
                     b.map.clone(),
                 )),
                 _ => Err(b.weigering()),
@@ -656,6 +704,7 @@ impl Client {
                 Ok(KleinInhoud {
                     bestand: b.bestand.unwrap_or_default(),
                     versie: b.versie.unwrap_or_default(),
+                    versie_id: b.versie_id,
                     blokhash: b.blokhash,
                     inhoud,
                 })
@@ -926,6 +975,7 @@ impl Client {
             naam: r["naam"].as_str().unwrap_or_default().to_string(),
             versie: r["versie"].as_u64().unwrap_or_default(),
             conflict: false,
+            versie_id: r["versie_id"].as_str().map(str::to_string),
         })
     }
 
