@@ -60,3 +60,15 @@ reproductie.
     (`AbortIncompleteMultipartUpload`) staat nergens beschreven. Na run c1 stonden er 29. Er gaat niets verloren, maar
     bij AWS kosten de delen opslag tot iemand ze afbreekt. Reproductie: `upload_start` zonder `upload_klaar`, dan
     `list_multipart_uploads` op de bucket (`simulatie.py` telt ze als `onafgemaakte_multipart`). — B
+61. **Na kill -9 midden in een ronde worden opgehaalde bestanden overbodige conflictkopieën** (eigen bevinding,
+    chaosproef c2, 5 november 2026). De motor schrijft zijn toestand pas aan het eind van een ronde weg (`motor.rs`,
+    `sync_met_opties`, de `bewaar` na de overdrachten). Stopt de ronde hard (kill -9, een crash, de stroom valt weg)
+    nadat hij bestanden ophaalde, dan kent de volgende ronde die bestanden niet. Een bestand dat dan hier en op de
+    server staat zonder bekende basis, gaat zonder vergelijking van de inhoud als upload zonder basis naar de server
+    (`Taak::Upload { basis: None }`), en de server maakt er een conflictkopie van, met dezelfde inhoud. Er gaat niets
+    verloren, maar na één crash krijgt de gebruiker een reeks kopieën die niets nieuws bevatten: in c2 waren 110 van de
+    127 conflictkopieën overbodig, ook kopieën van kopieën. Reproductie: `draai.sh repro-61-gestopte-ronde
+    repro_gestopt.py` (A zet vijf notities op de server; B stopt met kill -9 zodra de eerste in zijn map staat; de
+    volgende ronde van B maakt vijf conflictkopieën met dezelfde inhoud, log van 5 november). Een mogelijke richting:
+    vóór zo'n upload de blokhashes van hier en van de server vergelijken (zoals `neem_regel_over` en `vastgelegd` al
+    doen), of de toestand na elke overdracht bewaren. Niet gerepareerd: dit is de motor van 5b. — B

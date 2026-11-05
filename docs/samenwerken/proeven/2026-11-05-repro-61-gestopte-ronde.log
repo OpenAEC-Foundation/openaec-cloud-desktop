@@ -1,0 +1,17 @@
+draai.sh: repro-61-gestopte-ronde, 2026-11-05 16:41:02, desktop 43e407d, server 197d55b (integratie-4-4b)
+draai.sh: repro_gestopt.py 
+zwaar.sh: plek .zwaar.2 voor: bash -c echo "draai.sh: start $(date +%T), desktop $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' rev-parse --short HEAD), $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' status --short | wc -l) bestanden niet gecommit" && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/repro_gestopt.py' --werk '/home/aia09/bench-proef/werk/repro-61-gestopte-ronde' 
+draai.sh: start 16:41:07, desktop 43e407d, 1 bestanden niet gecommit
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+16:41:38 A: {'geupload': 1, 'gedownload': 0, 'verwijderd': 0, 'conflicten': 0, 'fouten': [], 'overgeslagen': [], 'meldingen': [], 'sessie_verlopen': False, 'wachtend': []}
+16:41:38 B: {'geupload': 0, 'gedownload': 1, 'verwijderd': 0, 'conflicten': 0, 'fouten': [], 'overgeslagen': [], 'meldingen': [], 'sessie_verlopen': False, 'wachtend': []}
+16:41:39 A zet vijf nieuwe notities op de server: {'geupload': 5, 'gedownload': 0, 'verwijderd': 0, 'conflicten': 0, 'fouten': [], 'overgeslagen': [], 'meldingen': [], 'sessie_verlopen': False, 'wachtend': []}
+16:41:39 B gestopt met kill -9 na 'nieuw-1.txt'; in de map van B staan nu: ['nieuw-1.txt', 'nieuw-2.txt', 'nieuw-3.txt', 'nieuw-4.txt', 'nieuw-5.txt']
+16:41:40 B, ronde na de kill: {'geupload': 0, 'gedownload': 5, 'verwijderd': 0, 'conflicten': 5, 'fouten': [], 'overgeslagen': [], 'meldingen': [], 'sessie_verlopen': False, 'wachtend': []}
+16:41:40 conflictkopie notities/nieuw-5 (conflict Sim1 2026-11-05 2111).txt: dezelfde inhoud als notities/nieuw-5.txt (sha256 5ddb9eac1af0)
+16:41:40 conflictkopie notities/nieuw-4 (conflict Sim1 2026-11-05 2111).txt: dezelfde inhoud als notities/nieuw-4.txt (sha256 5b6547c89bc1)
+16:41:40 conflictkopie notities/nieuw-3 (conflict Sim1 2026-11-05 2111).txt: dezelfde inhoud als notities/nieuw-3.txt (sha256 a15e6a5fb16b)
+16:41:40 conflictkopie notities/nieuw-2 (conflict Sim1 2026-11-05 2111).txt: dezelfde inhoud als notities/nieuw-2.txt (sha256 f6b92c8eb57d)
+16:41:40 conflictkopie notities/nieuw-1 (conflict Sim1 2026-11-05 2111).txt: dezelfde inhoud als notities/nieuw-1.txt (sha256 77f528c9acd9)
+16:41:40 GEREPRODUCEERD: 5 overbodige conflictkopieën na één ronde met kill -9: ['notities/nieuw-5 (conflict Sim1 2026-11-05 2111).txt', 'notities/nieuw-4 (conflict Sim1 2026-11-05 2111).txt', 'notities/nieuw-3 (conflict Sim1 2026-11-05 2111).txt', 'notities/nieuw-2 (conflict Sim1 2026-11-05 2111).txt', 'notities/nieuw-1 (conflict Sim1 2026-11-05 2111).txt']
+EXIT:0
