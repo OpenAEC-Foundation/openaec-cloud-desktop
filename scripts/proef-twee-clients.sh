@@ -109,7 +109,7 @@ EOF
 systemd-run --user --quiet --unit=proef-5b-web -p WorkingDirectory="$BENCH_DIR/sites" \
 	-p Environment=PYTHONPYCACHEPREFIX="$B/pycache" -p Environment=AWS_ACCESS_KEY_ID=proef \
 	-p Environment=AWS_SECRET_ACCESS_KEY=proef \
-	"$BENCH_DIR/env/bin/gunicorn" -b "127.0.0.1:$POORT" -w 8 -t 120 --pythonpath "$WERK" proef_wsgi:application || exit
+	"$BENCH_DIR/env/bin/gunicorn" -b "127.0.0.1:$POORT" -w 4 -t 120 --pythonpath "$WERK" proef_wsgi:application || exit
 for _ in $(seq 90); do
 	curl -fsS "$ADRES/api/method/ping" 2>/dev/null | grep -q pong && ss -tln | grep -q "127.0.0.1:$S3POORT " && break
 	sleep 1
