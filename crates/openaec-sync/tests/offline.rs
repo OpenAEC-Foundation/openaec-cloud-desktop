@@ -664,6 +664,31 @@ async fn geweigerde_afronding_na_vastleggen() {
     upload_zonder_goed_antwoord_wordt_herkend(ResponseTemplate::new(403).set_body_json(tekst), false).await;
 }
 
+/// `ClientOpslag::huidig` (de controle vlak vóór het verwijderen) vraagt één map op met `api.bladeren`, en geeft het
+/// bestand zoals het nu is. Staat het niet meer in zijn map, of is de map weg: None.
+#[tokio::test]
+async fn huidig_vraagt_een_map_op() {
+    const API: &str = "/api/method/openaec_storage.api.";
+    let antwoord = |message: Value| ResponseTemplate::new(200).set_body_json(json!({ "message": message }));
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).and(path(format!("{API}mogelijkheden"))).respond_with(antwoord(json!({}))).mount(&server).await;
+    let bestand = json!({"name": "B1", "naam": "notities.txt", "grootte": 4, "huidige_versie": 2, "versie_id": "V2"});
+    Mock::given(method("POST"))
+        .and(path(format!("{API}bladeren")))
+        .respond_with(antwoord(json!({"mappen": [], "bestanden": [bestand]})))
+        .mount(&server)
+        .await;
+    let opslag = ClientOpslag::new(Client::new(&server.uri(), "token a:b"), "R1");
+    let b = OpslagBestand { pad: "notities.txt".into(), bestand: "B1".into(), versie: 1, grootte: 4, versie_id: Some("V1".into()) };
+
+    let nu = opslag.huidig(&b).await.unwrap().expect("het bestand staat er");
+    assert_eq!((nu.pad.as_str(), nu.versie, nu.versie_id.as_deref()), ("notities.txt", 2, Some("V2")));
+    let ander = OpslagBestand { bestand: "B9".into(), ..b.clone() };
+    assert!(opslag.huidig(&ander).await.unwrap().is_none(), "niet meer in zijn map");
+    let map_weg = OpslagBestand { pad: "weg/notities.txt".into(), ..b };
+    assert!(opslag.huidig(&map_weg).await.unwrap().is_none(), "de map is weg");
+}
+
 /// Het scenario van Sol (ontwerp §5.5, "Ook verwijderen is voorwaardelijk"), offline: B wist F1 terwijl zijn toestand
 /// versie 1 kent; daarna slaat A versie 2 op; dan komt B online. De verwijdering ging uit van versie 1, dus F1 met
 /// versie 2 blijft staan, en komt bij B terug.

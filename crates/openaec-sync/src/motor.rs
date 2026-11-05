@@ -742,6 +742,11 @@ impl<O: Opslag> Ronde<'_, O> {
             return None;
         }
         let lokaal = self.hier(pad);
+        // Een klein bestand meteen: een aparte thread kost dan meer dan het lezen, en de taak wacht niet tussen de
+        // overdracht en haar melding (pauzeren stopt zo na het lopende bestand). Een groot bestand niet op deze thread.
+        if k.0 <= METEN_OP_DEZE_THREAD {
+            return meet_inhoud(&lokaal, k);
+        }
         tokio::task::spawn_blocking(move || meet_inhoud(&lokaal, k)).await.ok().flatten()
     }
 
@@ -2053,6 +2058,9 @@ fn kandidaten(toestand: &Toestand, ruw: &BTreeMap<String, (u64, u128)>, overslaa
         })
         .collect()
 }
+
+/// Tot deze grootte meet [`Ronde::inhoud`] de vingerafdruk op de thread van de ronde (zie daar).
+const METEN_OP_DEZE_THREAD: u64 = 1 << 20;
 
 /// Een vingerafdruk van een inhoud uit haar blokhashes (met [`blokgrootte`] bij haar grootte): één korte hash voor de
 /// toestand, en uit de blokhashes die de motor bij een upload toch al maakt.
