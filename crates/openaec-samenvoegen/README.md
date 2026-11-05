@@ -205,6 +205,9 @@ cargo test --release --features cli --test meting -- --ignored --nocapture --tes
     target/meting/hun.ifc -o uit.ifc
 ```
 
+Metingen op grote modellen (1 tot 174 MB, en 1,2 en 6,3 GB onder een grens van 2 GB), met de groei van tijd en
+geheugen en voorstellen voor winst: `docs/samenwerken/metingen.md` in de root van deze repo.
+
 ## Controle met IfcOpenShell
 
 Los van de Rust-tests (die hangen er niet van af) kun je de resultaten van de tests laten controleren door
