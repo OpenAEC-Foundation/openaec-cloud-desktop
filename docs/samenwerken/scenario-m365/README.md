@@ -2,7 +2,8 @@
 
 Deze proeven horen bij hoofdstuk 4a van het ontwerp (openaec-storage, `docs/samenwerken/ontwerp.md`, branch
 `samenwerken/ontwerp-m365`). Dat hoofdstuk vergelijkt per functie onze onderlaag met Microsoft 365 (M365). De
-nummers F1 tot en met F25 komen uit die tabel.
+nummers F1 tot en met F26 komen uit die tabel. Tegelijk bewerken in de browser (de werkplek, F26) toetsen deze
+proeven niet: daar krijgt de tweede nu alleen-lezen.
 
 Het vaste voorbeeld: Anna en Piet wijzigen tegelijk één IFC-bestand, vanaf versie 12. Het script doet de bewerking
 zelf en nummert het bestand daarna opnieuw, zoals OPS bij elk opslaan doet. Elk script zegt ook wat M365 in dat geval
