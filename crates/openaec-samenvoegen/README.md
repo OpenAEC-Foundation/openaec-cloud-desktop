@@ -1,8 +1,9 @@
 # openaec-samenvoegen
 
-Deze bibliotheek vergelijkt twee versies van een IFC-bestand per object. Ze is de kern van "samenwerken aan
-bestanden" in de OpenAEC SuperCloud: twee mensen wijzigen tegelijk hetzelfde model of dezelfde planning (Open
-Planner Studio schrijft planningen als IFC). Het samenvoegen zelf (three-way merge) komt in een volgende stap.
+Deze bibliotheek vergelijkt en voegt versies van een IFC-bestand samen, per object. Ze is de kern van "samenwerken
+aan bestanden" in de OpenAEC SuperCloud: twee mensen wijzigen tegelijk hetzelfde model of dezelfde planning (Open
+Planner Studio schrijft planningen als IFC). Lukt het samenvoegen niet zeker, dan krijgt de client een rapport en
+maakt hij een conflictkopie, zoals nu.
 
 Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 
@@ -14,9 +15,13 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   kapotte code in een tekst, geeft een fout met het regelnummer.
 - Kent de schema's IFC2X3, IFC4 en IFC4X3 (uit FILE_SCHEMA). De tabellen komen uit de EXPRESS-schema's van
   buildingSMART (zie onder).
-- Vergelijkt per object (`verschil`): wat erbij kwam, wat verdween en wat veranderde, per attribuut met de oude en
-  de nieuwe waarde. Bij een lijst van verwijzingen (bijv. `RelatedObjects`) ook wat erbij en eraf ging. Vluchtige
-  velden die veranderden, staan apart (zie onder).
+- `verschil(a, b)`: wat erbij kwam, wat verdween en wat veranderde, per attribuut met de oude en de nieuwe waarde.
+  Vluchtige velden die veranderden, staan apart (zie onder).
+- `voeg_samen(basis, ons, hun)`: three-way samenvoegen. Geeft het nieuwe bestand, of bij een conflict niets. Het
+  rapport noemt per conflict het object, het attribuut en de waarden van basis, ons en hun, en geeft cijfers.
+- `sla_op(opslag, basis, ons, &opties)`: de opslaan-lus (zie onder). Elke opslag die de trait `Opslag` (`huidige`,
+  `lees`, `schrijf_als`) heeft, past; openaec-storage past er nu op.
+- `kan_samenvoegen(naam)`: alleen `.ifc`.
 
 ## Hoe het vergelijkt
 
@@ -51,20 +56,98 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   opslaan het huidige tijdstip, behalve bij een baseline), en in de HEADER de tijdstempel van FILE_NAME. Het
   verschil noemt ze wel, apart onder `vluchtig`. De auteur, de organisatie en FILE_SCHEMA tellen gewoon mee.
 - **Losse knopen**: knopen waar niets naar verwijst (bijv. IfcStyledItem, IfcIndexedColourMap). Die vergelijken we
-  apart, op type, naam en wat ze aanwijzen.
+  per groep: het type, de naam en wat ze aanwijzen van een object (bijv. de geometrie onder een kleurkaart). Hoort
+  die geometrie bij meer objecten, dan telt welke objecten: een stijl op de vorm van W en V valt in een andere
+  groep dan een stijl op de vorm van X en Y, ook als de geometrie gelijk is.
 - **Relaties met een nieuwe GlobalId.** Sommige programma's geven relaties (IfcRel*) bij elk opslaan een nieuwe
   GlobalId. Een nieuwe relatie koppelen we aan een verdwenen relatie van hetzelfde type, als ze dezelfde objecten
   aanwijzen in de attributen met één verwijzing (bijv. RelatingStructure), en er aan beide kanten precies één
   kandidaat is.
 
+## Hoe het samenvoegt
+
+| Situatie | Uitkomst |
+|---|---|
+| Alleen ons of alleen hun wijzigde, voegde toe of verwijderde een object | Die kant |
+| Beide wijzigden, andere attributen, of hetzelfde attribuut op dezelfde manier | Beide wijzigingen |
+| Beide wijzigden een SET of BAG van verwijzingen | Wat erbij kwam en wat eraf ging, van beide kanten |
+| Beide wijzigden een eigenschappenset of hoeveelhedenset | Per eigenschap (op naam); twee nieuwe waarden = conflict |
+| Beide wijzigden een ander attribuut of een LIST anders | Conflict |
+| De ene kant verwijderde, de andere wijzigde | Conflict |
+| Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
+| Beide wijzigden dezelfde losse knopen (bijv. een kleur) of hetzelfde HEADER-veld anders | Conflict |
+| Beide vervingen dezelfde relatie door een nieuwe (bijv. een ander materiaal, met een nieuwe GlobalId) | Conflict |
+| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons, welke kant de rest van het object ook levert. Nooit een conflict: vragen objecten die één knoop delen elk een andere waarde, dan krijgt elk een eigen kopie (bijv. een eigen IfcOwnerHistory) met de samengevoegde waarden |
+
+Na het samenvoegen controleren we, en elk probleem is een conflict:
+
+- Iets verwijst naar een object dat er niet meer is (ook via een plaatsing).
+- Een object heeft meer relaties dan een INVERSE met een bovengrens toestaat (bijv. een wand in twee verdiepingen),
+  terwijl ons en hun elk binnen de grens bleven. Voor knopen tellen we hoeveel er over de grens gaan (bijv. twee
+  stijlen op één vorm: `StyledByItem`); zijn dat er meer dan in ons en in hun, dan is het een conflict.
+- Een aggregaat valt buiten de grenzen uit het schema (bijv. een lege `RelatedElements`).
+- **De koppelregel.** Een definitie (eigenschappenset, type, materiaal, classificatie, document) gold in de basis
+  voor een object. Bij de ene kant geldt hij niet meer (koppeling weg, uit de `HasPropertySets` van het type, ander
+  type, of object verwijderd), en de andere kant wijzigde hem terwijl hij daar nog gold. Een definitie geldt ook
+  via een andere definitie, bijv. de sets van het type. Komen het weghalen en het wijzigen van dezelfde kant, dan is
+  het geen conflict.
+- **De boomregel.** In IfcRelAggregates, IfcRelNests en IfcRelContainedInSpatialStructure zit geen kring, en wat in
+  ons én in hun vanaf het project bereikbaar was, is dat nog steeds.
+- **Plaatsingen.** Geen kring in `PlacementRelTo` (bijv. ons zet P relatief aan Q, hun Q relatief aan P). Een
+  kring die ons of hun zelf al had, melden we niet.
+- **Zelfcontrole.** We lezen het geschreven bestand opnieuw. Elk object, elke groep losse knopen, de HEADER en de
+  vluchtige velden moeten zijn wat we bedoelden.
+- Een onbekend schema, versies met een ander FILE_SCHEMA (ook IFC4 tegenover IFC4_ADD2), onbekende types of een
+  geval dat we niet kennen: conflict, zonder samen te voegen.
+
+Bij een conflict is er geen resultaat. Een keuze "ons wint" of "hun wint" is er niet: de client bewaart de eigen
+versie als conflictkopie, met het rapport erbij.
+
+**Schrijven.** Het resultaat begint bij de tekst van ons. Alleen de regels van gewijzigde objecten en hun
+plaatsing of geometrie veranderen. Wat van hun komt, krijgt nieuwe nummers boven het hoogste nummer van ons. Een
+knoop van ons met dezelfde inhoud gebruiken we opnieuw, maar alleen als hij bij dezelfde objecten hoort en nog niet
+voor een andere knoop van hun gebruikt is; een gelijk STEP-nummer zegt niets. Hoort een knoop bij meer objecten,
+dan moeten het dezelfde objecten zijn: alleen "allebei bij meer objecten" is niet genoeg (bijv. de vorm van X en Y
+is niet die van W en V, ook al is de inhoud gelijk).
+
+**Vluchtige velden van een knoop** (bijv. een IfcOwnerHistory) tellen per object dat de knoop gebruikt, niet per
+knoop. Zo komt een tijdstempel van hun ook over als ons het object een eigen IfcOwnerHistory gaf. We kijken alleen
+naar de ankers waar ons en hun verschillen, en zetten de gekozen waarde in de knoop die het object in het resultaat
+heeft. Geeft de kant waarvan de waarde komt het object een eigen knoop, en is de knoop verder gelijk, dan krijgt
+het object die eigen knoop. Is dat niet mogelijk en vragen objecten die in het resultaat één knoop delen een andere
+waarde, of verandert de waarde voor een object dat hem bij ons en hun gelijk had, dan is dat een conflict. Een veld
+dat niet over te nemen is, laten we nooit stil weg. Knopen waar niets meer naar
+verwijst, halen we weg. De HEADER blijft van ons, behalve de velden die alleen hun wijzigde. Het regeleinde (`\n` of
+`\r\n`) is dat van ons. Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte.
+
+## De opslaan-lus
+
+`sla_op` schrijft de eigen versie met de basis waarop hij gemaakt is. De basis is het bestand plus een id van de
+versie dat nooit terugkomt en altijd dezelfde inhoud aanwijst: bij openaec-storage `basis_bestand` en
+`basis_versie_id`. Een versienummer is alleen voor mensen. Een bestand dat op
+dezelfde plek opnieuw is gemaakt, is een ander bestand.
+
+De opslag kan het schrijven op drie manieren weigeren:
+
+- **Verouderd**: de basis hoort bij dit bestand, maar er is een nieuwere versie. De lus leest de basis en de huidige
+  versie, voegt samen en schrijft opnieuw, hoogstens `max_pogingen` keer (standaard 5).
+- **Onbekende basis**: de basis hoort niet (meer) bij dit bestand, of de opslag weet het niet zeker. De lus leest
+  niets en voegt niet samen: dat is een conflict. Zegt een opslag "verouderd" met een ander bestand, dan behandelt
+  de lus dat ook zo.
+- **Vergrendeld**: een slot van een ander. Daar helpt samenvoegen niet; de lus geeft een fout.
+
+Kan de lus de basis niet lezen (bijv. de versie is opgeruimd), dan voegt hij ook niet samen: conflict. Bij elk
+conflict is er niets geschreven.
+
 ## Wat het nog niet kan
 
-- Samenvoegen (komt in de volgende stap).
 - `.ifczip` en `.ifcxml`.
-- Schema's buiten IFC2X3, IFC4 en IFC4X3 (zoals IFC4X1): die vergelijken we met een heuristiek (een object herkennen
-  aan een geldige GlobalId als eerste attribuut), en de statistiek meldt het.
+- Schema's buiten IFC2X3, IFC4 en IFC4X3 (zoals IFC4X1): `verschil` werkt met een heuristiek, `voeg_samen` geeft een
+  conflict.
+- Twee kanten die hetzelfde attribuut van een knoop anders wijzigen (bijv. ons de x, hun de y van hetzelfde punt):
+  dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop.
 - Knopen die zonder object ertussen in een kring naar elkaar verwijzen, ook via ankers (bijv. twee plaatsingen
-  relatief aan elkaar): dat geeft een fout (`Fout::Kring`).
+  relatief aan elkaar): `verschil` geeft een fout (`Fout::Kring`), `voeg_samen` een conflict.
 - Waarden die dieper dan 256 niveaus in elkaar zitten (lijsten en getypte waarden in één attribuut): dat geeft een
   fout (`Fout::Ongeldig`) met het regelnummer.
 - Bestanden van 4 GiB of groter.
@@ -75,36 +158,67 @@ Bekende kleinere punten staan in `knownbugs.md`.
 
 ```text
 cargo build --release --features cli
-openaec-samenvoegen verschil oud.ifc nieuw.ifc
-openaec-samenvoegen verschil oud.ifc nieuw.ifc --json
+openaec-samenvoegen verschil oud.ifc nieuw.ifc [--json]
+openaec-samenvoegen voeg-samen basis.ifc ons.ifc hun.ifc -o uit.ifc [--rapport rapport.json]
 ```
 
-Voorbeeld van de uitvoer:
+Voorbeeld:
 
 ```text
-Gewijzigd (1):
-  ~ IfcTask 'Clear out store' [0LopbjNfzor6Xb2xdRu7Nj]
-      TaskTime.ScheduleFinish: '2027-03-03T16:00:00' -> '2027-03-04T16:00:00'
-a: IFC4X3_ADD2, 165 objecten, 127 knopen
-b: IFC4X3_ADD2, 165 objecten, 127 knopen
+$ openaec-samenvoegen voeg-samen basis.ifc ons.ifc hun.ifc -o uit.ifc
+Conflicten (1):
+  ! beide_gewijzigd IfcBuildingElementProxy 'W-ons' [0WandW0000000000000000]: beide kanten wijzigden Name anders
+      Name: basis 'W', ons 'W-ons', hun 'W-hun'
+Niet samengevoegd; er is geen uitvoerbestand geschreven.
 ```
 
-Exitcode: 0 = gelukt, 2 = fout.
+Exitcode: 0 = gelukt, 1 = conflicten (bij `voeg-samen`), 2 = fout.
 
 ## Meting
 
-Gemeten op aia09-mp50 (Linux Mint 22.3), release-modus, met `tests/meting.rs`: een IFC4-bestand van 92 MB met
-200 000 elementen, elk met een eigen plaatsing en geometrie (1,6 miljoen instanties).
+Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote bestand komt uit `tests/meting.rs`: IFC4,
+92 MB, 200 000 elementen met elk een eigen plaatsing en geometrie (1,6 miljoen instanties). Ons wijzigt de naam van
+200 elementen, hun verplaatst 200 elementen en verwijdert er 50.
 
 | Wat | Tijd | Piekgeheugen |
 |---|---|---|
-| `verschil` (opdrachtregel, twee bestanden van 92 MB) | 2,7 s | 870 MB |
+| `verschil` (opdrachtregel, twee bestanden van 92 MB) | 3,4 s (3,3 tot 3,7) | 910 MB |
+| `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,7 s (9,4 tot 10,3) | 1,9 GB |
+| `voeg-samen` op een planning van OPS (52 kB, 39 taken) | 0,02 s | 7 MB |
 
-Zelf meten:
+Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). Na de review daarvan (vluchtige velden per object,
+eigenaars per object) opnieuw vergeleken met de vorige versie (`422f9cb`), om en om onder dezelfde belasting:
+`voeg-samen` 9,99 s tegen 9,86 s, beide 1,9 GB, met hetzelfde resultaat. Wijzigt hun ook de gedeelde
+IfcOwnerHistory van alle elementen (een vluchtige waarde op 200 000 ankers): 11,5 s tegen 11,1 s. Na fixronde 3
+van #6 (de koppeling van SET-leden, `4010e80`) om en om vergeleken met `0655eda`: `voeg-samen` 10,4 s (10,4 tot
+10,8) tegen 10,7 s (10,5 tot 11,1), beide 1,9 GB; `verschil` 4,1 s (3,8 tot 4,1) tegen 3,9 s (3,7 tot 4,2), beide
+0,9 GB. Het resultaat en het verschil zijn byte voor byte gelijk. Die run draaide met `nice` naast andere processen,
+dus alle tijden liggen iets hoger dan in de tabel. De tijd is de middelste van drie runs, met de
+spreiding erbij; het piekgeheugen is de "Maximum resident set size" van `/usr/bin/time -v`. Vóór fixronde 1 was
+het 2,8 s en 870 MB voor `verschil`, en 9,5 s en 1,9 GB voor `voeg-samen`. Het geheugen is ongeveer 20 keer de
+bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de zelfcontrole). Zelf meten:
 
 ```text
-cargo test --release --test meting -- --ignored --nocapture
+cargo build --release --features cli
+# Maakt target/meting/{basis,ons,hun}.ifc en meet in het proces.
+cargo test --release --features cli --test meting -- --ignored --nocapture --test-threads=1
+/usr/bin/time -v target/release/openaec-samenvoegen verschil target/meting/basis.ifc target/meting/ons.ifc
+/usr/bin/time -v target/release/openaec-samenvoegen voeg-samen target/meting/basis.ifc target/meting/ons.ifc \
+    target/meting/hun.ifc -o uit.ifc
 ```
+
+## Controle met IfcOpenShell
+
+Los van de Rust-tests (die hangen er niet van af) kun je de resultaten van de tests laten controleren door
+IfcOpenShell: het schema, verplichte attributen, de grenzen van aggregaten en de INVERSE's.
+
+```text
+SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test samenvoegen
+uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer_met_ifcopenshell.py /tmp/resultaten
+```
+
+Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
+regeleinde), met IfcOpenShell 0.9.0.post1.
 
 ## Bronnen
 

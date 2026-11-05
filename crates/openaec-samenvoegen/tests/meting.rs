@@ -11,7 +11,7 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use openaec_samenvoegen::verschil;
+use openaec_samenvoegen::{verschil, voeg_samen};
 
 /// Zoveel elementen, elk met een eigen plaatsing en geometrie (8 instanties per element).
 const AANTAL: usize = 200_000;
@@ -82,21 +82,27 @@ pub fn map() -> PathBuf {
     map
 }
 
+fn ons_naam(i: usize) -> String {
+    if i % 1000 == 1 {
+        format!("Element {i} (ons)")
+    } else {
+        format!("Element {i}")
+    }
+}
+
+fn hun_x(i: usize) -> f64 {
+    if i % 1000 == 2 {
+        5000.0
+    } else {
+        (i % 1000) as f64
+    }
+}
+
 /// Basis, ons (andere namen voor 1 op 1000) en hun (andere plek voor 1 op 1000, 1 op 4000 verwijderd).
 pub fn versies(aantal: usize) -> (String, String, String) {
     let basis = genereer(aantal, |i| format!("Element {i}"), |i| (i % 1000) as f64, |_| false);
-    let ons = genereer(
-        aantal,
-        |i| if i % 1000 == 1 { format!("Element {i} (ons)") } else { format!("Element {i}") },
-        |i| (i % 1000) as f64,
-        |_| false,
-    );
-    let hun = genereer(
-        aantal,
-        |i| format!("Element {i}"),
-        |i| if i % 1000 == 2 { 5000.0 } else { (i % 1000) as f64 },
-        |i| i % 4000 == 3,
-    );
+    let ons = genereer(aantal, ons_naam, |i| (i % 1000) as f64, |_| false);
+    let hun = genereer(aantal, |i| format!("Element {i}"), hun_x, |i| i % 4000 == 3);
     (basis, ons, hun)
 }
 
@@ -129,4 +135,30 @@ fn meet_verschil() {
         piekgeheugen()
     );
     assert_eq!(v.gewijzigd.len(), AANTAL / 1000);
+}
+
+#[test]
+#[ignore]
+fn meet_samenvoegen() {
+    let (basis, ons, hun) = versies(AANTAL);
+    let map = map();
+    std::fs::write(map.join("basis.ifc"), &basis).unwrap();
+    std::fs::write(map.join("ons.ifc"), &ons).unwrap();
+    std::fs::write(map.join("hun.ifc"), &hun).unwrap();
+    println!("bestand: {:.0} MB, {} elementen", basis.len() as f64 / 1e6, AANTAL);
+    let start = Instant::now();
+    let s = voeg_samen(basis.as_bytes(), ons.as_bytes(), hun.as_bytes()).unwrap();
+    println!(
+        "voeg_samen(basis, ons, hun): {:.2} s, {} conflicten, piek {}\n{:?}",
+        start.elapsed().as_secs_f64(),
+        s.conflicten.len(),
+        piekgeheugen(),
+        s.statistiek
+    );
+    assert!(s.gelukt, "{:#?}", s.conflicten);
+    let r = s.inhoud.unwrap();
+    std::fs::write(map.join("resultaat.ifc"), &r).unwrap();
+    drop((basis, ons, hun));
+    let verwacht = genereer(AANTAL, ons_naam, hun_x, |i| i % 4000 == 3);
+    assert!(verschil(&r, verwacht.as_bytes()).unwrap().is_leeg());
 }

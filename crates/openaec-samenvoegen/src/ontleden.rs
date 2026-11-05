@@ -129,6 +129,21 @@ impl Bestand<'_> {
     pub fn regel(&self, positie: usize) -> usize {
         regel(self.data, positie)
     }
+
+    /// De tekst van een instantie na `#n=`, tot en met `;` (bijv. `IFCX(#1,$);`).
+    pub fn inhoud(&self, i: usize) -> &[u8] {
+        let (begin, eind) = self.instanties[i].bereik;
+        let tekst = &self.data[begin as usize..eind as usize];
+        let is = tekst.iter().position(|&b| b == b'=').map_or(0, |p| p + 1);
+        let rest = &tekst[is..];
+        let wit = rest.iter().take_while(|&&b| b <= b' ').count();
+        &rest[wit..]
+    }
+
+    /// Gebruikt het bestand `\r\n` als regeleinde?
+    pub fn crlf(&self) -> bool {
+        self.data.windows(2).take(1 << 16).any(|w| w == b"\r\n")
+    }
 }
 
 /// Regelnummer (vanaf 1) van een positie.

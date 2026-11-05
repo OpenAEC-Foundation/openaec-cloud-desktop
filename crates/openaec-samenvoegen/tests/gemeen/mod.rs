@@ -291,6 +291,110 @@ pub fn context_van(f: &Feiten, naam: &str) -> u64 {
     f.verwijzing(f.verwijzing(vorm, 0), 6)
 }
 
+// --- Vormen met een kleur (uit de reviews van PR #7). ---
+
+pub const ROOD: [f64; 3] = [1., 0., 0.];
+pub const GROEN: [f64; 3] = [0., 1., 0.];
+pub const BLAUW: [f64; 3] = [0., 0., 1.];
+
+/// Een vorm met een kleur vanaf nummer `n`: punt, box, representatie, productvorm, kleur, schaduw, stijl en het
+/// gestileerde item. In IFC2X3 staat er een IfcPresentationStyleAssignment tussen (op `n + 100`).
+pub fn vorm(schema: &str, n: u32, rgb: &str) -> String {
+    let ifc2x3 = schema == "IFC2X3";
+    let schaduw = if ifc2x3 { format!("#{}", n + 4) } else { format!("#{},$", n + 4) };
+    let stijl = if ifc2x3 { n + 100 } else { n + 6 };
+    let mut s = format!(
+        "#{n}=IFCCARTESIANPOINT((0.,0.,0.));\n#{b}=IFCBOUNDINGBOX(#{n},1.,1.,1.);\n\
+         #{r}=IFCSHAPEREPRESENTATION(#7,'Box','BoundingBox',(#{b}));\n#{p}=IFCPRODUCTDEFINITIONSHAPE($,$,(#{r}));\n\
+         #{k}=IFCCOLOURRGB($,{rgb});\n#{sch}=IFCSURFACESTYLESHADING({schaduw});\n\
+         #{st}=IFCSURFACESTYLE($,.BOTH.,(#{sch}));\n#{i}=IFCSTYLEDITEM(#{b},(#{stijl}),$);",
+        b = n + 1,
+        r = n + 2,
+        p = n + 3,
+        k = n + 4,
+        sch = n + 5,
+        st = n + 6,
+        i = n + 7,
+    );
+    if ifc2x3 {
+        s += &format!("\n#{}=IFCPRESENTATIONSTYLEASSIGNMENT((#{}));", n + 100, n + 6);
+    }
+    s
+}
+
+/// Het gebouw met een rode vorm voor W (#63-#70) en, met `v_ook`, een blauwe voor V (#71-#78), zoals in Sol's
+/// voorbeelden.
+pub fn met_vormen(schema: &str, v_ook: bool) -> String {
+    let b = vervang(&gebouw(schema), "#5,'W',$,$,#40,$,", "#5,'W',$,$,#40,#66,");
+    let w = vorm(schema, 63, "1.,0.,0.");
+    if !v_ook {
+        return voeg_toe(&b, &w);
+    }
+    let b = vervang(&b, "#5,'V',$,$,#45,$,", "#5,'V',$,$,#45,#74,");
+    voeg_toe(&b, &format!("{w}\n{}", vorm(schema, 71, "0.,0.,1.")))
+}
+
+/// De vorm (het eerste item van de eerste representatie) van het object met deze GlobalId.
+pub fn vorm_van(f: &Feiten, globalid: &str) -> u64 {
+    let pds = f.verwijzing(f.met_globalid(globalid), 6);
+    let rep = f.verwijzingen(pds, 2)[0];
+    f.verwijzingen(rep, 3)[0]
+}
+
+/// De kleuren van de gestileerde items op deze vorm.
+pub fn kleuren_op(f: &Feiten, vorm: u64) -> Vec<[f64; 3]> {
+    let mut uit = Vec::new();
+    for item in f.naar("IFCSTYLEDITEM", 0, vorm) {
+        let mut stijlen = f.verwijzingen(item, 1);
+        while let Some(s) = stijlen.pop() {
+            match f.type_van(s) {
+                "IFCPRESENTATIONSTYLEASSIGNMENT" => stijlen.extend(f.verwijzingen(s, 0)),
+                "IFCSURFACESTYLE" => {
+                    for e in f.verwijzingen(s, 2) {
+                        let kleur = f.verwijzing(e, 0);
+                        uit.push([1, 2, 3].map(|j| f.attr(kleur, j).parse::<f64>().unwrap()));
+                    }
+                }
+                t => panic!("onverwachte stijl {t}"),
+            }
+        }
+    }
+    uit
+}
+
+/// Sol's basis: W en V delen één rode vorm (#66). In IFC2X3 mag een IfcProductDefinitionShape maar bij één product
+/// horen (`ShapeOfProduct` is daar SET [1:1]); daar heeft alleen W de vorm.
+pub fn gedeelde_vorm(schema: &str) -> String {
+    let b = met_vormen(schema, false);
+    if schema == "IFC2X3" {
+        return b;
+    }
+    vervang(&b, "#5,'V',$,$,#45,$,", "#5,'V',$,$,#45,#66,")
+}
+
+/// Sol, PR #7 ronde 3 op 0655eda (bevinding 1): W en V delen een rode vorm (#66), X en Y een blauwe (#103) met
+/// dezelfde geometrie. Alleen IFC4 en IFC4X3 (in IFC2X3 mogen producten geen vorm delen).
+pub fn twee_gedeelde_vormen(schema: &str) -> String {
+    let b = gedeelde_vorm(schema);
+    let b = vervang(&b, "(#43,#44),#30);", "(#43,#44,#108,#109),#30);");
+    voeg_toe(
+        &b,
+        &format!(
+            "{}\n#108=IFCBUILDINGELEMENTPROXY('{}',#5,'X',$,$,#40,#103,$,$);\n\
+             #109=IFCBUILDINGELEMENTPROXY('{}',#5,'Y',$,$,#45,#103,$,$);",
+            vorm(schema, 100, "0.,0.,1."),
+            gid("NieuwX"),
+            gid("NieuwY")
+        ),
+    )
+}
+
+/// Hun wisselt de kleuren van [`twee_gedeelde_vormen`]: W en V blauw, X en Y rood.
+pub fn kleuren_gewisseld(b: &str) -> String {
+    let h = vervang(b, "#67=IFCCOLOURRGB($,1.,0.,0.);", "#67=IFCCOLOURRGB($,0.,0.,1.);");
+    vervang(&h, "#104=IFCCOLOURRGB($,0.,0.,1.);", "#104=IFCCOLOURRGB($,1.,0.,0.);")
+}
+
 // --- Een losse lezer voor feiten in een resultaat. ---
 
 /// Een eenvoudige lezer voor de tests: per `#n` het type en de attributen als tekst. Hij deelt geen code met de

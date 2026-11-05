@@ -16,7 +16,6 @@ pub(crate) enum Aggregaat {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // optioneel, aggregaat en minimum gebruikt het samenvoegen.
 pub(crate) struct Attribuut {
     pub naam: String,
     pub optioneel: bool,
@@ -30,7 +29,6 @@ pub(crate) struct Attribuut {
 
 /// Een INVERSE-attribuut: de instanties van `bron` die in hun attribuut `voor` naar deze entiteit verwijzen.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // gebruikt het samenvoegen.
 pub(crate) struct Inverse {
     pub naam: String,
     /// Type-naam in hoofdletters.
@@ -45,31 +43,27 @@ pub(crate) struct Entiteit {
     /// De naam zoals in het schema (bijv. `IfcTask`).
     pub naam: String,
     /// Deze entiteit en haar supertypes, in hoofdletters, van onder naar boven.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub voorouders: Vec<String>,
     /// IfcRoot of een subtype ervan: een object met een GlobalId.
     pub root: bool,
     /// Een subtype van IfcRelationship.
     pub relatie: bool,
     /// Een subtype van IfcProperty of IfcPhysicalQuantity: het eerste attribuut is de naam.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub benoemd: bool,
     pub attributen: Vec<Attribuut>,
     /// Ook de geërfde.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub inverses: Vec<Inverse>,
 }
 
 impl Entiteit {
     /// Is deze entiteit `naam` (in hoofdletters) of een subtype ervan?
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub fn is_een(&self, naam: &str) -> bool {
         self.voorouders.iter().any(|v| v == naam)
     }
 }
 
 /// Velden die een programma bij elk opslaan opnieuw invult, per entiteit (met haar subtypes). Ze tellen niet mee
-/// bij het vergelijken; bij samenvoegen blijft de waarde van ons staan.
+/// bij het vergelijken. Bij samenvoegen komt de waarde van hun als alleen hun het veld wijzigde, anders die van ons.
 /// - IfcOwnerHistory: de tijdstempels en wie het laatst wijzigde. OwningUser en OwningApplication tellen wel mee.
 /// - IfcWorkControl (IfcWorkPlan, IfcWorkSchedule): Open Planner Studio schrijft bij elk opslaan het huidige
 ///   tijdstip in CreationDate (`creationDate: now` in `ifcWriter.ts`).
@@ -84,6 +78,8 @@ pub(crate) const VLUCHTIG: &[(&str, &[&str])] = &[
 pub(crate) struct Schema {
     pub naam: &'static str,
     entiteiten: HashMap<String, Entiteit>,
+    /// De INVERSE-attributen met een bovengrens: (bron in hoofdletters, FOR-attribuut).
+    begrensd: Vec<(String, String)>,
     /// De TYPE's die een SET of BAG zijn, in hoofdletters (bijv. IFCPROPERTYSETDEFINITIONSET).
     ongeordende_typen: HashSet<String>,
 }
@@ -92,6 +88,11 @@ impl Schema {
     /// De entiteit bij een type-naam in hoofdletters (zoals in een IFC-bestand).
     pub fn entiteit(&self, type_naam: &str) -> Option<&Entiteit> {
         self.entiteiten.get(type_naam)
+    }
+
+    /// Kan attribuut `naam` van entiteit `e` het FOR-attribuut van een INVERSE met een bovengrens zijn?
+    pub fn is_inverse_voor(&self, e: &Entiteit, naam: &str) -> bool {
+        self.begrensd.iter().any(|(bron, voor)| voor == naam && e.is_een(bron))
     }
 
     /// Is dit TYPE (in hoofdletters) een SET of BAG? Dan telt in een getypte waarde, bijv.
@@ -212,7 +213,13 @@ fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
             },
         );
     }
-    Schema { naam, entiteiten, ongeordende_typen }
+    let mut begrensd: Vec<(String, String)> = entiteiten
+        .values()
+        .flat_map(|e| e.inverses.iter().filter(|i| i.max.is_some()).map(|i| (i.bron.clone(), i.voor.clone())))
+        .collect();
+    begrensd.sort();
+    begrensd.dedup();
+    Schema { naam, entiteiten, begrensd, ongeordende_typen }
 }
 
 /// `Naam=Type.ForAttribuut[min:max]`.

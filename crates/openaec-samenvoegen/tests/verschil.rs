@@ -663,3 +663,16 @@ fn diepe_getypte_set_is_een_fout() {
         x => panic!("verwachtte Fout::Ongeldig: {:?}", x.map(|_| ())),
     }
 }
+
+/// Sol, PR #7 ronde 3 op 0655eda (bevinding 1): hun wisselt de kleuren van twee gedeelde vormen (W/V rood en X/Y
+/// blauw wordt W/V blauw en X/Y rood). Dat is een verschil in de losse knopen, al is de verzameling stijlen gelijk.
+#[test]
+fn kleurwissel_tussen_gedeelde_vormen() {
+    for schema in ["IFC4", "IFC4X3_ADD2"] {
+        let b = twee_gedeelde_vormen(schema);
+        let h = kleuren_gewisseld(&b);
+        let v = verschil(b.as_bytes(), hernummer(&h, 11).as_bytes()).unwrap();
+        assert!(v.gewijzigd.is_empty() && v.toegevoegd.is_empty() && v.verwijderd.is_empty(), "{schema}: {v:#?}");
+        assert_eq!((v.losse_knopen.toegevoegd.len(), v.losse_knopen.verwijderd.len()), (2, 2), "{schema}: {v:#?}");
+    }
+}

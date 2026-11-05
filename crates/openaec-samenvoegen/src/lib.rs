@@ -1,18 +1,26 @@
-//! Twee versies van een IFC-bestand vergelijken ([`verschil`]) per object.
+//! Twee versies van een IFC-bestand vergelijken ([`verschil`]) en samenvoegen ([`voeg_samen`]), per object.
 //!
 //! Een object is een instantie van IfcRoot (met een GlobalId); al het andere (geometrie, plaatsing,
 //! eigenschapswaarden...) hoort als knoop bij de objecten die ernaar verwijzen. Twee bestanden met dezelfde inhoud
 //! maar een andere nummering (`#n`) zijn gelijk. Zie de README voor de regels.
 
+mod koppelregel;
 mod model;
 mod ontleden;
+mod samenvoegen;
+mod samenwerken;
 mod schema;
+mod schrijven;
 mod tekst;
 mod verschil;
 
 use serde::Serialize;
 
 pub use model::VersieStatistiek;
+pub use samenvoegen::{voeg_samen, Conflict, ConflictSoort, SamenvoegStatistiek, Samenvoeging};
+pub use samenwerken::{
+    sla_op, Antwoord, Basis, BasisVan, LusFout, LusOpties, LusUitkomst, Opslag, Reden, Uitkomst, Weigering,
+};
 pub use verschil::{
     verschil, AttribuutWijziging, KnoopInfo, LosseKnopen, ObjectInfo, Statistiek, Verschil, VluchtigeWijziging,
     Wijziging,

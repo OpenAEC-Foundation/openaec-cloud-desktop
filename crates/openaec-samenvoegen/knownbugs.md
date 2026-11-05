@@ -43,3 +43,39 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
    5 november 2026). 1500 keer `IFCPROPERTYSETDEFINITIONSET((…))` in elkaar liet de canonisatie te diep
    terugroepen, en het proces stopte (SIGABRT). Nu geeft de lezer bij meer dan 256 niveaus in één attribuut een
    `Fout::Ongeldig` met het regelnummer. Tests: `diepe_getypte_set_is_een_fout`, `diepe_lijst_is_een_fout`. — B
+10. **Twee kanten die dezelfde relatie door een gelijke nieuwe vervangen, geven een conflict** (eigen bevinding,
+    5 november 2026). De regel uit de review van PR #7 (bevinding 2): verdween een relatie aan beide kanten en
+    kwam er aan beide kanten een nieuwe van hetzelfde type voor dezelfde objecten, dan is dat een conflict. Dat
+    geldt ook als de twee nieuwe relaties dezelfde inhoud hebben en alleen hun GlobalId verschilt. Dat is een
+    conflict te veel, geen verlies. OPS schrijft de GlobalId van een relatie vast (bewaard of uit een hash), dus
+    daar komt het niet voor. — S
+11. **Gesloten: de meting na fixronde 1** (eigen bevinding, 5 november 2026). Op 5 november 2026 opnieuw gemeten
+    op `6a27723`, drie runs per opdracht; de cijfers en de commando's staan in de README. `verschil` op twee
+    bestanden van 92 MB: 2,8 s en 870 MB werd 3,4 s en 910 MB. `voeg-samen` op drie bestanden van 92 MB: 9,5 s en
+    1,9 GB werd 9,7 s en 1,9 GB. — B
+12. **Faalt het lezen van de huidige versie in de opslaan-lus, dan is dat een fout en geen nieuwe poging**
+    (eigen bevinding, 5 november 2026). `sla_op` leest na "verouderd" de huidige versie. Is die intussen weer
+    vervangen en opgeruimd, dan geeft `lees` een fout en stopt de lus met `LusFout::Opslag`, in plaats van de dan
+    huidige versie op te vragen. Er gaat niets verloren: er is niets geschreven. — S
+13. **Het regeleinde van ons komt uit de eerste 64 KiB** (eigen bevinding, 5 november 2026). De schrijver kiest
+    `\r\n` voor nieuwe regels als die in de eerste 64 KiB van ons staat. Een bestand met `\n` in het begin en `\r\n`
+    verderop krijgt dan nieuwe regels met `\n`. ISO 10303-21-lezers aanvaarden beide; het bestand blijft geldig. — S
+14. **Gesloten: de groep van een losse knoop op een vorm van meer objecten kende die objecten niet** (eigen
+    bevinding bij de review van PR #7 op `6a27723`; Sol ronde 3 op `0655eda`, bevinding 1, BLOKKEERT; 5 november
+    2026). Dit was geen conflict te veel, maar dataverlies: W en V deelden een rode vorm, X en Y een blauwe met
+    dezelfde geometrie. Wisselde hun de kleuren en hernoemde ons W, dan bleven W/V rood en X/Y blauw, met
+    successtatus, ook door `sla_op`. De sleutel van een losse knoop noemt nu de verzameling eigenaars
+    (`eigenaars_id` van `alle_eigenaars`), niet alleen "meer". Tests: `kleuren_wisselen_tussen_gedeelde_vormen`,
+    `kleurwissel_tussen_gedeelde_vormen` (verschil), `kleurwissel_door_de_opslaan_lus`. — B
+15. **Gesloten: botsende vluchtige waarden in een gedeelde knoop gaven een conflict** (eigen bevinding; Sol ronde 3
+    op `0655eda`, bevinding 2, BLOKKEERT; 5 november 2026). Dat was tegen het contract (ontwerp §5.6: een vluchtig
+    veld geeft nooit een conflict). De deling volgde de kant van het eerste veld. Gaf hun W een eigen
+    IfcOwnerHistory met een andere LastModifyingUser, dan kreeg W die niet. Nu vraagt elk anker een waarde voor elk
+    vluchtig veld; vragen ankers op één knoop iets anders, dan krijgt elke groep een eigen kopie met de
+    samengevoegde waarden. Tests: `alleen_vluchtig_met_een_eigen_ownerhistory`,
+    `botsende_vluchtige_waarden_in_een_gedeelde_knoop`, `twee_objecten_vragen_elk_een_andere_waarde` (die eisen nu
+    het juiste resultaat, geen conflict). — B
+16. **Oudere tests vergelijken met de eigen vergelijker** (review PR #7 op `6a27723`, opmerking, 5 november 2026).
+    Een deel van de tests in `tests/samenvoegen.rs` controleert het resultaat met `zelfde`, dus met `verschil` uit
+    deze bibliotheek. Een fout die in het verschil en in het samenvoegen samen zit, zien die tests niet. De tests
+    uit de reviews gaan na met `Feiten` (een losse lezer). Die oudere tests kunnen ook naar `Feiten` over. — B

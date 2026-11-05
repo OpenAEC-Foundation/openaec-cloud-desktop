@@ -82,6 +82,11 @@ pub(crate) struct Anker {
 /// Bit in [`Anker::positie`] voor een verwijzing in een SET of BAG.
 pub(crate) const ONGEORDEND: u64 = 1 << 63;
 
+/// In [`Model::eigenaar`]: de knoop hoort bij geen object.
+pub(crate) const GEEN_EIGENAAR: u32 = u32::MAX;
+/// In [`Model::eigenaar`]: de knoop hoort bij meer dan één object.
+pub(crate) const MEER_EIGENAARS: u32 = u32::MAX - 1;
+
 /// Cijfers over één versie.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct VersieStatistiek {
@@ -109,9 +114,9 @@ pub struct VersieStatistiek {
     pub cycli: usize,
 }
 
-/// Een lid van een SET of BAG ([`Model::set_elementen`]): per `#n` de knoop (None voor een object), en de
-/// inhoudshash zonder ankers.
-type Lid = (Vec<Option<u32>>, Hash);
+/// Een lid van een SET of BAG ([`Model::set_elementen`]): per `#n` de knoop (None voor een object) en de plek van
+/// `#n` in de tekst van het attribuut, en de inhoudshash zonder ankers.
+type Lid = (Vec<(Option<u32>, usize)>, Hash);
 
 /// Per instantie de instanties die naar haar verwijzen ([`Model::verwijzers`]).
 pub(crate) struct Verwijzers {
@@ -127,7 +132,7 @@ impl Verwijzers {
 
 pub(crate) struct Model<'a> {
     pub bestand: Bestand<'a>,
-    schema: Option<&'static schema::Schema>,
+    pub schema: Option<&'static schema::Schema>,
     type_entiteit: Vec<Option<&'static Entiteit>>,
     pub soort: Vec<Soort>,
     pub objecten: Vec<Object>,
@@ -153,6 +158,10 @@ pub(crate) struct Model<'a> {
     /// De koppeling van de leden van elke SET of BAG met die van de basis: (object, attribuut, lid) -> lid in de
     /// basis ([`stem_ankers_af`]). None: deze versie is zelf de basis.
     koppeling: Option<HashMap<(u32, u32, u32), u32>>,
+    /// Per instantie het object (index in `objecten`) waar een knoop bij hoort, of [`GEEN_EIGENAAR`] of
+    /// [`MEER_EIGENAARS`] (na [`Model::bereken`]). Vanaf een object tellen zijn knopen rechtstreeks, en daaronder
+    /// de knopen zonder anker; een ankerknoop van een ander object hoort bij dat object.
+    pub eigenaar: Vec<u32>,
     /// Een knoop die via andere knopen (ook ankerknopen) naar zichzelf verwijst, als die er is (na
     /// [`Model::bereken`]).
     pub kring: Option<u32>,
@@ -256,6 +265,7 @@ impl<'a> Model<'a> {
             wortel_sleutel: Vec::new(),
             puur: None,
             koppeling: None,
+            eigenaar: Vec::new(),
             kring: None,
             statistiek,
         })
@@ -350,7 +360,9 @@ impl<'a> Model<'a> {
         for (o, h) in self.objecten.iter_mut().zip(objecthashes) {
             o.hash = h;
         }
-        self.wortel_sleutel = self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize)).collect();
+        self.eigenaar = self.eigenaars();
+        let mut terug = None;
+        self.wortel_sleutel = self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize, &mut terug)).collect();
     }
 
     /// Kringen tussen knopen, ook via ankerknopen (bijv. twee plaatsingen die relatief aan elkaar staan): het aantal
@@ -409,7 +421,7 @@ impl<'a> Model<'a> {
         for (o, object) in self.objecten.iter().enumerate() {
             let i = object.inst as usize;
             for j in 1..self.bestand.attributen(i).len() {
-                self.posities(i, j, |k, positie| {
+                self.posities(i, j, |k, positie, _| {
                     alle.push((k, rang[o], Anker { object: o as u32, attribuut: j as u32, positie }));
                 });
             }
@@ -460,18 +472,19 @@ impl<'a> Model<'a> {
         self.gedeeld = gedeeld;
     }
 
-    /// Roept `f(knoop, positie)` aan voor elke verwijzing naar een knoop in attribuut `j` van object-instantie `i`
-    /// (zie [`Anker::positie`]). Na [`Model::bereken`], of tijdens [`Model::bereken_ankers`].
-    fn posities(&self, i: usize, j: usize, mut f: impl FnMut(u32, u64)) {
+    /// Roept `f(knoop, positie, begin)` aan voor elke verwijzing naar een knoop in attribuut `j` van
+    /// object-instantie `i` (zie [`Anker::positie`]); `begin` is de plek van `#n` in de tekst van het attribuut.
+    /// Na [`Model::bereken`], of tijdens [`Model::bereken_ankers`].
+    pub fn posities(&self, i: usize, j: usize, mut f: impl FnMut(u32, u64, usize)) {
         let tekst = attribuut_tekst(self, i, j);
         let knoop = |n: u64| self.bestand.index.get(&n).copied().filter(|&k| self.soort[k as usize] == Soort::Knoop);
         let delen = if self.is_ongeordend(i, j) { elementen(tekst) } else { None };
         let Some(delen) = delen else {
             let mut p = 0u64;
-            for (_, token) in Tokens::nieuw(tekst) {
+            for (begin, token) in Tokens::nieuw(tekst) {
                 if let Token::Verwijzing(n) = token {
                     if let Some(k) = knoop(n) {
-                        f(k, p);
+                        f(k, p, begin);
                     }
                     p += 1;
                 }
@@ -488,16 +501,16 @@ impl<'a> Model<'a> {
                 None => Some(e),
                 Some(koppeling) => koppeling.get(&(o, j as u32, e)).copied(),
             };
-            for (r, doel) in doelen.into_iter().enumerate() {
+            for (r, (doel, begin)) in doelen.into_iter().enumerate() {
                 if let Some(k) = doel {
-                    f(k, set_positie(lid, &inhoud, e, r as u32));
+                    f(k, set_positie(lid, &inhoud, e, r as u32), begin);
                 }
             }
         }
     }
 
-    /// De leden `delen` van een SET of BAG met minstens één verwijzing naar een knoop: per lid de knopen (per `#n`;
-    /// None voor een object) en de inhoudshash zonder ankers.
+    /// De leden `delen` van een SET of BAG met minstens één verwijzing naar een knoop: per lid de knopen (per `#n`:
+    /// de knoop of None voor een object, en de plek van `#n` in `tekst`) en de inhoudshash zonder ankers.
     fn set_elementen(&self, tekst: &[u8], delen: Vec<(usize, usize)>) -> Vec<Lid> {
         debug_assert!(self.puur.is_some(), "eerst bereken_puur");
         let knoop = |n: u64| self.bestand.index.get(&n).copied().filter(|&k| self.soort[k as usize] == Soort::Knoop);
@@ -505,13 +518,13 @@ impl<'a> Model<'a> {
         let mut uit = Vec::new();
         for (b, e) in delen {
             let stuk = &tekst[b..e];
-            let doelen: Vec<Option<u32>> = Tokens::nieuw(stuk)
-                .filter_map(|(_, t)| match t {
-                    Token::Verwijzing(n) => Some(knoop(n)),
+            let doelen: Vec<(Option<u32>, usize)> = Tokens::nieuw(stuk)
+                .filter_map(|(plek, t)| match t {
+                    Token::Verwijzing(n) => Some((knoop(n), b + plek)),
                     _ => None,
                 })
                 .collect();
-            if doelen.iter().all(Option::is_none) {
+            if doelen.iter().all(|d| d.0.is_none()) {
                 continue;
             }
             buffer.clear();
@@ -566,27 +579,16 @@ impl<'a> Model<'a> {
         objecten
     }
 
-    /// Wie naar elke instantie verwijst.
-    pub fn verwijzers(&self) -> Verwijzers {
-        let n = self.bestand.instanties.len();
-        let mut begin = vec![0u32; n + 1];
-        for i in 0..n {
-            for &c in self.bestand.verwijzingen(i) {
-                begin[c as usize + 1] += 1;
+    /// De knoop op positie `positie` in attribuut `j` van object-instantie `i` (zie [`Anker::positie`]), met de plek
+    /// van zijn `#n` in de tekst van het attribuut.
+    pub fn op_positie(&self, i: usize, j: usize, positie: u64) -> Option<(u32, usize)> {
+        let mut gevonden = None;
+        self.posities(i, j, |k, p, begin| {
+            if p == positie && gevonden.is_none() {
+                gevonden = Some((k, begin));
             }
-        }
-        for i in 0..n {
-            begin[i + 1] += begin[i];
-        }
-        let mut plek = begin.clone();
-        let mut van = vec![0u32; begin[n] as usize];
-        for i in 0..n {
-            for &c in self.bestand.verwijzingen(i) {
-                van[plek[c as usize] as usize] = i as u32;
-                plek[c as usize] += 1;
-            }
-        }
-        Verwijzers { begin, van }
+        });
+        gevonden
     }
 
     /// Inhoudshashes zonder ankers (elke knoop telt op inhoud) van de knopen in een SET of BAG van een object, en van
@@ -685,8 +687,106 @@ impl<'a> Model<'a> {
         *hasher.finalize().as_bytes()
     }
 
-    /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing.
-    fn wortel_sleutel_van(&self, i: usize) -> Hash {
+    /// Zie [`Model::eigenaar`].
+    fn eigenaars(&self) -> Vec<u32> {
+        let mut e = vec![GEEN_EIGENAAR; self.bestand.instanties.len()];
+        let mut stapel: Vec<u32> = Vec::new();
+        for (o, object) in self.objecten.iter().enumerate() {
+            let o = o as u32;
+            let refs = self.bestand.verwijzingen(object.inst as usize);
+            stapel.extend(refs.iter().copied().filter(|&c| self.soort[c as usize] == Soort::Knoop));
+            while let Some(x) = stapel.pop() {
+                let x = x as usize;
+                match e[x] {
+                    GEEN_EIGENAAR => e[x] = o,
+                    y if y == o || y == MEER_EIGENAARS => continue,
+                    _ => e[x] = MEER_EIGENAARS,
+                }
+                for &c in self.bestand.verwijzingen(x) {
+                    if self.soort[c as usize] == Soort::Knoop && self.anker_id[c as usize].is_none() {
+                        stapel.push(c);
+                    }
+                }
+            }
+        }
+        e
+    }
+
+    /// Wie naar elke instantie verwijst, voor [`Model::alle_eigenaars`].
+    pub fn verwijzers(&self) -> Verwijzers {
+        let n = self.bestand.instanties.len();
+        let mut begin = vec![0u32; n + 1];
+        for i in 0..n {
+            for &c in self.bestand.verwijzingen(i) {
+                begin[c as usize + 1] += 1;
+            }
+        }
+        for i in 0..n {
+            begin[i + 1] += begin[i];
+        }
+        let mut plek = begin.clone();
+        let mut van = vec![0u32; begin[n] as usize];
+        for i in 0..n {
+            for &c in self.bestand.verwijzingen(i) {
+                van[plek[c as usize] as usize] = i as u32;
+                plek[c as usize] += 1;
+            }
+        }
+        Verwijzers { begin, van }
+    }
+
+    /// Alle objecten waar knoop `k` bij hoort (zie [`Model::eigenaar`]), gesorteerd: de objecten die rechtstreeks
+    /// naar hem verwijzen en, als hij geen ankerknoop is, de eigenaars van de knopen die naar hem verwijzen.
+    pub fn alle_eigenaars(&self, k: usize, terug: &Verwijzers) -> Vec<u32> {
+        let mut objecten = Vec::new();
+        let mut gezien: HashSet<u32> = HashSet::from([k as u32]);
+        let mut stapel = vec![k as u32];
+        while let Some(x) = stapel.pop() {
+            let anker = self.anker_id[x as usize].is_some();
+            for &r in terug.van(x as usize) {
+                match self.soort[r as usize] {
+                    Soort::Object(o) => objecten.push(o),
+                    Soort::Knoop if !anker && gezien.insert(r) => stapel.push(r),
+                    Soort::Knoop => {}
+                }
+            }
+        }
+        objecten.sort_unstable();
+        objecten.dedup();
+        objecten
+    }
+
+    /// Een identiteit van een groep eigenaars die tussen de versies te vergelijken is: een hash over de sleutels van
+    /// de objecten die in alle drie de versies staan, of over alle sleutels als er zo geen object bij is (net als
+    /// bij de identiteit van een anker).
+    pub fn eigenaars_id(&self, objecten: &[u32]) -> Hash {
+        let gemeen = objecten.iter().any(|&o| self.objecten[o as usize].gemeen);
+        let mut sleutels: Vec<&str> = objecten
+            .iter()
+            .map(|&o| &self.objecten[o as usize])
+            .filter(|x| x.gemeen || !gemeen)
+            .map(|x| x.sleutel.as_str())
+            .collect();
+        sleutels.sort_unstable();
+        sleutels.dedup();
+        let mut h = blake3::Hasher::new();
+        h.update(if gemeen { b"G" } else { b"X" });
+        for s in sleutels {
+            h.update(&(s.len() as u32).to_le_bytes());
+            h.update(s.as_bytes());
+        }
+        *h.finalize().as_bytes()
+    }
+
+    /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing naar een object
+    /// of naar een knoop die bij een object hoort (bijv. de geometrie waar een IfcStyledItem of IfcIndexedColourMap
+    /// op ligt), met de sleutel van dat object. Zo valt de stijl van W in een andere groep dan die van V, ook als hun
+    /// geometrie gelijk is. Hoort de knoop bij meer objecten, dan telt die verzameling ([`Model::eigenaars_id`]): de
+    /// stijl op de vorm van W en V valt in een andere groep dan die op de vorm van X en Y. `terug` maken we pas als
+    /// het nodig is. Een verwijzing naar een waarde die alleen de losse knoop gebruikt (bijv. de kleuren in
+    /// `Colours`), hoort niet in de sleutel: anders vallen twee versies van dezelfde kleurkaart in verschillende
+    /// groepen.
+    fn wortel_sleutel_van(&self, i: usize, terug: &mut Option<Verwijzers>) -> Hash {
         let mut buffer = Vec::new();
         let naam = self.bestand.type_naam(i);
         lengte_en(naam.as_bytes(), &mut buffer);
@@ -694,10 +794,27 @@ impl<'a> Model<'a> {
         for (j, &attr) in self.bestand.attributen(i).iter().enumerate() {
             let tekst = self.bestand.tekst(attr);
             let is_naam = entiteit.is_some_and(|e| e.attributen[j].naam == "Name");
-            if is_naam || enkele_verwijzing(tekst).is_some() {
+            let doel = enkele_verwijzing(tekst).and_then(|n| self.bestand.index.get(&n)).map(|&k| k as usize);
+            let eigenaar = doel.map(|k| match self.soort[k] {
+                Soort::Object(o) => o,
+                Soort::Knoop => self.eigenaar[k],
+            });
+            if is_naam || eigenaar.is_some_and(|e| e != GEEN_EIGENAAR) {
                 buffer.extend_from_slice(&(j as u32).to_le_bytes());
                 let mut deel = Vec::new();
                 self.canoniek(tekst, false, &mut deel);
+                match (eigenaar, doel) {
+                    (Some(MEER_EIGENAARS), Some(k)) => {
+                        let t = terug.get_or_insert_with(|| self.verwijzers());
+                        deel.push(b'M');
+                        deel.extend_from_slice(&self.eigenaars_id(&self.alle_eigenaars(k, t)));
+                    }
+                    (Some(o), _) if o != GEEN_EIGENAAR => {
+                        deel.push(b'O');
+                        lengte_en(self.objecten[o as usize].sleutel.as_bytes(), &mut deel);
+                    }
+                    _ => {}
+                }
                 lengte_en(&deel, &mut buffer);
             }
         }
@@ -1027,7 +1144,7 @@ impl Canon<'_, '_> {
 
     /// De elementen `delen` van een SET of BAG in `tekst`, elk canoniek en gesorteerd: `{...}`.
     fn verzameling(&self, tekst: &[u8], delen: Vec<(usize, usize)>, direct: bool, uit: &mut Vec<u8>) {
-        let mut stukken: Vec<Vec<u8>> = delen
+        let stukken: Vec<Vec<u8>> = delen
             .into_iter()
             .map(|(b, e)| {
                 let mut stuk = Vec::new();
@@ -1035,12 +1152,7 @@ impl Canon<'_, '_> {
                 stuk
             })
             .collect();
-        stukken.sort_unstable();
-        uit.push(b'{');
-        for stuk in &stukken {
-            lengte_en(stuk, uit);
-        }
-        uit.push(b'}');
+        ongeordend(stukken, uit);
     }
 
     fn waarde(&self, tekst: &[u8], direct: bool, uit: &mut Vec<u8>) {
@@ -1130,6 +1242,23 @@ impl Canon<'_, '_> {
             }
         }
     }
+}
+
+/// De canonieke vorm van een SET of BAG uit de canonieke vormen van de elementen: gesorteerd.
+fn ongeordend(mut stukken: Vec<Vec<u8>>, uit: &mut Vec<u8>) {
+    stukken.sort_unstable();
+    uit.push(b'{');
+    for stuk in &stukken {
+        lengte_en(stuk, uit);
+    }
+    uit.push(b'}');
+}
+
+/// De hash van een SET of BAG uit de canonieke vormen van de elementen (zoals [`Model::attribuut_hash`]).
+pub(crate) fn ongeordend_hash(stukken: Vec<Vec<u8>>) -> Hash {
+    let mut uit = Vec::new();
+    ongeordend(stukken, &mut uit);
+    *blake3::hash(&uit).as_bytes()
 }
 
 /// Het aggregaat in een getypte waarde: `( aggregaat )` achter het trefwoord.
@@ -1278,7 +1407,7 @@ fn koppel_leden(m: [&Model; 2], leden: [&[Lid]; 2], terug: &mut [Option<Verwijze
         }
         for (kant, lijst) in [b, x].into_iter().enumerate() {
             for e in lijst {
-                if let [Some(k)] = leden[kant][e as usize].0[..] {
+                if let [(Some(k), _)] = leden[kant][e as usize].0[..] {
                     per_type.entry(m[kant].bestand.type_naam(k as usize)).or_default()[kant].push((e, k as usize));
                 }
             }
