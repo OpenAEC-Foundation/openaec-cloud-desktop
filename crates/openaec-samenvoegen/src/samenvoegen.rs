@@ -1464,7 +1464,7 @@ fn inverse_tellingen(m: &Model) -> InverseTellingen {
             e.attributen
                 .iter()
                 .enumerate()
-                .filter(|(_, a)| m.schema().is_some_and(|s| s.is_inverse_voor(e, &a.naam)))
+                .filter(|(_, a)| m.schema.is_some_and(|s| s.is_inverse_voor(e, &a.naam)))
                 .map(|(j, a)| (j, a.naam.as_str()))
                 .collect()
         });
