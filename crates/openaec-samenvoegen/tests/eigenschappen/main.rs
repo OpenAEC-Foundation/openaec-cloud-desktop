@@ -4,7 +4,7 @@
 //! de schematabellen in `src/schema/` lezen we mee, als data.
 //!
 //! Omgevingsvariabelen:
-//! - `EIGENSCHAPPEN_GEVALLEN`: het aantal gevallen per eigenschap (standaard 64). Voor een lange run bijv. 5000.
+//! - `EIGENSCHAPPEN_GEVALLEN`: het aantal gevallen per eigenschap (standaard 128). Voor een lange run bijv. 5000.
 //! - `EIGENSCHAPPEN_ZAAD`: een getal voor de toevalsgenerator. Zonder is elke run gelijk.
 //! - `OPS_VOORBEELDEN`: een map met planningen van Open Planner Studio (`examples/` van open-planner-studio). Die
 //!   komen bij de startbestanden.
@@ -175,7 +175,7 @@ fn draai<S: Strategy>(naam: &str, strategie: S, test: impl Fn(&S::Value) -> Resu
 where
     S::Value: Debug,
 {
-    let gevallen = std::env::var("EIGENSCHAPPEN_GEVALLEN").ok().and_then(|g| g.parse().ok()).unwrap_or(64);
+    let gevallen = std::env::var("EIGENSCHAPPEN_GEVALLEN").ok().and_then(|g| g.parse().ok()).unwrap_or(128);
     let config = Config { cases: gevallen, max_shrink_iters: 512, failure_persistence: None, ..Config::default() };
     let rng = match std::env::var("EIGENSCHAPPEN_ZAAD").ok().and_then(|z| z.parse::<u64>().ok()) {
         Some(z) => {
@@ -253,6 +253,15 @@ fn controleer_geval(g: &Geval, telling: &RefCell<Telling>) -> Result<(), TestCas
 fn controleer_versies(v: &Versies, telling: &RefCell<Telling>) -> Result<(), TestCaseError> {
     let (b, x, y) = (v.b.as_bytes(), v.x.as_bytes(), v.y.as_bytes());
     let naam = &v.naam;
+    // Een bewerking kan (zelden) knopen in een kring zetten, bijv. twee plaatsingen relatief aan elkaar. Dat kent de
+    // bibliotheek niet (README, "Wat het nog niet kan"); zo'n geval slaan we over. Elke andere fout is een vondst.
+    for kant in [x, y] {
+        match verschil(b, kant) {
+            Err(openaec_samenvoegen::Fout::Kring { .. }) => return Err(TestCaseError::reject("kring")),
+            Err(e) => return Err(fout(e)),
+            Ok(_) => {}
+        }
+    }
 
     // Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte.
     let r = voeg_samen(b, x, b).map_err(fout)?;
