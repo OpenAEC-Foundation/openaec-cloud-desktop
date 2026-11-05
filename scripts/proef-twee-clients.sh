@@ -97,7 +97,10 @@ echo "== site $SITE"
 SITE_GEMAAKT=1
 bench new-site "$SITE" --db-root-password bench --admin-password proef --mariadb-user-host-login-scope=% \
 	--install-app openaec_storage >"$WERK/new-site.log" 2>&1 || { tail -30 "$WERK/new-site.log"; exit; }
-for kv in "openaec_storage_endpoint=http://127.0.0.1:$S3POORT" openaec_storage_bucket=proef openaec_storage_region=eu-central-1; do
+# De sleutel voor geheimen (o.a. het API-geheim) vóór de server start: anders maakt Frappe hem pas bij het eerste
+# gebruik, en kan een worker een andere hebben dan de opzet hieronder.
+sleutel=$("$PY" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())') || exit
+for kv in "encryption_key=$sleutel" "openaec_storage_endpoint=http://127.0.0.1:$S3POORT" openaec_storage_bucket=proef openaec_storage_region=eu-central-1; do
 	bench --site "$SITE" set-config "${kv%%=*}" "${kv#*=}" >/dev/null || exit
 done
 
@@ -134,7 +137,24 @@ client() {  # client <a|b> <opdracht...>
 for wie in a b; do
 	mkdir -p "$WERK/$wie/config" "$WERK/$wie/map"
 	sleutel=$KA; [ "$wie" = b ] && sleutel=$KB
-	OPENAEC_SLEUTEL=$sleutel client "$wie" inloggen "$ADRES" --sleutel >/dev/null || exit
+	if ! OPENAEC_SLEUTEL=$sleutel client "$wie" inloggen "$ADRES" --sleutel >/dev/null; then
+		echo "inloggen van $wie mislukt. De server:"
+		curl -sS -o "$WERK/antwoord" -w "  ruimtes: HTTP %{http_code}\n" -X POST -H "Authorization: token $sleutel" "$ADRES/api/method/openaec_storage.api.ruimtes"
+		head -c 600 "$WERK/antwoord"; echo
+		curl -sS -o "$WERK/antwoord" -w "  get_logged_user: HTTP %{http_code}\n" -H "Authorization: token $sleutel" "$ADRES/api/method/frappe.auth.get_logged_user"
+		head -c 300 "$WERK/antwoord"; echo
+		(cd "$BENCH_DIR/sites" && "$PY" -c '
+import sys, frappe
+from frappe.utils.password import get_decrypted_password
+frappe.init(site=sys.argv[1], sites_path="."); frappe.connect()
+email = f"proef-{sys.argv[2]}@proef.localhost"; sleutel, geheim = sys.argv[3].split(":", 1)
+u = frappe.db.get_value("User", email, ["enabled", "user_type", "api_key"], as_dict=True)
+print("  gebruiker:", dict(u), "sleutel gelijk:", u.api_key == sleutel,
+      "geheim gelijk:", get_decrypted_password("User", email, "api_secret", raise_exception=False) == geheim)
+' "$SITE" "$wie" "$sleutel")
+		journalctl --user -u proef-5b-web -n 15 --no-pager | cut -c1-200
+		exit
+	fi
 	client "$wie" koppel "$RUIMTE" "$WERK/$wie/map" || exit
 done
 A="$WERK/a/map"
