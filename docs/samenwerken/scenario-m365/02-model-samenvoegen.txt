@@ -1,0 +1,39 @@
+
+== Invoer
+ifc2x3-building-architecture.ifc: 92542 bytes, sha256 c4db65ba847f6b36
+
+== Anna (vanaf versie 12): de voorgevelwand rechts schuift 250 mm op. Ze slaat als eerste op: versie 13.
+
+== Piet (ook vanaf versie 12): de brandwerendheid van de vloer gaat van REI30 naar REI60.
+
+== Piet slaat op. Zijn basis (12) is verouderd: samenvoegen met basis 12, ons Piet, hun 13.
+Samengevoegd naar v14.ifc: 86 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 2 nieuw, 1 herschreven, 2 weggehaald.
+tijd: 31 ms (exitcode 0)
+
+== Controle: versie 14 bevat beide wijzigingen, en verder niets
+Gewijzigd (2):
+  ~ IfcWall 'house - outer wall - house right front' [1AQAupaRP1txwK1AGiN61V]
+      ObjectPlacement.RelativePlacement.Location.Coordinates: (4100., 1800., 0.) -> (4100., 2050., 0.)
+  ~ IfcPropertySet 'Pset_SlabCommon' [3IPHMao9vAlQSQdn4mt1Bm]
+      HasProperties: +IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $) -IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $)
+a: IFC2X3, 87 objecten, 1959 knopen
+b: IFC2X3, 87 objecten, 1959 knopen
+controle: het verschil noemt precies {'gewijzigd': ['1AQAupaRP1txwK1AGiN61V', '3IPHMao9vAlQSQdn4mt1Bm'], 'toegevoegd': [], 'verwijderd': []}
+
+== De opmerking aan de wand: wat het verschil over versie 14 zegt
+1AQAupaRP1txwK1AGiN61V: gewijzigd
+3wdauVJT5Fx9drrREiDqA$: bestaat
+Opmerkingen zelf (opslaan, anker_status in de API) zijn nog niet gebouwd: dat is serverwerk (§5.9).
+
+== Wat Microsoft 365 in dit geval doet
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues):
+  "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions. The online version keeps the original file name and is downloaded, and the copy on your computer has your device name appended to the file name such as Report-JOHNS-SURFACE.txt."
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/onedrive/see-comments-and-activity-on-your-onedrive-files):
+  "OneDrive now lets you @mention someone in the details pane of any non-Office file that you've saved in OneDrive for home, including photos, videos, PDFs, and more."
+  "@mentions for non-office file types are not yet available for the OneDrive sync app or OneDrive for work or school accounts."
+Dus: bij een .ifc twee bestanden naast elkaar. Een opmerking kan alleen over het hele bestand gaan, niet over één wand.
+
+== Uitkomst
+Onze onderlaag: één versie (14) met beide wijzigingen, en het verschil meldt de wand met de opmerking als gewijzigd.
+EXIT:0
