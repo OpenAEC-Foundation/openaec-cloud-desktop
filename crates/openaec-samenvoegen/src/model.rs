@@ -675,6 +675,34 @@ impl<'a> Model<'a> {
         Self::object_hash_uit(self.bestand.type_naam(i), &hashes)
     }
 
+    /// De knoop waar attribuut `j` van object-instantie `i` als enige verwijzing naar wijst, als die knoop alleen bij
+    /// dat object hoort: één anker (dit attribuut), niet gedeeld. Bijv. de IfcTaskTime van een IfcTask.
+    pub fn eigen_knoop(&self, i: usize, j: usize) -> Option<usize> {
+        let n = enkele_verwijzing(attribuut_tekst(self, i, j))?;
+        let c = *self.bestand.index.get(&n)? as usize;
+        (self.soort[c] == Soort::Knoop && self.anker_id[c].is_some() && self.ankers(c).len() == 1).then_some(c)
+    }
+
+    /// De hash van een attribuut dat rechtstreeks naar een eigen knoop wijst ([`Model::eigen_knoop`]), waarvan elk
+    /// attribuut uit een andere versie kan komen: per attribuut het model en de knoop. Dezelfde vorm als
+    /// [`Model::attribuut_hash`] bij zo'n verwijzing (`K` en de inhoud van de knoop).
+    pub fn samengestelde_knoop_hash(type_naam: &str, delen: &[(&Model, usize)]) -> Hash {
+        let mut buffer = vec![b'T'];
+        lengte_en(type_naam.as_bytes(), &mut buffer);
+        buffer.push(b'(');
+        for (l, &(m, c)) in delen.iter().enumerate() {
+            if m.is_vluchtig(c, l) {
+                buffer.push(b'V');
+            } else {
+                m.canon().attribuut(c, l, false, &mut buffer);
+            }
+        }
+        buffer.push(b')');
+        let mut attribuut = vec![b'K'];
+        attribuut.extend_from_slice(blake3::hash(&buffer).as_bytes());
+        *blake3::hash(&attribuut).as_bytes()
+    }
+
     /// Hash van een object uit zijn type en de hashes van zijn attributen (zonder de GlobalId).
     pub fn object_hash_uit(type_naam: &str, attribuut_hashes: &[Hash]) -> Hash {
         let mut hasher = blake3::Hasher::new();
@@ -857,6 +885,22 @@ impl<'a> Model<'a> {
             }
         }
         gevonden.then(|| *hasher.finalize().as_bytes())
+    }
+
+    /// Staat elke verwijzing naar een object (behalve de GlobalId) alleen in een attribuut? Een relatie met een SET of
+    /// LIST van objecten (bijv. IfcRelContainedInSpatialStructure) is niet door haar objecten bepaald.
+    pub fn alleen_enkele_verwijzingen(&self, o: usize) -> bool {
+        let i = self.objecten[o].inst as usize;
+        self.bestand.attributen(i).iter().skip(1).all(|&attr| {
+            let tekst = self.bestand.tekst(attr);
+            enkele_verwijzing(tekst).is_some()
+                || Tokens::nieuw(tekst).all(|(_, t)| match t {
+                    Token::Verwijzing(n) => {
+                        !self.bestand.index.get(&n).is_some_and(|&k| matches!(self.soort[k as usize], Soort::Object(_)))
+                    }
+                    _ => true,
+                })
+        })
     }
 
     /// Het type zoals een mens het leest: de naam uit het schema (`IfcTask`), anders de naam uit het bestand.
@@ -1503,6 +1547,94 @@ pub(crate) fn koppel_relaties(basis: &Model, x: &mut Model) -> usize {
         }
     }
     aantal
+}
+
+/// Koppelt een relatie die ons en hun allebei nieuw toevoegden, met een andere GlobalId: een relatie die alleen
+/// enkele verwijzingen naar objecten heeft (bijv. IfcRelSequence van taak A naar taak B) is door die objecten
+/// bepaald. Heeft hun precies één nieuwe relatie met hetzelfde type en dezelfde objecten als precies één nieuwe
+/// relatie van ons, dan krijgt die van hun de sleutel van ons. Bij gelijke inhoud blijft er dan één over (die van
+/// ons), bij een andere inhoud (bijv. een andere SequenceType) is het een conflict. Geeft het aantal koppelingen en
+/// de gekoppelde relaties waarbij OPS onder de GlobalId iets anders bewaart ([`ops_relatiegegevens`]): per relatie
+/// de sleutel en wat ons en hun bewaren. Dat moet een conflict worden, want de relatie houdt de GlobalId van ons.
+pub(crate) fn koppel_toevoegingen(basis: &Model, ons: &Model, hun: &mut Model) -> (usize, Vec<(String, [String; 2])>) {
+    let nieuw = |x: &Model, ander: &Model| -> HashMap<Hash, Vec<usize>> {
+        let in_basis: HashSet<&str> = basis.objecten.iter().map(|o| o.sleutel.as_str()).collect();
+        let in_ander: HashSet<&str> = ander.objecten.iter().map(|o| o.sleutel.as_str()).collect();
+        let mut uit: HashMap<Hash, Vec<usize>> = HashMap::new();
+        for (o, object) in x.objecten.iter().enumerate() {
+            if in_basis.contains(object.sleutel.as_str()) || in_ander.contains(object.sleutel.as_str()) {
+                continue;
+            }
+            if let Some(s) = x.natuurlijke_sleutel(o).filter(|_| x.alleen_enkele_verwijzingen(o)) {
+                uit.entry(s).or_default().push(o);
+            }
+        }
+        uit
+    };
+    let bij_ons = nieuw(ons, hun);
+    let mut paren: Vec<(usize, usize)> = nieuw(hun, ons)
+        .into_iter()
+        .filter_map(|(s, h)| match (bij_ons.get(&s).map(Vec::as_slice), h.as_slice()) {
+            (Some(&[o]), &[h]) => Some((o, h)),
+            _ => None,
+        })
+        .collect();
+    paren.sort_unstable();
+    let mut anders = Vec::new();
+    if !paren.is_empty() {
+        let (eo, eh) = (ops_relatiegegevens(ons), ops_relatiegegevens(hun));
+        for &(o, h) in &paren {
+            let (go, gh) = (onder_globalid(&eo, &ons.objecten[o].globalid), onder_globalid(&eh, &hun.objecten[h].globalid));
+            if go != gh {
+                anders.push((ons.objecten[o].sleutel.clone(), [go, gh]));
+            }
+        }
+    }
+    for &(o, h) in &paren {
+        hun.objecten[h].sleutel = ons.objecten[o].sleutel.clone();
+    }
+    (paren.len(), anders)
+}
+
+/// De eigenschappen waarin OPS gegevens van een relatie bewaart, met de GlobalId van de relatie als sleutel. Ze staan
+/// in de eigenschappenset `OPS_Sequences` op het werkschema, want een IfcRelSequence kan zelf geen eigenschappenset
+/// dragen: het record van een lag in dagen met een breuk (bijv. een halve dag, in IFC `PT4H0M0S`), dat van een lag in
+/// minuten met een breuk (150,4 minuten, in IFC `PT2H30M0S`) en de lijst met de P6-grens.
+const OPS_RELATIEGEGEVENS: [&str; 3] =
+    ["DayMeasureLags", "ExactMinuteLags", "P6StartAtPredecessorFinishBoundarySequenceGuids"];
+
+/// De waarden van de eigenschappen uit [`OPS_RELATIEGEGEVENS`] in `m`: per eigenschap de naam en de tekst (JSON).
+fn ops_relatiegegevens(m: &Model) -> Vec<(String, String)> {
+    let tekst = |i: usize, j: usize| {
+        let a = m.bestand.attributen(i);
+        let t = Tokens::nieuw(m.bestand.tekst(*a.get(j)?)).find_map(|(_, t)| match t {
+            Token::Tekst(t) => Some(decodeer(t)),
+            _ => None,
+        });
+        t
+    };
+    (0..m.bestand.instanties.len())
+        .filter(|&i| m.bestand.type_naam(i) == "IFCPROPERTYSINGLEVALUE")
+        .filter_map(|i| Some((tekst(i, 0).filter(|n| OPS_RELATIEGEGEVENS.contains(&n.as_str()))?, tekst(i, 2)?)))
+        .collect()
+}
+
+/// Wat er in `eigenschappen` ([`ops_relatiegegevens`]) onder `globalid` staat, als tekst voor het rapport: per
+/// eigenschap de naam en de waarde (bij de P6-grens alleen de naam). Een waarde die geen JSON-object of -lijst is,
+/// telt helemaal mee als de GlobalId erin staat. Leeg: niets.
+fn onder_globalid(eigenschappen: &[(String, String)], globalid: &str) -> String {
+    let mut uit = Vec::new();
+    for (naam, waarde) in eigenschappen {
+        match serde_json::from_str::<serde_json::Value>(waarde) {
+            Ok(serde_json::Value::Object(o)) => uit.extend(o.get(globalid).map(|v| format!("{naam} {v}"))),
+            Ok(serde_json::Value::Array(a)) => {
+                uit.extend(a.iter().any(|v| v.as_str() == Some(globalid)).then(|| naam.clone()))
+            }
+            _ => uit.extend(waarde.contains(globalid).then(|| format!("{naam} {waarde}"))),
+        }
+    }
+    uit.sort();
+    uit.join("; ")
 }
 
 /// De sleutels van `x` in een tabel (sleutel -> objectindex). Een gekoppelde relatie staat onder de GlobalId van de

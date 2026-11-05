@@ -3,7 +3,11 @@
 Los van de Rust-tests: die hangen niet van IfcOpenShell af. Gebruik:
 
     SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test samenvoegen
-    uv run --python 3.12 --with ifcopenshell python -I scripts/valideer_met_ifcopenshell.py /tmp/resultaten
+    uv run --python 3.12 --with ifcopenshell --with pytest python -I scripts/valideer_met_ifcopenshell.py [--regels] /tmp/resultaten
+
+Met --regels controleert IfcOpenShell ook de regels uit het EXPRESS-schema (WHERE-regels en functies, bijv. dat een
+IfcObjective met ConstraintGrade USERDEFINED een UserDefinedGrade heeft). Dat is trager, en IfcOpenShell vraagt dan
+pytest.
 
 Exitcode 0 als alle bestanden geldig zijn, anders 1.
 """
@@ -25,18 +29,20 @@ class Verzamel(logging.Handler):
         self.meldingen.append(record.getMessage())
 
 
-def valideer(pad):
+def valideer(pad, regels):
     log = logging.getLogger(f"valideer.{pad.name}")
     log.propagate = False
     verzamel = Verzamel()
     log.addHandler(verzamel)
     log.setLevel(logging.INFO)
     bestand = ifcopenshell.open(str(pad))
-    ifcopenshell.validate.validate(bestand, log, express_rules=False)
+    ifcopenshell.validate.validate(bestand, log, express_rules=regels)
     return bestand.schema, verzamel.meldingen
 
 
 def main(argv):
+    regels = "--regels" in argv[1:]
+    argv = [a for a in argv if a != "--regels"]
     if len(argv) != 2:
         print(__doc__)
         return 2
@@ -46,7 +52,7 @@ def main(argv):
         return 2
     fout = 0
     for pad in paden:
-        schema, meldingen = valideer(pad)
+        schema, meldingen = valideer(pad, regels)
         if meldingen:
             fout += 1
             print(f"FOUT {pad.name} ({schema}):")
@@ -54,7 +60,8 @@ def main(argv):
                 print(f"    {m}")
         else:
             print(f"goed {pad.name} ({schema})")
-    print(f"{len(paden) - fout} van {len(paden)} bestanden geldig volgens IfcOpenShell {ifcopenshell.version}")
+    met = "met" if regels else "zonder"
+    print(f"{len(paden) - fout} van {len(paden)} bestanden geldig volgens IfcOpenShell {ifcopenshell.version}, {met} de EXPRESS-regels")
     return 1 if fout else 0
 
 
