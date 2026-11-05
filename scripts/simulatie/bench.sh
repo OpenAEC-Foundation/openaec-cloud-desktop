@@ -108,6 +108,8 @@ start() {
     $vk del "$q" >/dev/null
   done
   grep -q '"max_queued_jobs"' "$FB/sites/$SIM_SITE/site_config.json" || frappe_op "$SIM_SITE" set-config max_queued_jobs 100000
+  # De lastproef maakt honderden proefgebruikers; Frappe remt na 60 per minuut (throttle_user_creation).
+  grep -q '"throttle_user_limit"' "$FB/sites/$SIM_SITE/site_config.json" || frappe_op "$SIM_SITE" set-config throttle_user_limit 10000
   for unit in bench-proef-s3 bench-proef-web; do
     systemctl --user stop "$unit" 2>/dev/null || true
     systemctl --user reset-failed "$unit" 2>/dev/null || true

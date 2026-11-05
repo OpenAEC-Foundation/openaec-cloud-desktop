@@ -317,7 +317,10 @@ def opzet(frappe, n: int) -> tuple[str, str, list[str]]:
 	from frappe.core.doctype.user.user import generate_keys
 
 	sleutels = []
-	frappe.flags.in_import = True  # Frappe remt anders het aanmaken van gebruikers (throttle_user_creation)
+	# Een eerdere opzet (met frappe.flags.in_import) liet de standaardwaarden weg, ook enabled: zulke gebruikers krijgen
+	# 401. Vóór de lus, zodat generate_keys hieronder elke gebruiker opnieuw opslaat (en zijn cache ververst).
+	frappe.db.sql("update `tabUser` set enabled = 1 where name like 'last-%%@sim.localhost'")
+	frappe.db.commit()
 	for i in range(n):
 		email = f"last-{i}@sim.localhost"
 		if not frappe.db.exists("User", email):
@@ -338,6 +341,7 @@ def opzet(frappe, n: int) -> tuple[str, str, list[str]]:
 			).insert(ignore_permissions=True).name
 		)
 	frappe.db.commit()
+	frappe.clear_cache()
 	import boto3
 
 	s3 = boto3.client("s3", endpoint_url=S3, region_name="eu-central-1", aws_access_key_id="proef", aws_secret_access_key="proef")
