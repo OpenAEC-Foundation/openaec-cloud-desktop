@@ -161,16 +161,22 @@ Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote best
 
 | Wat | Tijd | Piekgeheugen |
 |---|---|---|
-| `verschil` (opdrachtregel, twee bestanden van 92 MB) | 2,8 s | 870 MB |
-| `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,5 s | 1,9 GB |
+| `verschil` (opdrachtregel, twee bestanden van 92 MB) | 3,4 s (3,3 tot 3,7) | 910 MB |
+| `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,7 s (9,4 tot 10,3) | 1,9 GB |
 | `voeg-samen` op een planning van OPS (52 kB, 39 taken) | 0,02 s | 7 MB |
 
-Deze cijfers zijn van vóór fixronde 1 (november 2026); daarna is niet opnieuw gemeten. Het geheugen is
-ongeveer 20 keer de bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de
-zelfcontrole). Zelf meten:
+Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). De tijd is de middelste van drie runs, met de
+spreiding erbij; het piekgeheugen is de "Maximum resident set size" van `/usr/bin/time -v`. Vóór fixronde 1 was
+het 2,8 s en 870 MB voor `verschil`, en 9,5 s en 1,9 GB voor `voeg-samen`. Het geheugen is ongeveer 20 keer de
+bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de zelfcontrole). Zelf meten:
 
 ```text
-cargo test --release --test meting -- --ignored --nocapture
+cargo build --release --features cli
+# Maakt target/meting/{basis,ons,hun}.ifc en meet in het proces.
+cargo test --release --features cli --test meting -- --ignored --nocapture --test-threads=1
+/usr/bin/time -v target/release/openaec-samenvoegen verschil target/meting/basis.ifc target/meting/ons.ifc
+/usr/bin/time -v target/release/openaec-samenvoegen voeg-samen target/meting/basis.ifc target/meting/ons.ifc \
+    target/meting/hun.ifc -o uit.ifc
 ```
 
 ## Controle met IfcOpenShell

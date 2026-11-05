@@ -30,10 +30,10 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     geldt ook als de twee nieuwe relaties dezelfde inhoud hebben en alleen hun GlobalId verschilt. Dat is een
     conflict te veel, geen verlies. OPS schrijft de GlobalId van een relatie vast (bewaard of uit een hash), dus
     daar komt het niet voor. — S
-11. **De meting is na fixronde 1 niet opnieuw gedaan** (eigen bevinding, 5 november 2026). De cijfers in de README
-    (9,5 s en 1,9 GB voor drie bestanden van 92 MB) zijn van daarvóór. Fixronde 1 voegt werk toe: de eigenaar per
-    knoop, de pure hashes in een SET of BAG, de INVERSE-telling voor knopen en de kringcontrole voor plaatsingen.
-    De meting vraagt een release-build en ongeveer 2 GB geheugen; die is niet zonder overleg gedraaid. — B
+11. **Gesloten: de meting na fixronde 1** (eigen bevinding, 5 november 2026). Op 5 november 2026 opnieuw gemeten
+    op `6a27723`, drie runs per opdracht; de cijfers en de commando's staan in de README. `verschil` op twee
+    bestanden van 92 MB: 2,8 s en 870 MB werd 3,4 s en 910 MB. `voeg-samen` op drie bestanden van 92 MB: 9,5 s en
+    1,9 GB werd 9,7 s en 1,9 GB. — B
 12. **Faalt het lezen van de huidige versie in de opslaan-lus, dan is dat een fout en geen nieuwe poging**
     (eigen bevinding, 5 november 2026). `sla_op` leest na "verouderd" de huidige versie. Is die intussen weer
     vervangen en opgeruimd, dan geeft `lees` een fout en stopt de lus met `LusFout::Opslag`, in plaats van de dan
