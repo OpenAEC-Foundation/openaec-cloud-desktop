@@ -48,6 +48,17 @@ class Proxy:
 	def __init__(self, args):
 		self.doel, self.stand, self.rng = args.doel, args.stand, random.Random(args.zaad)
 		self.log = open(args.log, "a", buffering=1)
+		# Een sterke verwijzing naar elke lopende verbinding. asyncio laat de zijne los zodra de client wegvalt (kill -9,
+		# reset); de vuilnisman ruimde de taak dan op terwijl hij nog op de server wachtte.
+		self.lopend = set()
+
+	async def start(self, client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
+		taak = asyncio.current_task()
+		self.lopend.add(taak)
+		try:
+			await self.verbinding(client_r, client_w)
+		finally:
+			self.lopend.discard(taak)
 
 	def kies(self, pad: str) -> str | None:
 		if self.rng.random() >= lees_stand(self.stand):
@@ -160,7 +171,7 @@ async def main():
 	p.add_argument("--zaad", type=int, default=1)
 	args = p.parse_args()
 	proxy = Proxy(args)
-	server = await asyncio.start_server(proxy.verbinding, "127.0.0.1", args.luister, backlog=512)
+	server = await asyncio.start_server(proxy.start, "127.0.0.1", args.luister, backlog=512)
 	async with server:
 		await server.serve_forever()
 

@@ -18,7 +18,7 @@ mkdir -p "$(dirname "$LOG")"
   echo "draai.sh: $NAAM, $(date '+%Y-%m-%d %H:%M:%S'), desktop $(git -C "$REPO" rev-parse --short HEAD)," \
     "server $(git -C /home/aia09/worktrees/storage-proef rev-parse --short HEAD) (integratie-4-4b)"
   echo "draai.sh: $SCRIPT $*"
-  /home/aia09/worktrees/zwaar.sh "${ALLEEN[@]}" bash -c "'$HIER/bench.sh' start && '$HIER/bench.sh' python '$HIER/$SCRIPT' --werk '$WERK' $*"
+  /home/aia09/worktrees/zwaar.sh "${ALLEEN[@]}" bash -c "echo \"draai.sh: start \$(date +%T), desktop \$(git -C '$REPO' rev-parse --short HEAD), \$(git -C '$REPO' status --short | wc -l) bestanden niet gecommit\" && '$HIER/bench.sh' start && '$HIER/bench.sh' python '$HIER/$SCRIPT' --werk '$WERK' $*"
   echo "EXIT:$?"
 } > "$LOG" 2>&1
 tail -1 "$LOG"

@@ -548,7 +548,25 @@ def controleer(frappe, ruimte: str, clients: list[Client]) -> dict:
 	for vs in per_bestand.values():
 		vs.sort(key=lambda v: v.volgnummer)
 		dubbele_versies += sum(1 for a, b in zip(vs, vs[1:]) if inhoud_hash.get(a.s3_sleutel) and inhoud_hash.get(a.s3_sleutel) == inhoud_hash.get(b.s3_sleutel))
+	# Overbodige conflictkopie: dezelfde inhoud als een versie van het origineel op die plek, of van een andere kopie.
+	# Er gaat dan niets verloren, maar de gebruiker krijgt een kopie die niets nieuws bevat.
+	def stam(naam):
+		return re.sub(r" \(conflict [^)]*\)", "", naam)
+
+	per_stam = collections.defaultdict(lambda: collections.defaultdict(set))
+	for v in versies:
+		if inhoud_hash.get(v.s3_sleutel):
+			per_stam[(v.map, stam(v.naam))][v.bestand].add(inhoud_hash[v.s3_sleutel])
+	naam_van = {v.bestand: v.naam for v in versies}
+	overbodig = sorted(
+		naam_van[b]
+		for groep in per_stam.values()
+		for b, hashes in groep.items()
+		if "(conflict " in naam_van[b] and any(hashes & h for b2, h in groep.items() if b2 != b)
+	)
 	uit["server"] = {
+		"conflictkopieen_overbodig": len(overbodig),
+		"voorbeelden_overbodig": overbodig[:5],
 		"bestanden": len(bestanden_),
 		"verwijderd": sum(1 for b in bestanden_ if b.verwijderd_op),
 		"conflictkopieen": sum(1 for b in bestanden_ if "(conflict " in b.naam and not b.naam.endswith(".samenvoegrapport.json")),
