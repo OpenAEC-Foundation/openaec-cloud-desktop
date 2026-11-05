@@ -374,3 +374,199 @@ async fn uitgevinkte_map_gaat_veilig_weg() {
     assert_eq!(opslag.inhoud("Oud/a.txt").unwrap(), b"een");
     assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
 }
+
+/// Opslag die tijdens de eerste upload een nieuwe versie van het bestand opslaat (de gebruiker slaat op terwijl de
+/// sync uploadt), en die alles bijhoudt wat er naar de server ging.
+struct SlaatOpTijdensUpload {
+    nep: NepOpslag,
+    root: PathBuf,
+    gedaan: AtomicBool,
+    verstuurd: Mutex<Vec<Vec<u8>>>,
+}
+
+impl Opslag for SlaatOpTijdensUpload {
+    async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
+        self.nep.lijst().await
+    }
+    async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout> {
+        self.verstuurd.lock().unwrap().push(std::fs::read(lokaal)?);
+        let up = self.nep.upload(pad, lokaal, basis_versie).await?;
+        if !self.gedaan.swap(true, Ordering::SeqCst) {
+            schrijf(&self.root, pad, b"B: opgeslagen tijdens de upload");
+        }
+        Ok(up)
+    }
+    async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
+        self.nep.download(bestand, lokaal).await
+    }
+    async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
+        self.nep.verwijder(bestand).await
+    }
+}
+
+/// Proef (review Sol, PR #8, punt 1): upload A; tijdens de upload slaat de gebruiker B op. De toestand mag B niet als
+/// "op de server" vastleggen: de volgende ronde uploadt B. Daarna wijzigt een collega het bestand en haalt de sync
+/// dat op; B staat dan als versie op de server en gaat niet verloren.
+#[tokio::test]
+async fn opslaan_tijdens_de_upload_gaat_niet_verloren() {
+    let dir = tempfile::tempdir().unwrap();
+    let opslag = SlaatOpTijdensUpload {
+        nep: NepOpslag::default(),
+        root: dir.path().to_path_buf(),
+        gedaan: AtomicBool::new(false),
+        verstuurd: Mutex::new(Vec::new()),
+    };
+    schrijf(dir.path(), "a.txt", b"A");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.geupload, 1);
+    assert_eq!(lees(dir.path(), "a.txt").as_deref(), Some("B: opgeslagen tijdens de upload"));
+
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.geupload, 1, "B is een lokale wijziging ten opzichte van wat er geüpload is");
+    opslag.nep.zet("a.txt", b"van collega");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+
+    assert!(opslag.verstuurd.lock().unwrap().iter().any(|v| v == b"B: opgeslagen tijdens de upload"), "B staat als versie op de server");
+    assert_eq!(lees(dir.path(), "a.txt").as_deref(), Some("van collega"));
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+}
+
+/// Een map tijdelijk ontoegankelijk maken (Unix: geen rechten); terug bij `drop`.
+#[cfg(unix)]
+struct Ontoegankelijk(PathBuf);
+
+#[cfg(unix)]
+impl Ontoegankelijk {
+    fn zet(map: &Path) -> Option<Self> {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("overgeslagen: root mag altijd lezen");
+            return None;
+        }
+        std::fs::set_permissions(map, std::fs::Permissions::from_mode(0o000)).unwrap();
+        Some(Self(map.to_path_buf()))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Ontoegankelijk {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// Proef (review Sol, PR #8, punt 3): een download vervangt een bestand dat een programma open heeft; het programma
+/// schrijft nieuw werk via die verbinding en sluit. Dan is de bronmap één ronde niet te bekijken. Het journaal moet
+/// blijven (met een fout voor dit bestand); als de map weer te bekijken is, gaat het werk naar de server.
+#[cfg(unix)]
+#[tokio::test]
+async fn bron_die_even_niet_te_bekijken_is_blijft_bewaakt() {
+    let opslag = NepOpslag::default();
+    let dir = tempfile::tempdir().unwrap();
+    gesynct_en_gewijzigd_op_de_server(&opslag, dir.path()).await;
+    let mut programma = std::fs::OpenOptions::new().append(true).open(dir.path().join("a.txt")).unwrap();
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(bronnen(dir.path()), 1);
+    programma.write_all(b" + werk").unwrap();
+    drop(programma);
+
+    {
+        let Some(_dicht) = Ontoegankelijk::zet(&dir.path().join(".openaec/bron")) else { return };
+        let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+        assert!(r.foutpaden.contains(&"a.txt".to_string()), "een fout voor dit bestand: {:?}", r.fouten);
+        assert_eq!(journaal(dir.path()), 1, "het journaal blijft");
+    }
+
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.conflicten, 1);
+    assert_eq!(opslag.inhoud("a (conflict test).txt").unwrap(), b"een + werk");
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+}
+
+/// Proef (review Sol, PR #8, punt 4): een map uitvinken; de sync stopt na de lokale verplaatsing en vóór het bewaren van
+/// de toestand. Daarna de map weer aanvinken. Het bestand op de server mag niet naar de prullenbak (het lege pad is geen
+/// lokale verwijdering), en komt hier terug.
+#[tokio::test]
+async fn uitvinken_onderbroken_voor_het_bewaren_verwijdert_niets_op_de_server() {
+    use futures_util::FutureExt;
+    let stoppen = AtomicBool::new(false);
+    let opslag = MetHaken {
+        nep: NepOpslag::default(),
+        na_vergelijking: || {
+            if stoppen.load(Ordering::SeqCst) {
+                panic!("de sync stopt hier (proef)");
+            }
+        },
+        bij_verwijderen: || {},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "Oud/a.txt", b"een");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+
+    stoppen.store(true, Ordering::SeqCst);
+    let uit = ["Oud".to_string()];
+    let ronde = openaec_sync::motor::sync_met_selectie(&opslag, dir.path(), &uit);
+    assert!(std::panic::AssertUnwindSafe(ronde).catch_unwind().await.is_err());
+    stoppen.store(false, Ordering::SeqCst);
+    assert_eq!(lees(dir.path(), "Oud/a.txt"), None, "verplaatst naar de bron");
+    assert_eq!(journaal(dir.path()), 1);
+
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.verwijderd, 0);
+    assert_eq!(opslag.nep.inhoud("Oud/a.txt").unwrap(), b"een", "het bestand staat nog op de server");
+    assert_eq!(lees(dir.path(), "Oud/a.txt").as_deref(), Some("een"));
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+}
+
+/// Opslag die offline kan zijn: dan mislukt het eerste verzoek van een ronde (de lijst).
+struct Offline {
+    nep: NepOpslag,
+    offline: AtomicBool,
+}
+
+impl Opslag for Offline {
+    async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
+        if self.offline.load(Ordering::SeqCst) {
+            return Err(Fout::Controle("geen verbinding (proef)".into()));
+        }
+        self.nep.lijst().await
+    }
+    async fn upload(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>) -> Result<Upload, Fout> {
+        self.nep.upload(pad, lokaal, basis_versie).await
+    }
+    async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
+        self.nep.download(bestand, lokaal).await
+    }
+    async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
+        self.nep.verwijder(bestand).await
+    }
+}
+
+/// Proef (review Sol, PR #8, punt 4): een collega verwijdert het bestand; de sync verplaatst het hier naar een bron, maar
+/// een programma heeft het open en schrijft er daarna nieuw werk in. Dan is de computer offline. Het werk komt toch
+/// terug op het pad (zonder de server), en gaat naar de server zodra die er weer is.
+#[tokio::test]
+async fn werk_in_een_verwijderde_bron_komt_ook_offline_terug() {
+    let opslag = Offline { nep: NepOpslag::default(), offline: AtomicBool::new(false) };
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "a.txt", b"een");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    let mut programma = std::fs::OpenOptions::new().append(true).open(dir.path().join("a.txt")).unwrap();
+    opslag.nep.bestanden.lock().unwrap().remove("a.txt");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.verwijderd, 1);
+    assert_eq!(bronnen(dir.path()), 1, "het programma heeft de bron open");
+
+    programma.write_all(b" + werk").unwrap();
+    drop(programma);
+    opslag.offline.store(true, Ordering::SeqCst);
+    assert!(sync_eenmalig(&opslag, dir.path()).await.is_err(), "offline: de ronde stopt bij de lijst");
+    assert_eq!(lees(dir.path(), "a.txt").as_deref(), Some("een + werk"), "het werk staat weer op het pad");
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+
+    opslag.offline.store(false, Ordering::SeqCst);
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.geupload, 1);
+    assert_eq!(opslag.nep.inhoud("a.txt").unwrap(), b"een + werk");
+}
