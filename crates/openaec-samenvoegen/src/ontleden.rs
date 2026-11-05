@@ -42,9 +42,6 @@ pub(crate) struct Bestand<'a> {
 pub(crate) struct HeaderRegel {
     /// In hoofdletters.
     pub naam: String,
-    /// Van de naam tot en met `;`.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
-    pub bereik: Bereik,
     /// Elke parameter op het hoogste niveau.
     pub parameters: Vec<Bereik>,
 }
@@ -127,6 +124,21 @@ impl Bestand<'_> {
 
     pub fn regel(&self, positie: usize) -> usize {
         regel(self.data, positie)
+    }
+
+    /// De tekst van een instantie na `#n=`, tot en met `;` (bijv. `IFCX(#1,$);`).
+    pub fn inhoud(&self, i: usize) -> &[u8] {
+        let (begin, eind) = self.instanties[i].bereik;
+        let tekst = &self.data[begin as usize..eind as usize];
+        let is = tekst.iter().position(|&b| b == b'=').map_or(0, |p| p + 1);
+        let rest = &tekst[is..];
+        let wit = rest.iter().take_while(|&&b| b <= b' ').count();
+        &rest[wit..]
+    }
+
+    /// Gebruikt het bestand `\r\n` als regeleinde?
+    pub fn crlf(&self) -> bool {
+        self.data.windows(2).take(1 << 16).any(|w| w == b"\r\n")
     }
 }
 
@@ -363,7 +375,6 @@ impl<'a> Lezer<'a> {
             self.verwacht(b';')?;
             regels.push(HeaderRegel {
                 naam: String::from_utf8_lossy(naam).to_ascii_uppercase(),
-                bereik: (begin as u32, self.pos as u32),
                 parameters: parameters.into_iter().map(|(a, b)| (a as u32, b as u32)).collect(),
             });
         }

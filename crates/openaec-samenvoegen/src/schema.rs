@@ -16,7 +16,6 @@ pub(crate) enum Aggregaat {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // optioneel, aggregaat en minimum gebruikt het samenvoegen.
 pub(crate) struct Attribuut {
     pub naam: String,
     pub optioneel: bool,
@@ -30,7 +29,6 @@ pub(crate) struct Attribuut {
 
 /// Een INVERSE-attribuut: de instanties van `bron` die in hun attribuut `voor` naar deze entiteit verwijzen.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // gebruikt het samenvoegen.
 pub(crate) struct Inverse {
     pub naam: String,
     /// Type-naam in hoofdletters.
@@ -45,24 +43,20 @@ pub(crate) struct Entiteit {
     /// De naam zoals in het schema (bijv. `IfcTask`).
     pub naam: String,
     /// Deze entiteit en haar supertypes, in hoofdletters, van onder naar boven.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub voorouders: Vec<String>,
     /// IfcRoot of een subtype ervan: een object met een GlobalId.
     pub root: bool,
     /// Een subtype van IfcRelationship.
     pub relatie: bool,
     /// Een subtype van IfcProperty of IfcPhysicalQuantity: het eerste attribuut is de naam.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub benoemd: bool,
     pub attributen: Vec<Attribuut>,
     /// Ook de geërfde.
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub inverses: Vec<Inverse>,
 }
 
 impl Entiteit {
     /// Is deze entiteit `naam` (in hoofdletters) of een subtype ervan?
-    #[allow(dead_code)] // gebruikt het samenvoegen.
     pub fn is_een(&self, naam: &str) -> bool {
         self.voorouders.iter().any(|v| v == naam)
     }

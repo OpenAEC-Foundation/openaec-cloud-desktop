@@ -1,16 +1,16 @@
-//! Opdrachtregelprogramma: twee IFC-bestanden vergelijken.
+//! Opdrachtregelprogramma: IFC-bestanden vergelijken en samenvoegen.
 //!
-//! Exitcode: 0 = gelukt, 2 = fout.
+//! Exitcode: 0 = gelukt, 1 = conflicten (bij `voeg-samen`), 2 = fout.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
-use openaec_samenvoegen::{verschil, Verschil, VersieStatistiek};
+use openaec_samenvoegen::{verschil, voeg_samen, BijConflict, Opties, Samenvoeging, Verschil, VersieStatistiek};
 
 #[derive(Parser)]
-#[command(name = "openaec-samenvoegen", version, about = "IFC-bestanden vergelijken per object")]
+#[command(name = "openaec-samenvoegen", version, about = "IFC-bestanden vergelijken en samenvoegen per object")]
 struct Cli {
     #[command(subcommand)]
     opdracht: Opdracht,
@@ -26,6 +26,28 @@ enum Opdracht {
         #[arg(long)]
         json: bool,
     },
+    /// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen (three-way).
+    VoegSamen {
+        basis: PathBuf,
+        ons: PathBuf,
+        hun: PathBuf,
+        /// Het samengevoegde bestand.
+        #[arg(short = 'o', long = "uit")]
+        uit: PathBuf,
+        /// Schrijf het rapport (conflicten en cijfers) als JSON naar dit bestand.
+        #[arg(long)]
+        rapport: Option<PathBuf>,
+        /// Wat er gebeurt bij een conflict: weiger (geen resultaat), ons of hun (die kant wint per conflict).
+        #[arg(long, value_enum, default_value = "weiger")]
+        bij_conflict: Keuze,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Keuze {
+    Weiger,
+    Ons,
+    Hun,
 }
 
 fn lees(pad: &Path) -> Result<Vec<u8>, String> {
@@ -56,7 +78,69 @@ fn voer_uit(opdracht: Opdracht) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Opdracht::VoegSamen { basis, ons, hun, uit, rapport, bij_conflict } => {
+            let (b, o, h) = (lees(&basis)?, lees(&ons)?, lees(&hun)?);
+            let bij_conflict = match bij_conflict {
+                Keuze::Weiger => BijConflict::Weiger,
+                Keuze::Ons => BijConflict::Ons,
+                Keuze::Hun => BijConflict::Hun,
+            };
+            let s = voeg_samen(&b, &o, &h, &Opties { bij_conflict }).map_err(|e| e.to_string())?;
+            if let Some(pad) = &rapport {
+                let json = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
+                std::fs::write(pad, json + "\n").map_err(|e| format!("{}: {e}", pad.display()))?;
+            }
+            if let Some(inhoud) = &s.inhoud {
+                std::fs::write(&uit, inhoud).map_err(|e| format!("{}: {e}", uit.display()))?;
+            }
+            print!("{}", rapport_tekst(&s, &uit));
+            Ok(if s.conflicten.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) })
+        }
     }
+}
+
+fn rapport_tekst(s: &Samenvoeging, uit: &Path) -> String {
+    let mut tekst = String::new();
+    if !s.conflicten.is_empty() {
+        tekst += &format!("Conflicten ({}):\n", s.conflicten.len());
+        for c in &s.conflicten {
+            let soort =
+                serde_json::to_value(c.soort).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+            let wie = match (&c.type_naam, &c.naam, &c.globalid) {
+                (Some(t), Some(n), Some(g)) => format!(" {t} '{n}' [{g}]"),
+                (Some(t), None, Some(g)) => format!(" {t} [{g}]"),
+                (Some(t), _, None) => format!(" {t}"),
+                _ => String::new(),
+            };
+            tekst += &format!("  ! {soort}{wie}: {}\n", c.melding);
+            if let Some(a) = &c.attribuut {
+                let w = |x: &Option<String>| x.clone().unwrap_or_else(|| "-".into());
+                tekst += &format!("      {a}: basis {}, ons {}, hun {}\n", w(&c.basis), w(&c.ons), w(&c.hun));
+            }
+            if let Some(k) = c.gekozen {
+                tekst +=
+                    &format!("      gekozen: {}\n", if k == openaec_samenvoegen::Kant::Ons { "ons" } else { "hun" });
+            }
+        }
+    }
+    let st = &s.statistiek;
+    if s.gelukt {
+        tekst += &format!(
+            "Samengevoegd naar {}: {} objecten van ons, {} van hun, {} per attribuut samengevoegd, {} verwijderd.\n",
+            uit.display(),
+            st.objecten_van_ons,
+            st.objecten_van_hun,
+            st.objecten_samengevoegd,
+            st.objecten_verwijderd
+        );
+        tekst += &format!(
+            "Regels: {} nieuw, {} herschreven, {} weggehaald.\n",
+            st.instanties_nieuw, st.instanties_herschreven, st.instanties_verwijderd
+        );
+    } else {
+        tekst += "Niet samengevoegd; er is geen uitvoerbestand geschreven.\n";
+    }
+    tekst
 }
 
 fn als_tekst(v: &Verschil) -> String {
