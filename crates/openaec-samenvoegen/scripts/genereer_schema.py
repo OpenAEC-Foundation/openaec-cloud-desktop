@@ -11,14 +11,18 @@ Bron van de schema's (officiële publicaties van buildingSMART International):
       IFC4_3/HTML/IFC4X3_ADD2.exp
 
 Uitvoer, één regel per entiteit:
-    NAAM|SUPERTYPE|VLAGGEN|ATTRIBUTEN
+    NAAM|SUPERTYPE|VLAGGEN|ATTRIBUTEN|INVERSES
 - NAAM en SUPERTYPE zoals in het schema (bijv. IfcTask); SUPERTYPE is "-" als er geen is. In een IFC-bestand
   staan ze in hoofdletters (IFCTASK).
 - VLAGGEN: R = IfcRoot of een subtype ervan, Q = subtype van IfcRelationship,
   N = subtype van IfcProperty of IfcPhysicalQuantity (een knoop met een naam als eerste attribuut).
 - ATTRIBUTEN: de expliciete attributen in de volgorde van het bestand, ook de geërfde, gescheiden door komma's.
-  Elk attribuut is "Naam", met "?" als het OPTIONAL is, en ":S1" (SET, minstens 1), ":L0" (LIST), ":B1" (BAG)
-  of ":A" (ARRAY) als het een aggregaat is. Een TYPE dat een aggregaat is, telt ook als aggregaat.
+  Elk attribuut is "Naam", met "?" als het OPTIONAL is, en bij een aggregaat de soort en de grenzen:
+  ":S1-?" (SET [1:?]), ":L2-3" (LIST [2:3]), ":B1-?" (BAG) of ":A" (ARRAY, vaste lengte). De grenzen gelden voor
+  het buitenste aggregaat. Een TYPE dat een aggregaat is, telt ook als aggregaat.
+- INVERSES: de eigen INVERSE-attributen (de geërfde staan bij het supertype), gescheiden door komma's, elk als
+  "Naam=Type.ForAttribuut[min:max]" (max "?" = onbegrensd). Een inverse zonder SET/BAG is [1:1]. Een
+  herdeclaratie (SELF\\X.Naam) vervangt de geërfde inverse met dezelfde naam.
 """
 
 import re
@@ -43,14 +47,14 @@ def lees_typen(tekst):
 
 
 def aggregaat(type_tekst, typen, diepte=0):
-    """(soort, minimum) of None."""
+    """(soort, minimum, maximum als tekst of "?") of None."""
     type_tekst = type_tekst.strip()
     if type_tekst.upper().startswith("UNIQUE "):
         type_tekst = type_tekst[7:]
     m = AGGREGAAT.match(type_tekst)
     if m:
-        laag = m.group(2)
-        return SOORT[m.group(1)], (0 if laag == "?" else int(laag))
+        laag, hoog = m.group(2), m.group(3)
+        return SOORT[m.group(1)], (0 if laag == "?" else int(laag)), hoog
     naam = type_tekst.split()[0].upper() if type_tekst else ""
     if diepte < 10 and naam in typen:
         return aggregaat(typen[naam], typen, diepte + 1)
@@ -72,6 +76,7 @@ def lees_entiteiten(tekst, typen):
             supertype = ouders[0]
         eigen = []
         herdeclaraties = []
+        inverses = lees_inverses(naam, romp)
         expliciet = re.split(r"^\s*(?:DERIVE|INVERSE|UNIQUE|WHERE)\b", romp, maxsplit=1, flags=re.M)[0]
         for decl in expliciet.split(";"):
             decl = " ".join(decl.split())
@@ -91,8 +96,43 @@ def lees_entiteiten(tekst, typen):
                     herdeclaraties.append((attr.split(".")[-1], optioneel, agg))
                 else:
                     eigen.append((attr, optioneel, agg))
-        entiteiten[naam] = {"supertype": supertype, "eigen": eigen, "herdeclaraties": herdeclaraties}
+        entiteiten[naam] = {
+            "supertype": supertype,
+            "eigen": eigen,
+            "herdeclaraties": herdeclaraties,
+            "inverses": inverses,
+        }
     return entiteiten
+
+
+INVERSE = re.compile(
+    r"^(SELF\\\w+\.)?(\w+)\s*:\s*(?:(SET|BAG)\s*\[\s*([0-9]+)\s*:\s*([0-9?]+)\s*\]\s*OF\s+)?(\w+)\s+FOR\s+(?:\w+\.)?(\w+)$"
+)
+
+
+def lees_inverses(naam, romp):
+    """[(naam, type, for-attribuut, min, max, herdeclaratie)]; max None = onbegrensd."""
+    m = re.search(r"^\s*INVERSE\b(.*?)(?=^\s*(?:UNIQUE|WHERE|DERIVE)\b|\Z)", romp, flags=re.S | re.M)
+    if not m:
+        return []
+    uit = []
+    for decl in m.group(1).split(";"):
+        decl = " ".join(decl.split())
+        if not decl:
+            continue
+        d = INVERSE.match(decl)
+        if not d:
+            raise SystemExit(f"{naam}: onbekende INVERSE '{decl}'")
+        herdeclaratie, attr, soort, laag, hoog, doel, voor = d.groups()
+        if soort is None:
+            laag, hoog = "1", "1"
+        uit.append((attr, doel, voor, int(laag), None if hoog == "?" else int(hoog), herdeclaratie is not None))
+    return uit
+
+
+def tekst_inverse(inv):
+    attr, doel, voor, laag, hoog, _herdeclaratie = inv
+    return f"{attr}={doel}.{voor}[{laag}:{'?' if hoog is None else hoog}]"
 
 
 def keten(entiteiten, naam):
@@ -121,8 +161,8 @@ def tekst_attribuut(attr):
     naam, optioneel, agg = attr
     uit = naam + ("?" if optioneel else "")
     if agg is not None:
-        soort, minimum = agg
-        uit += ":" + soort + ("" if soort == "A" else str(minimum))
+        soort, minimum, maximum = agg
+        uit += ":" + soort + ("" if soort == "A" else f"{minimum}-{maximum}")
     return uit
 
 
@@ -143,7 +183,8 @@ def genereer(pad):
             vlaggen += "N"
         supertype = entiteiten[naam]["supertype"]
         attrs = ",".join(tekst_attribuut(a) for a in attributen(entiteiten, naam))
-        regels.append(f"{naam}|{supertype if supertype else '-'}|{vlaggen}|{attrs}")
+        invs = ",".join(tekst_inverse(i) for i in entiteiten[naam]["inverses"])
+        regels.append(f"{naam}|{supertype if supertype else '-'}|{vlaggen}|{attrs}|{invs}")
     return schema, "\n".join(regels) + "\n"
 
 

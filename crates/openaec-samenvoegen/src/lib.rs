@@ -26,6 +26,15 @@ pub enum Fout {
     /// Twee objecten met dezelfde GlobalId: dan weten we niet welk object welk is.
     #[error("regel {regel}: GlobalId {globalid} komt twee keer voor")]
     DubbeleGlobalId { globalid: String, regel: usize },
+    /// Een fout in de bibliotheek zelf (bijv. een thread die stopte).
+    #[error("interne fout: {0}")]
+    Intern(String),
+}
+
+impl Fout {
+    pub(crate) fn intern(melding: &str) -> Self {
+        Fout::Intern(melding.to_string())
+    }
 }
 
 /// Kunnen we dit bestand samenvoegen? Alleen `.ifc` (STEP); `.ifczip` en `.ifcxml` nog niet.

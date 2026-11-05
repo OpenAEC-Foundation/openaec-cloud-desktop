@@ -10,11 +10,7 @@ use clap::{Parser, Subcommand};
 use openaec_samenvoegen::{verschil, Verschil, VersieStatistiek};
 
 #[derive(Parser)]
-#[command(
-    name = "openaec-samenvoegen",
-    version,
-    about = "IFC-bestanden vergelijken per object"
-)]
+#[command(name = "openaec-samenvoegen", version, about = "IFC-bestanden vergelijken per object")]
 struct Cli {
     #[command(subcommand)]
     opdracht: Opdracht,
@@ -81,11 +77,7 @@ fn als_tekst(v: &Verschil) -> String {
     if !v.gewijzigd.is_empty() {
         uit += &format!("Gewijzigd ({}):\n", v.gewijzigd.len());
         for w in &v.gewijzigd {
-            let nieuw = w
-                .globalid_nieuw
-                .as_ref()
-                .map(|g| format!(" -> [{g}]"))
-                .unwrap_or_default();
+            let nieuw = w.globalid_nieuw.as_ref().map(|g| format!(" -> [{g}]")).unwrap_or_default();
             uit += &format!("  ~ {}{} [{}]{nieuw}\n", w.type_naam, naam(&w.naam), w.globalid);
             for a in &w.attributen {
                 if a.erbij.is_empty() && a.eraf.is_empty() {
@@ -103,13 +95,15 @@ fn als_tekst(v: &Verschil) -> String {
             }
         }
     }
+    if !v.header.is_empty() {
+        uit += "Header:\n";
+        for a in &v.header {
+            uit += &format!("      {}: {} -> {}\n", a.attribuut, a.oud, a.nieuw);
+        }
+    }
     let losse = &v.losse_knopen;
     if !losse.toegevoegd.is_empty() || !losse.verwijderd.is_empty() {
-        uit += &format!(
-            "Losse knopen ({} erbij, {} weg):\n",
-            losse.toegevoegd.len(),
-            losse.verwijderd.len()
-        );
+        uit += &format!("Losse knopen ({} erbij, {} weg):\n", losse.toegevoegd.len(), losse.verwijderd.len());
         for k in &losse.toegevoegd {
             uit += &format!("  + {}\n", k.tekst);
         }
@@ -120,26 +114,15 @@ fn als_tekst(v: &Verschil) -> String {
     if v.is_leeg() {
         uit += "Geen verschil.\n";
     }
-    uit += &format!(
-        "a: {}\nb: {}\n",
-        samenvatting(&v.statistiek.a),
-        samenvatting(&v.statistiek.b)
-    );
+    uit += &format!("a: {}\nb: {}\n", samenvatting(&v.statistiek.a), samenvatting(&v.statistiek.b));
     if v.statistiek.relaties_gekoppeld > 0 {
-        uit += &format!(
-            "Relaties met een nieuwe GlobalId herkend: {}\n",
-            v.statistiek.relaties_gekoppeld
-        );
+        uit += &format!("Relaties met een nieuwe GlobalId herkend: {}\n", v.statistiek.relaties_gekoppeld);
     }
     uit
 }
 
 fn samenvatting(s: &VersieStatistiek) -> String {
-    let schema = if s.schema_tabel.is_empty() {
-        format!("{} (onbekend schema)", s.schema)
-    } else {
-        s.schema.clone()
-    };
+    let schema = if s.schema_tabel.is_empty() { format!("{} (onbekend schema)", s.schema) } else { s.schema.clone() };
     let mut uit = format!("{schema}, {} objecten, {} knopen", s.objecten, s.knopen);
     if !s.onbekende_typen.is_empty() {
         let aantal: usize = s.onbekende_typen.values().sum();

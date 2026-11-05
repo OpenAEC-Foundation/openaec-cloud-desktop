@@ -57,10 +57,7 @@ fn escape(ruw: &[u8], i: usize, uit: &mut String) -> usize {
                         let utf16: Vec<u16> = eenheden.iter().map(|&e| e as u16).collect();
                         String::from_utf16_lossy(&utf16)
                     } else {
-                        eenheden
-                            .iter()
-                            .map(|&e| char::from_u32(e).unwrap_or(char::REPLACEMENT_CHARACTER))
-                            .collect()
+                        eenheden.iter().map(|&e| char::from_u32(e).unwrap_or(char::REPLACEMENT_CHARACTER)).collect()
                     };
                     uit.push_str(&tekst);
                     return 4 + eind + 4;

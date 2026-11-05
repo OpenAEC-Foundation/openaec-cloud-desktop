@@ -21,14 +21,32 @@ pub(crate) struct Attribuut {
     pub naam: String,
     pub optioneel: bool,
     pub aggregaat: Option<Aggregaat>,
-    /// Het minimum aantal elementen (alleen voor SET, LIST en BAG).
+    /// Het minimum en maximum aantal elementen (alleen voor SET, LIST en BAG); maximum None = onbegrensd.
     pub minimum: u32,
+    pub maximum: Option<u32>,
+    /// Verandert bij elk opslaan (zie [`VLUCHTIG`]); telt niet mee in een hash.
+    pub vluchtig: bool,
+}
+
+/// Een INVERSE-attribuut: de instanties van `bron` die in hun attribuut `voor` naar deze entiteit verwijzen.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // gebruikt het samenvoegen.
+pub(crate) struct Inverse {
+    pub naam: String,
+    /// Type-naam in hoofdletters.
+    pub bron: String,
+    pub voor: String,
+    /// Bovengrens; None = onbegrensd.
+    pub max: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Entiteit {
     /// De naam zoals in het schema (bijv. `IfcTask`).
     pub naam: String,
+    /// Deze entiteit en haar supertypes, in hoofdletters, van onder naar boven.
+    #[allow(dead_code)] // gebruikt het samenvoegen.
+    pub voorouders: Vec<String>,
     /// IfcRoot of een subtype ervan: een object met een GlobalId.
     pub root: bool,
     /// Een subtype van IfcRelationship.
@@ -37,7 +55,31 @@ pub(crate) struct Entiteit {
     #[allow(dead_code)] // gebruikt het samenvoegen.
     pub benoemd: bool,
     pub attributen: Vec<Attribuut>,
+    /// Ook de geërfde.
+    #[allow(dead_code)] // gebruikt het samenvoegen.
+    pub inverses: Vec<Inverse>,
 }
+
+impl Entiteit {
+    /// Is deze entiteit `naam` (in hoofdletters) of een subtype ervan?
+    #[allow(dead_code)] // gebruikt het samenvoegen.
+    pub fn is_een(&self, naam: &str) -> bool {
+        self.voorouders.iter().any(|v| v == naam)
+    }
+}
+
+/// Velden die een programma bij elk opslaan opnieuw invult, per entiteit (met haar subtypes). Ze tellen niet mee
+/// bij het vergelijken; bij samenvoegen blijft de waarde van ons staan.
+/// - IfcOwnerHistory: de tijdstempels en wie het laatst wijzigde. OwningUser en OwningApplication tellen wel mee.
+/// - IfcWorkControl (IfcWorkPlan, IfcWorkSchedule): Open Planner Studio schrijft bij elk opslaan het huidige
+///   tijdstip in CreationDate (`creationDate: now` in `ifcWriter.ts`).
+pub(crate) const VLUCHTIG: &[(&str, &[&str])] = &[
+    (
+        "IFCOWNERHISTORY",
+        &["ChangeAction", "LastModifiedDate", "LastModifyingUser", "LastModifyingApplication", "CreationDate"],
+    ),
+    ("IFCWORKCONTROL", &["CreationDate"]),
+];
 
 pub(crate) struct Schema {
     pub naam: &'static str,
@@ -69,18 +111,49 @@ pub(crate) fn kies(file_schema: &str) -> Option<&'static Schema> {
 }
 
 fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
-    let mut entiteiten = HashMap::new();
+    struct Ruw<'t> {
+        supertype: Option<String>,
+        vlaggen: &'t str,
+        attributen: &'t str,
+        inverses: &'t str,
+        naam: &'t str,
+    }
+    let mut ruw: HashMap<String, Ruw> = HashMap::new();
     for regel in tekst.lines() {
         if regel.starts_with('!') || regel.is_empty() {
             continue;
         }
-        let mut delen = regel.split('|');
-        let (Some(type_naam), Some(_supertype), Some(vlaggen), Some(attrs)) =
-            (delen.next(), delen.next(), delen.next(), delen.next())
-        else {
+        let delen: Vec<&str> = regel.split('|').collect();
+        let [type_naam, supertype, vlaggen, attributen, inverses] = delen[..] else {
             continue;
         };
-        let attributen = attrs
+        ruw.insert(
+            type_naam.to_ascii_uppercase(),
+            Ruw {
+                supertype: (supertype != "-").then(|| supertype.to_ascii_uppercase()),
+                vlaggen,
+                attributen,
+                inverses,
+                naam: type_naam,
+            },
+        );
+    }
+    let mut entiteiten = HashMap::new();
+    for (sleutel, r) in &ruw {
+        let mut voorouders = vec![sleutel.clone()];
+        while let Some(boven) = ruw.get(voorouders.last().unwrap()).and_then(|r| r.supertype.clone()) {
+            if voorouders.contains(&boven) || voorouders.len() > 64 {
+                break;
+            }
+            voorouders.push(boven);
+        }
+        let vluchtig: Vec<&str> = VLUCHTIG
+            .iter()
+            .filter(|(entiteit, _)| voorouders.iter().any(|v| v == entiteit))
+            .flat_map(|(_, velden)| velden.iter().copied())
+            .collect();
+        let attributen = r
+            .attributen
             .split(',')
             .filter(|a| !a.is_empty())
             .map(|a| {
@@ -94,36 +167,60 @@ fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
                     Some(b'A') => Some(Aggregaat::Array),
                     _ => None,
                 };
-                let minimum = soort.get(1..).and_then(|m| m.parse().ok()).unwrap_or(0);
-                Attribuut {
-                    naam,
-                    optioneel,
-                    aggregaat,
-                    minimum,
-                }
+                let (minimum, maximum) = soort.get(1..).and_then(|g| g.split_once('-')).unwrap_or(("0", "?"));
+                let minimum = minimum.parse().unwrap_or(0);
+                let maximum = maximum.parse().ok();
+                let vluchtig = vluchtig.contains(&naam.as_str());
+                Attribuut { naam, optioneel, aggregaat, minimum, maximum, vluchtig }
             })
             .collect();
+        // Inverses van boven naar onder; een herdeclaratie vervangt die met dezelfde naam.
+        let mut inverses: Vec<Inverse> = Vec::new();
+        for voorouder in voorouders.iter().rev() {
+            let Some(v) = ruw.get(voorouder) else { continue };
+            for inv in v.inverses.split(',').filter(|i| !i.is_empty()) {
+                let Some(inverse) = lees_inverse(inv) else { continue };
+                match inverses.iter_mut().find(|i| i.naam == inverse.naam) {
+                    Some(bestaand) => *bestaand = inverse,
+                    None => inverses.push(inverse),
+                }
+            }
+        }
         entiteiten.insert(
-            type_naam.to_ascii_uppercase(),
+            sleutel.clone(),
             Entiteit {
-                naam: type_naam.to_string(),
-                root: vlaggen.contains('R'),
-                relatie: vlaggen.contains('Q'),
-                benoemd: vlaggen.contains('N'),
+                naam: r.naam.to_string(),
+                voorouders,
+                root: r.vlaggen.contains('R'),
+                relatie: r.vlaggen.contains('Q'),
+                benoemd: r.vlaggen.contains('N'),
                 attributen,
+                inverses,
             },
         );
     }
     Schema { naam, entiteiten }
 }
 
+/// `Naam=Type.ForAttribuut[min:max]`.
+fn lees_inverse(tekst: &str) -> Option<Inverse> {
+    let (naam, rest) = tekst.split_once('=')?;
+    let (bron, rest) = rest.split_once('.')?;
+    let (voor, grenzen) = rest.split_once('[')?;
+    let (_, max) = grenzen.trim_end_matches(']').split_once(':')?;
+    Some(Inverse {
+        naam: naam.to_string(),
+        bron: bron.to_ascii_uppercase(),
+        voor: voor.to_string(),
+        max: max.parse().ok(),
+    })
+}
+
 /// Is dit een geldige GlobalId: 22 tekens uit `0-9A-Za-z_$`, het eerste teken `0` tot en met `3`?
 pub(crate) fn is_globalid(tekst: &[u8]) -> bool {
     tekst.len() == 22
         && matches!(tekst[0], b'0'..=b'3')
-        && tekst
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
+        && tekst.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
 }
 
 #[cfg(test)]
@@ -141,11 +238,30 @@ mod tests {
             assert!(rel.root && rel.relatie);
             let elementen = rel.attributen.iter().find(|a| a.naam == "RelatedElements").unwrap();
             assert_eq!(elementen.aggregaat, Some(Aggregaat::Set));
-            assert_eq!(elementen.minimum, 1);
+            assert_eq!((elementen.minimum, elementen.maximum), (1, None));
             assert!(schema.entiteit("IFCPROPERTYSINGLEVALUE").unwrap().benoemd);
             assert!(!schema.entiteit("IFCCARTESIANPOINT").unwrap().root);
         }
         assert!(kies("IFC2X2").is_none());
+        let ifc4 = kies("IFC4").unwrap();
+        let wand = ifc4.entiteit("IFCWALLSTANDARDCASE").unwrap();
+        assert!(wand.is_een("IFCELEMENT") && wand.is_een("IFCROOT") && !wand.is_een("IFCRELATIONSHIP"));
+        let bevat = wand.inverses.iter().find(|i| i.naam == "ContainedInStructure").unwrap();
+        assert_eq!(
+            (bevat.bron.as_str(), bevat.voor.as_str(), bevat.max),
+            ("IFCRELCONTAINEDINSPATIALSTRUCTURE", "RelatedElements", Some(1))
+        );
+        let opening = ifc4.entiteit("IFCOPENINGELEMENT").unwrap();
+        let vult = opening.inverses.iter().find(|i| i.naam == "VoidsElements").unwrap();
+        assert_eq!(vult.max, Some(1));
+        let eigenaar = ifc4.entiteit("IFCOWNERHISTORY").unwrap();
+        let vluchtig: Vec<&str> = eigenaar.attributen.iter().filter(|a| a.vluchtig).map(|a| a.naam.as_str()).collect();
+        assert_eq!(vluchtig.len(), 5);
+        assert!(!eigenaar.attributen[0].vluchtig, "OwningUser telt mee");
+        let plan = kies("IFC4X3_ADD2").unwrap().entiteit("IFCWORKPLAN").unwrap();
+        assert!(plan.attributen.iter().any(|a| a.naam == "CreationDate" && a.vluchtig));
+        let punt = ifc4.entiteit("IFCCARTESIANPOINT").unwrap();
+        assert_eq!((punt.attributen[0].minimum, punt.attributen[0].maximum), (1, Some(3)));
         let taaktijd = kies("IFC4X3_ADD2").unwrap().entiteit("IFCTASKTIME").unwrap();
         assert_eq!(taaktijd.attributen.len(), 20);
         assert_eq!(kies("IFC4").unwrap().entiteit("IFCSIUNIT").unwrap().attributen.len(), 4);

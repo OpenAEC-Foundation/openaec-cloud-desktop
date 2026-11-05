@@ -29,11 +29,69 @@ pub(crate) struct Bestand<'a> {
     /// Indexen (in `instanties`) van alle verwijzingen, per instantie aaneengesloten.
     pub verwijzingen: Vec<u32>,
     /// Instantienummer -> index in `instanties`.
-    pub index: HashMap<u64, u32>,
+    pub index: Index,
     /// Begin van de `ENDSEC;` van de laatste DATA-sectie: hier komen nieuwe instanties.
     pub data_einde: usize,
     /// Het hoogste instantienummer.
     pub hoogste: u64,
+    /// De regels van de HEADER (FILE_DESCRIPTION, FILE_NAME, FILE_SCHEMA...).
+    pub header: Vec<HeaderRegel>,
+}
+
+/// Een regel uit de HEADER, bijv. `FILE_NAME('a.ifc','2026-10-26T11:31:17',('Anne'),...);`.
+pub(crate) struct HeaderRegel {
+    /// In hoofdletters.
+    pub naam: String,
+    /// Van de naam tot en met `;`.
+    #[allow(dead_code)] // gebruikt het samenvoegen.
+    pub bereik: Bereik,
+    /// Elke parameter op het hoogste niveau.
+    pub parameters: Vec<Bereik>,
+}
+
+/// Instantienummer -> index. Liggen de nummers dicht bij elkaar (zoals meestal), dan een gewone tabel; anders een
+/// HashMap.
+pub(crate) enum Index {
+    Tabel(Vec<u32>),
+    Kaart(HashMap<u64, u32>),
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Index::Kaart(HashMap::new())
+    }
+}
+
+const GEEN: u32 = u32::MAX;
+
+impl Index {
+    fn nieuw(hoogste: u64, aantal: usize) -> Self {
+        if hoogste <= (aantal as u64).saturating_mul(4).saturating_add(1024) {
+            Index::Tabel(vec![GEEN; hoogste as usize + 1])
+        } else {
+            Index::Kaart(HashMap::with_capacity(aantal))
+        }
+    }
+
+    /// Geeft false als het nummer al bestond.
+    fn zet(&mut self, nummer: u64, index: u32) -> bool {
+        match self {
+            Index::Tabel(t) => {
+                let plek = &mut t[nummer as usize];
+                let nieuw = *plek == GEEN;
+                *plek = index;
+                nieuw
+            }
+            Index::Kaart(k) => k.insert(nummer, index).is_none(),
+        }
+    }
+
+    pub fn get(&self, nummer: &u64) -> Option<&u32> {
+        match self {
+            Index::Tabel(t) => usize::try_from(*nummer).ok().and_then(|n| t.get(n)).filter(|&&i| i != GEEN),
+            Index::Kaart(k) => k.get(nummer),
+        }
+    }
 }
 
 pub(crate) struct Instantie {
@@ -79,10 +137,7 @@ pub(crate) fn regel(data: &[u8], positie: usize) -> usize {
 }
 
 fn ongeldig(data: &[u8], positie: usize, melding: impl Into<String>) -> Fout {
-    Fout::Ongeldig {
-        regel: regel(data, positie),
-        melding: melding.into(),
-    }
+    Fout::Ongeldig { regel: regel(data, positie), melding: melding.into() }
 }
 
 /// Leest een STEP-bestand.
@@ -101,9 +156,10 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
         instanties: Vec::new(),
         attributen: Vec::new(),
         verwijzingen: Vec::new(),
-        index: HashMap::new(),
+        index: Index::default(),
         data_einde: 0,
         hoogste: 0,
+        header: Vec::new(),
     };
     let mut typen: HashMap<Vec<u8>, u32> = HashMap::new();
     let mut ruwe_refs: Vec<u64> = Vec::new();
@@ -111,11 +167,7 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
     lezer.spatie()?;
     let begin = lezer.pos;
     if lezer.trefwoord_met_streepjes()? != b"ISO-10303-21" {
-        return Err(ongeldig(
-            data,
-            begin,
-            "het bestand begint niet met ISO-10303-21; (geen STEP-bestand)",
-        ));
+        return Err(ongeldig(data, begin, "het bestand begint niet met ISO-10303-21; (geen STEP-bestand)"));
     }
     lezer.spatie()?;
     lezer.verwacht(b';')?;
@@ -124,11 +176,7 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
     loop {
         lezer.spatie()?;
         if lezer.pos >= data.len() {
-            return Err(ongeldig(
-                data,
-                lezer.pos,
-                "het bestand eindigt zonder END-ISO-10303-21;",
-            ));
+            return Err(ongeldig(data, lezer.pos, "het bestand eindigt zonder END-ISO-10303-21;"));
         }
         let begin = lezer.pos;
         let woord = lezer.trefwoord_met_streepjes()?;
@@ -140,7 +188,7 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
                 header_gezien = true;
                 lezer.spatie()?;
                 lezer.verwacht(b';')?;
-                lezer.header(&mut bestand.schema)?;
+                lezer.header(&mut bestand.schema, &mut bestand.header)?;
             }
             b"DATA" => {
                 if !header_gezien {
@@ -172,10 +220,7 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
                 return Err(ongeldig(
                     data,
                     begin,
-                    format!(
-                        "onverwacht woord '{}' (verwacht HEADER, DATA of END-ISO-10303-21)",
-                        toon(woord)
-                    ),
+                    format!("onverwacht woord '{}' (verwacht HEADER, DATA of END-ISO-10303-21)", toon(woord)),
                 ));
             }
         }
@@ -185,16 +230,12 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
     }
 
     // Instantienummers koppelen aan indexen.
-    bestand.index.reserve(bestand.instanties.len());
+    bestand.hoogste = bestand.instanties.iter().map(|i| i.id).max().unwrap_or(0);
+    bestand.index = Index::nieuw(bestand.hoogste, bestand.instanties.len());
     for (i, inst) in bestand.instanties.iter().enumerate() {
-        if bestand.index.insert(inst.id, i as u32).is_some() {
-            return Err(ongeldig(
-                data,
-                inst.bereik.0 as usize,
-                format!("instantie #{} komt twee keer voor", inst.id),
-            ));
+        if !bestand.index.zet(inst.id, i as u32) {
+            return Err(ongeldig(data, inst.bereik.0 as usize, format!("instantie #{} komt twee keer voor", inst.id)));
         }
-        bestand.hoogste = bestand.hoogste.max(inst.id);
     }
     bestand.verwijzingen.reserve_exact(ruwe_refs.len());
     for inst in &bestand.instanties {
@@ -263,22 +304,10 @@ impl<'a> Lezer<'a> {
 
     fn onverwacht(&self, verwacht: &str) -> Fout {
         match self.kijk() {
-            None => ongeldig(
-                self.data,
-                self.pos,
-                format!("het bestand houdt op; verwacht {verwacht}"),
-            ),
+            None => ongeldig(self.data, self.pos, format!("het bestand houdt op; verwacht {verwacht}")),
             Some(b) => {
-                let teken = if b.is_ascii_graphic() {
-                    format!("'{}'", b as char)
-                } else {
-                    format!("byte 0x{b:02X}")
-                };
-                ongeldig(
-                    self.data,
-                    self.pos,
-                    format!("onverwacht teken {teken}; verwacht {verwacht}"),
-                )
+                let teken = if b.is_ascii_graphic() { format!("'{}'", b as char) } else { format!("byte 0x{b:02X}") };
+                ongeldig(self.data, self.pos, format!("onverwacht teken {teken}; verwacht {verwacht}"))
             }
         }
     }
@@ -309,7 +338,7 @@ impl<'a> Lezer<'a> {
     }
 
     /// De HEADER-sectie tot en met `ENDSEC;`. Haalt de eerste naam uit FILE_SCHEMA.
-    fn header(&mut self, schema: &mut String) -> Result<(), Fout> {
+    fn header(&mut self, schema: &mut String, regels: &mut Vec<HeaderRegel>) -> Result<(), Fout> {
         loop {
             self.spatie()?;
             let begin = self.pos;
@@ -320,7 +349,8 @@ impl<'a> Lezer<'a> {
             }
             let lijst_begin = self.pos;
             let mut refs = Vec::new();
-            self.lijst(&mut refs)?;
+            let mut parameters = Vec::new();
+            self.parameters(&mut parameters, &mut refs)?;
             if !refs.is_empty() {
                 return Err(ongeldig(self.data, begin, "verwijzing (#n) in de HEADER"));
             }
@@ -331,6 +361,36 @@ impl<'a> Lezer<'a> {
             }
             self.spatie()?;
             self.verwacht(b';')?;
+            regels.push(HeaderRegel {
+                naam: String::from_utf8_lossy(naam).to_ascii_uppercase(),
+                bereik: (begin as u32, self.pos as u32),
+                parameters: parameters.into_iter().map(|(a, b)| (a as u32, b as u32)).collect(),
+            });
+        }
+    }
+
+    /// Een parameterlijst `( waarde, waarde, ... )`; legt het bereik van elke waarde op het hoogste niveau vast.
+    fn parameters(&mut self, bereiken: &mut Vec<(usize, usize)>, refs: &mut Vec<u64>) -> Result<(), Fout> {
+        self.verwacht(b'(')?;
+        let begin = bereiken.len();
+        loop {
+            self.spatie()?;
+            if self.kijk() == Some(b')') && bereiken.len() == begin {
+                self.pos += 1;
+                return Ok(());
+            }
+            let a = self.pos;
+            self.waarde(refs)?;
+            bereiken.push((a, self.pos));
+            self.spatie()?;
+            match self.kijk() {
+                Some(b',') => self.pos += 1,
+                Some(b')') => {
+                    self.pos += 1;
+                    return Ok(());
+                }
+                _ => return Err(self.onverwacht("',' of ')'")),
+            }
         }
     }
 
@@ -390,11 +450,7 @@ impl<'a> Lezer<'a> {
                     bestand.attributen.push((deel_begin as u32, self.pos as u32));
                 }
                 if namen.is_empty() {
-                    return Err(ongeldig(
-                        self.data,
-                        romp_begin,
-                        format!("#{id}: lege complexe instantie"),
-                    ));
+                    return Err(ongeldig(self.data, romp_begin, format!("#{id}: lege complexe instantie")));
                 }
                 (true, (romp_begin as u32 + 1, self.pos as u32 - 1), namen)
             } else {
@@ -402,26 +458,9 @@ impl<'a> Lezer<'a> {
                 let naam = self.trefwoord()?;
                 let naam_eind = self.pos;
                 self.spatie()?;
-                self.verwacht(b'(')?;
-                loop {
-                    self.spatie()?;
-                    if self.kijk() == Some(b')') && bestand.attributen.len() as u32 == attr_begin {
-                        self.pos += 1;
-                        break;
-                    }
-                    let a = self.pos;
-                    self.waarde(refs)?;
-                    bestand.attributen.push((a as u32, self.pos as u32));
-                    self.spatie()?;
-                    match self.kijk() {
-                        Some(b',') => self.pos += 1,
-                        Some(b')') => {
-                            self.pos += 1;
-                            break;
-                        }
-                        _ => return Err(self.onverwacht("',' of ')'")),
-                    }
-                }
+                let mut bereiken = Vec::new();
+                self.parameters(&mut bereiken, refs)?;
+                bestand.attributen.extend(bereiken.into_iter().map(|(a, b)| (a as u32, b as u32)));
                 (false, (naam_begin as u32, naam_eind as u32), naam.to_ascii_uppercase())
             };
             self.spatie()?;
@@ -599,10 +638,7 @@ fn zoek(data: &[u8], vanaf: usize, naald: &[u8]) -> Option<usize> {
     if vanaf >= data.len() {
         return None;
     }
-    data[vanaf..]
-        .windows(naald.len())
-        .position(|w| w == naald)
-        .map(|p| p + vanaf)
+    data[vanaf..].windows(naald.len()).position(|w| w == naald).map(|p| p + vanaf)
 }
 
 fn zoek_byte(data: &[u8], vanaf: usize, byte: u8) -> Option<usize> {
@@ -811,6 +847,9 @@ mod tests {
         );
         let b = lees(tekst.as_bytes()).unwrap();
         assert_eq!(b.schema, "IFC4");
+        assert_eq!(b.header.len(), 3);
+        assert_eq!(b.header[1].naam, "FILE_NAME");
+        assert_eq!(b.header[1].parameters.len(), 7);
         assert_eq!(b.instanties.len(), 3);
         assert_eq!(b.type_naam(1), "IFCAXIS2PLACEMENT3D");
         let attrs: Vec<&[u8]> = b.attributen(1).iter().map(|&r| b.tekst(r)).collect();
@@ -861,9 +900,8 @@ mod tests {
 
     #[test]
     fn tokens() {
-        let t: Vec<Token> = Tokens::nieuw(b"(#12,'a''b',.T.,IFCLABEL('x'),-1.5E-3,$,*,\"0F\")")
-            .map(|(_, t)| t)
-            .collect();
+        let t: Vec<Token> =
+            Tokens::nieuw(b"(#12,'a''b',.T.,IFCLABEL('x'),-1.5E-3,$,*,\"0F\")").map(|(_, t)| t).collect();
         assert_eq!(
             t,
             vec![
