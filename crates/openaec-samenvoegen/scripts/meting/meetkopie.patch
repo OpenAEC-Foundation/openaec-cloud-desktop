@@ -1,0 +1,191 @@
+diff -ruN a/src/bin/openaec-samenvoegen.rs b/src/bin/openaec-samenvoegen.rs
+--- a/src/bin/openaec-samenvoegen.rs	2026-11-05 14:21:05.565674074 +0100
++++ b/src/bin/openaec-samenvoegen.rs	2026-11-05 14:21:05.903678482 +0100
+@@ -18,6 +18,8 @@
+ 
+ #[derive(Subcommand)]
+ enum Opdracht {
++    /// Meetkopie: alleen lezen en tellen.
++    Tel { bestand: PathBuf },
+     /// Het verschil tussen twee versies van een IFC-bestand.
+     Verschil {
+         a: PathBuf,
+@@ -58,9 +60,19 @@
+ 
+ fn voer_uit(opdracht: Opdracht) -> Result<ExitCode, String> {
+     match opdracht {
++        Opdracht::Tel { bestand } => {
++            openaec_samenvoegen::fase("voor inlezen");
++            let inhoud = lees(&bestand)?;
++            openaec_samenvoegen::fase("bestand ingelezen");
++            let s = openaec_samenvoegen::tel(&inhoud).map_err(|e| e.to_string())?;
++            println!("{} instanties, {} objecten, {} knopen", s.instanties, s.objecten, s.knopen);
++            Ok(ExitCode::SUCCESS)
++        }
+         Opdracht::Verschil { a, b, json } => {
++            openaec_samenvoegen::fase("voor inlezen");
+             let inhoud_a = lees(&a)?;
+             let inhoud_b = lees(&b)?;
++            openaec_samenvoegen::fase("bestanden ingelezen");
+             let v = verschil(&inhoud_a, &inhoud_b).map_err(|e| e.to_string())?;
+             if json {
+                 println!("{}", serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?);
+@@ -70,7 +82,9 @@
+             Ok(ExitCode::SUCCESS)
+         }
+         Opdracht::VoegSamen { basis, ons, hun, uit, rapport } => {
++            openaec_samenvoegen::fase("voor inlezen");
+             let (b, o, h) = (lees(&basis)?, lees(&ons)?, lees(&hun)?);
++            openaec_samenvoegen::fase("bestanden ingelezen");
+             let s = voeg_samen(&b, &o, &h).map_err(|e| e.to_string())?;
+             if let Some(pad) = &rapport {
+                 let json = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
+diff -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2026-11-05 14:21:05.659675300 +0100
++++ b/src/lib.rs	2026-11-05 14:21:05.965679291 +0100
+@@ -46,6 +46,36 @@
+     Intern(String),
+ }
+ 
++/// Meetkopie: tijd sinds de vorige fase en het geheugen nu (VmRSS) en de piek (VmHWM), naar stderr.
++pub fn fase(naam: &str) {
++    use std::sync::Mutex;
++    use std::time::Instant;
++    static VORIGE: Mutex<Option<Instant>> = Mutex::new(None);
++    let mut v = VORIGE.lock().unwrap();
++    let nu = Instant::now();
++    let dt = v.map(|t| nu.duration_since(t).as_secs_f64()).unwrap_or(0.0);
++    *v = Some(nu);
++    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
++    let veld = |k: &str| {
++        status.lines().find(|r| r.starts_with(k)).and_then(|r| r.split_whitespace().nth(1)).and_then(|x| x.parse::<u64>().ok()).unwrap_or(0) / 1024
++    };
++    eprintln!("FASE\t{naam}\t{dt:.3}\t{}\t{}", veld("VmRSS:"), veld("VmHWM:"));
++}
++
++/// Meetkopie: alleen lezen en tellen (ontleden en indelen in objecten en knopen), zonder hashes.
++pub fn tel(data: &[u8]) -> Result<VersieStatistiek, Fout> {
++    fase("start");
++    let b = ontleden::lees(data)?;
++    fase("ontleden");
++    let n = b.instanties.len();
++    drop(b);
++    let m = model::Model::lees(data)?;
++    fase("ontleden+indelen");
++    let mut s = m.statistiek.clone();
++    s.instanties = n;
++    Ok(s)
++}
++
+ impl Fout {
+     pub(crate) fn intern(melding: &str) -> Self {
+         Fout::Intern(melding.to_string())
+diff -ruN a/src/samenvoegen.rs b/src/samenvoegen.rs
+--- a/src/samenvoegen.rs	2026-11-05 14:21:05.704675887 +0100
++++ b/src/samenvoegen.rs	2026-11-05 14:21:06.036680217 +0100
+@@ -314,6 +314,7 @@
+ /// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen. Bij een conflict is er geen resultaat,
+ /// wel een rapport.
+ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, Fout> {
++    crate::fase("start");
+     let (mb, mo, mh) = std::thread::scope(|s| {
+         let b = s.spawn(|| Model::lees(basis));
+         let h = s.spawn(|| Model::lees(hun));
+@@ -322,6 +323,7 @@
+         (b.join().unwrap_or_else(|_| fout()), o, h.join().unwrap_or_else(|_| fout()))
+     });
+     let (mut mb, mut mo, mut mh) = (mb?, mo?, mh?);
++    crate::fase("lezen");
+     let gekoppeld = koppel_relaties(&mb, &mut mo) + koppel_relaties(&mb, &mut mh);
+     markeer_gemeen(&mut [&mut mb, &mut mo, &mut mh]);
+     std::thread::scope(|s| {
+@@ -329,6 +331,7 @@
+         s.spawn(|| mh.bereken_puur());
+         mo.bereken_puur();
+     });
++    crate::fase("koppelen+bereken_puur");
+     // Een anker in een SET dat aan één kant een andere inhoud kreeg, houdt de positie van de basis.
+     stem_ankers_af(&mb, &mut mo);
+     stem_ankers_af(&mb, &mut mh);
+@@ -337,6 +340,7 @@
+         s.spawn(|| mh.bereken());
+         mo.bereken();
+     });
++    crate::fase("ankers+bereken");
+     let m = [mb, mo, mh];
+     let mut statistiek = SamenvoegStatistiek {
+         basis: m[B].statistiek.clone(),
+@@ -372,7 +376,9 @@
+         None
+     };
+     let mut conflicten = Vec::new();
++    crate::fase("vluchtig+gelijk");
+     let plan = besluit(&m, &vluchtig, &knopen, &mut conflicten);
++    crate::fase("besluit");
+     if let Some(inhoud) = ongewijzigd {
+         tel_besluiten(&plan, &mut statistiek);
+         return Ok(Samenvoeging { inhoud: Some(inhoud.to_vec()), gelukt: true, conflicten, statistiek });
+@@ -383,6 +389,7 @@
+         conflicten = controleer_verwijzingen(&m, &plan);
+     }
+     tel_besluiten(&plan, &mut statistiek);
++    crate::fase("controles");
+     if !conflicten.is_empty() {
+         return mislukt(conflicten, statistiek);
+     }
+@@ -390,6 +397,7 @@
+         Ok(g) => g,
+         Err(c) => return mislukt(c, statistiek),
+     };
++    crate::fase("schrijven");
+     let mut gevonden = Vec::new();
+     match Model::lees(&g.inhoud) {
+         Ok(mut r) => {
+@@ -414,6 +422,7 @@
+             format!("het resultaat is geen geldig bestand: {fout}"),
+         )),
+     }
++    crate::fase("zelfcontrole");
+     if !gevonden.is_empty() {
+         return mislukt(gevonden, statistiek);
+     }
+diff -ruN a/src/verschil.rs b/src/verschil.rs
+--- a/src/verschil.rs	2026-11-05 14:21:05.885678247 +0100
++++ b/src/verschil.rs	2026-11-05 14:21:06.424685278 +0100
+@@ -119,29 +119,35 @@
+ 
+ /// Het verschil tussen twee versies van een IFC-bestand.
+ pub fn verschil(a: &[u8], b: &[u8]) -> Result<Verschil, Fout> {
++    crate::fase("start");
+     let (ma, mb) = std::thread::scope(|s| {
+         let a = s.spawn(|| Model::lees(a));
+         let b = Model::lees(b);
+         (a.join().unwrap_or_else(|_| Err(Fout::intern("lezen mislukt"))), b)
+     });
+     let (mut ma, mut mb) = (ma?, mb?);
++    crate::fase("lezen");
+     let relaties_gekoppeld = koppel_relaties(&ma, &mut mb);
+     markeer_gemeen(&mut [&mut ma, &mut mb]);
+     std::thread::scope(|s| {
+         s.spawn(|| ma.bereken_puur());
+         mb.bereken_puur();
+     });
++    crate::fase("koppelen+bereken_puur");
+     stem_ankers_af(&ma, &mut mb);
+     std::thread::scope(|s| {
+         s.spawn(|| ma.bereken());
+         mb.bereken();
+     });
++    crate::fase("ankers+bereken");
+     for m in [&ma, &mb] {
+         if let Some(k) = m.kring {
+             return Err(Fout::Kring { regel: m.bestand.regel(m.bestand.instanties[k as usize].bereik.0 as usize) });
+         }
+     }
+-    Ok(vergelijk(&ma, &mb, relaties_gekoppeld))
++    let v = vergelijk(&ma, &mb, relaties_gekoppeld);
++    crate::fase("vergelijken");
++    Ok(v)
+ }
+ 
+ pub(crate) fn vergelijk(ma: &Model, mb: &Model, relaties_gekoppeld: usize) -> Verschil {
