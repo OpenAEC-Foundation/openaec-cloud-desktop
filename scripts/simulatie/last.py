@@ -376,7 +376,13 @@ async def hoofd(args) -> dict:
 		if args.lijst:
 			c = Client(0, sleutels[0], ruimte, http, Meter())
 			anderen = [Client(i, sleutels[i], stil, http, Meter()) for i in range(1, min(len(sleutels), 21))]
-			verslag["lijst"] = await lijst(frappe, c, anderen, ruimte, stil, bestand, [int(s) for s in args.lijst.split(",")])
+			try:
+				verslag["lijst"] = await lijst(frappe, c, anderen, ruimte, stil, bestand, [int(s) for s in args.lijst.split(",")])
+			finally:
+				# De proefregels weer weg: anders moet elke volgende lezing op deze site ze nog nummeren.
+				frappe.db.rollback()
+				frappe.db.sql("delete from `tabOpslagwijziging` where naam = 'last' and doel = %s", bestand)
+				frappe.db.commit()
 	return verslag
 
 
