@@ -541,3 +541,125 @@ fn kring_over_ankers_is_een_fout() {
         }
     }
 }
+
+// --- Ankers in een SET (ontwerp §5.6): Sols gevallen uit ronde 3 (#6, bevinding 1 en 2). ---
+
+/// De gewijzigde objecten (GlobalId) met hun gewijzigde attributen; nooit iets erbij of eraf.
+fn gewijzigd(a: &str, b: &str) -> Vec<(String, Vec<String>)> {
+    let v = verschil(a.as_bytes(), b.as_bytes()).unwrap();
+    assert!(v.toegevoegd.is_empty() && v.verwijderd.is_empty(), "{v:#?}");
+    let mut uit: Vec<_> = v
+        .gewijzigd
+        .iter()
+        .map(|w| (w.globalid.clone(), w.attributen.iter().map(|a| a.attribuut.clone()).collect()))
+        .collect();
+    uit.sort();
+    uit
+}
+
+/// Alleen het project, in zijn RepresentationContexts.
+fn alleen_het_project() -> Vec<(String, Vec<String>)> {
+    vec![(gid("Project"), vec!["RepresentationContexts".to_string()])]
+}
+
+/// Bevinding 1: W gaat naar een context met dezelfde inhoud, met en zonder andere volgorde. W staat in het
+/// rapport. Er is geen eenduidige koppeling (de objecten die naar de contexten verwijzen, zijn anders), dus ook V
+/// telt als gewijzigd: een wijziging te veel mag, een verborgen wijziging niet (§5.6, knownbugs punt 7).
+#[test]
+fn wand_naar_een_gelijke_context() {
+    for schema in SCHEMAS {
+        let a = met_contexten(schema, Some(GELIJK));
+        let verplaatst = vervang(&a, "*,#7,$,.MODEL_VIEW.", "*,#70,$,.MODEL_VIEW.");
+        for b in [verplaatst.clone(), vervang(&verplaatst, ",(#7,#70),#8);", ",(#70,#7),#8);")] {
+            let (fa, fb) = (Feiten::lees(&a), Feiten::lees(&b));
+            assert_eq!(fa.instantie(7).unwrap().1, fa.instantie(70).unwrap().1, "{schema}: gelijke inhoud");
+            assert_eq!((context_van(&fa, "WandW"), context_van(&fa, "WandV")), (7, 70), "{schema}");
+            assert_eq!((context_van(&fb, "WandW"), context_van(&fb, "WandV")), (70, 70), "{schema}");
+            let w = gewijzigd(&a, &hernummer(&b, 6));
+            assert!(w.contains(&(gid("WandW"), vec!["Representation.Representations".to_string()])), "{schema}: {w:?}");
+            assert!(w.iter().all(|(g, _)| *g == gid("WandW") || *g == gid("WandV")), "{schema}: {w:?}");
+        }
+    }
+}
+
+/// Bevinding 1: twee contexten met dezelfde inhoud wisselen van plek; verder verandert niets.
+#[test]
+fn gelijke_contexten_omwisselen() {
+    for schema in SCHEMAS {
+        let a = met_contexten(schema, Some(GELIJK));
+        let b = vervang(&a, ",(#7,#70),#8);", ",(#70,#7),#8);");
+        let (fa, fb) = (Feiten::lees(&a), Feiten::lees(&b));
+        assert_eq!(fa.verwijzingen(6, 7), [7, 70]);
+        assert_eq!(fb.verwijzingen(6, 7), [70, 7]);
+        for f in [&fa, &fb] {
+            assert_eq!((context_van(f, "WandW"), context_van(f, "WandV")), (7, 70), "{schema}");
+        }
+        assert!(leeg(&a, &hernummer(&b, 7)), "{schema}");
+    }
+}
+
+/// Bevinding 1: een nieuwe context met dezelfde inhoud komt vooraan. Alleen het project verandert.
+#[test]
+fn gelijke_nieuwe_context_vooraan() {
+    for schema in SCHEMAS {
+        let a = met_contexten(schema, None);
+        let b = voeg_toe(&vervang(&a, ",(#7),#8);", ",(#70,#7),#8);"), GELIJK);
+        let fb = Feiten::lees(&b);
+        assert_eq!(fb.instantie(7).unwrap().1, fb.instantie(70).unwrap().1, "{schema}");
+        assert_eq!((context_van(&fb, "WandW"), context_van(&fb, "WandV")), (7, 7), "{schema}");
+        assert_eq!(gewijzigd(&a, &hernummer(&b, 8)), alleen_het_project(), "{schema}");
+    }
+}
+
+/// Bevinding 2: twee contexten veranderen allebei (de precisie), en wisselen van plek. Alleen het project
+/// verandert. Ook als maar één context verandert en de andere gelijk blijft (Sols test_03).
+#[test]
+fn twee_gewijzigde_contexten() {
+    for schema in SCHEMAS {
+        let a = met_contexten(schema, Some(ANDERS));
+        let omgewisseld = vervang(&a, ",(#7,#70),#8);", ",(#70,#7),#8);");
+        let een = vervang(&omgewisseld, "($,'Model',3,1.E-05,", "($,'Model',3,1.E-04,");
+        let twee = vervang(&een, "('Other','Model',3,1.E-05,", "('Other','Model',3,1.E-03,");
+        for b in [een, twee] {
+            let (fa, fb) = (Feiten::lees(&a), Feiten::lees(&b));
+            assert_eq!((context_van(&fb, "WandW"), context_van(&fb, "WandV")), (7, 70), "{schema}");
+            let anders: Vec<u64> = fa.nummers().into_iter().filter(|&n| fa.instantie(n) != fb.instantie(n)).collect();
+            assert!(anders.contains(&6) && anders.contains(&7) && anders.len() <= 3, "{schema}: {anders:?}");
+            assert_eq!(gewijzigd(&a, &hernummer(&b, 9)), alleen_het_project(), "{schema}");
+        }
+    }
+}
+
+/// Bevinding 2: de context verandert (de precisie) en er komt een nieuwe context bij. Alleen het project
+/// verandert.
+#[test]
+fn gewijzigde_naast_nieuwe_context() {
+    for schema in SCHEMAS {
+        let a = met_contexten(schema, None);
+        let b = vervang(&a, "($,'Model',3,1.E-05,", "($,'Model',3,1.E-04,");
+        for lijst in [",(#7,#70),#8);", ",(#70,#7),#8);"] {
+            let b = voeg_toe(&vervang(&b, ",(#7),#8);", lijst), ANDERS);
+            assert_eq!(context_van(&Feiten::lees(&b), "WandW"), 7, "{schema}");
+            assert_eq!(gewijzigd(&a, &hernummer(&b, 10)), alleen_het_project(), "{schema}");
+        }
+    }
+}
+
+/// Bevinding 3: een diep geneste getypte SET (Sols test_12) is een fout met regelnummer, geen stack overflow. Net
+/// onder de grens werkt het vergelijken nog.
+#[test]
+fn diepe_getypte_set_is_een_fout() {
+    let diep = |n: usize| {
+        ifc("IFC4", &format!("#1=IFCDOESNOTEXIST({}${});", "IFCPROPERTYSETDEFINITIONSET((".repeat(n), "))".repeat(n)))
+    };
+    let a = diep(127);
+    assert!(leeg(&a, &a));
+    let a = diep(1500);
+    match verschil(a.as_bytes(), a.as_bytes()) {
+        Err(Fout::Ongeldig { regel, melding }) => {
+            assert_eq!(regel, a.lines().position(|r| r.starts_with("#1=")).unwrap() + 1);
+            assert!(melding.contains("dieper"), "{melding}");
+        }
+        x => panic!("verwachtte Fout::Ongeldig: {:?}", x.map(|_| ())),
+    }
+}

@@ -256,6 +256,41 @@ pub fn gebouw(schema: &str) -> String {
     ifc(schema, &data)
 }
 
+/// Een tweede context met dezelfde inhoud als #7, en een die anders is.
+pub const GELIJK: &str = "#70=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#11,$);";
+pub const ANDERS: &str = "#70=IFCGEOMETRICREPRESENTATIONCONTEXT('Other','Model',3,1.E-05,#11,$);";
+
+/// Het gebouw met een vorm voor W en V, elk in een eigen subcontext (#74 en #75). Met `tweede` heeft het project
+/// twee contexten (#7,#70) en hangt V aan #70; zonder hangen W en V allebei aan #7.
+pub fn met_contexten(schema: &str, tweede: Option<&str>) -> String {
+    let t = vervang(&gebouw(schema), "'W',$,$,#40,$,", "'W',$,$,#40,#73,");
+    let t = vervang(&t, "'V',$,$,#45,$,", "'V',$,$,#45,#78,");
+    let t = match tweede {
+        Some(context) => voeg_toe(&vervang(&t, ",(#7),#8);", ",(#7,#70),#8);"), context),
+        None => t,
+    };
+    let ouder_v = if tweede.is_some() { "#70" } else { "#7" };
+    voeg_toe(
+        &t,
+        &format!(
+            "#71=IFCPOLYLINE((#10,#42));\n\
+             #72=IFCSHAPEREPRESENTATION(#74,'Axis','Curve3D',(#71));\n\
+             #73=IFCPRODUCTDEFINITIONSHAPE($,$,(#72));\n\
+             #74=IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*,#7,$,.MODEL_VIEW.,$);\n\
+             #75=IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*,{ouder_v},$,.MODEL_VIEW.,$);\n\
+             #76=IFCPOLYLINE((#10,#47));\n\
+             #77=IFCSHAPEREPRESENTATION(#75,'Axis','Curve3D',(#76));\n\
+             #78=IFCPRODUCTDEFINITIONSHAPE($,$,(#77));"
+        ),
+    )
+}
+
+/// Los nagegaan: de context waar de vorm van object `naam` (via zijn subcontext) aan hangt.
+pub fn context_van(f: &Feiten, naam: &str) -> u64 {
+    let vorm = f.verwijzingen(f.verwijzing(f.met_globalid(&gid(naam)), 6), 2)[0];
+    f.verwijzing(f.verwijzing(vorm, 0), 6)
+}
+
 // --- Een losse lezer voor feiten in een resultaat. ---
 
 /// Een eenvoudige lezer voor de tests: per `#n` het type en de attributen als tekst. Hij deelt geen code met de

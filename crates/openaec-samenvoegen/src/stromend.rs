@@ -23,8 +23,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::model::{
-    anker_identiteit, eerste_token, enkele_set_ankers, enkele_verwijzing, herken, herposities, posities,
-    wortel_sleutel, Anker, Bron, Canon, Hash, Knopen, Model, Soort, VersieStatistiek, GEEN_EIGENAAR, MEER_EIGENAARS,
+    anker_identiteit, eerste_token, enkele_verwijzing, herken, koppel_leden, posities, set_leden, wortel_sleutel,
+    Anker, Bron, Canon, Hash, Knopen, Model, Soort, VersieStatistiek, GEEN_EIGENAAR, MEER_EIGENAARS,
 };
 use crate::ontleden::{doorloop, instantie_op, regel, Delen, Kop, Token, Tokens};
 use crate::schema::{self, Entiteit};
@@ -295,6 +295,8 @@ pub(crate) struct Versie<'d> {
     puur_memo: RefCell<HashMap<u64, Hash>>,
     /// Per knoop met vluchtige velden: hoeveel objecten er rechtstreeks naar verwijzen (pas als het nodig is).
     verankerd: RefCell<Option<HashMap<u64, u32>>>,
+    /// Uitkomsten van [`Versie::verwijzende_objecten`] die het hele bestand doorzochten.
+    verwijzend: RefCell<HashMap<u64, Vec<String>>>,
 }
 
 fn sleutel_van(globalid: &str) -> u128 {
@@ -424,6 +426,7 @@ impl<'d> Versie<'d> {
             knoop_memo: RefCell::default(),
             puur_memo: RefCell::default(),
             verankerd: RefCell::default(),
+            verwijzend: RefCell::default(),
         };
         versie.dubbele_globalid()?;
         Ok(versie)
@@ -555,22 +558,25 @@ impl<'d> Versie<'d> {
                     continue;
                 }
                 let px = |k: usize| self.puur(k as u64);
-                let mut vast: HashMap<u64, u64> = HashMap::new();
+                // De koppeling van de leden van een SET met die van de basis, zoals `stem_ankers_af`.
+                let mut koppeling: HashMap<u32, u32> = HashMap::new();
                 if let (Some(b), Some(op)) = (basis, &basis_op_sleutel) {
                     if let Some(&ob) = op.get(&self.objecten[o].sleutel) {
                         let ib = b.objecten[ob as usize].n as usize;
+                        let pb = |k: usize| b.puur(k as u64);
                         if b.type_naam(ib) == self.type_naam(i) && b.aantal_attributen(ib) == aantal {
-                            let pb = |k: usize| b.puur(k as u64);
-                            if let (Some(ex), Some(eb)) =
-                                (enkele_set_ankers(&*self, i, j, &px), enkele_set_ankers(b, ib, j, &pb))
-                            {
-                                vast.extend(herposities(&ex, &eb));
+                            if let (Some(lb), Some(lx)) = (set_leden(b, ib, j, &pb), set_leden(&*self, i, j, &px)) {
+                                let m = [b, &*self];
+                                let mut verwijzend = |kant: usize, k: usize| {
+                                    m[kant].verwijzende_objecten(k as u64, [ib, i][kant] as u64)
+                                };
+                                koppeling.extend(koppel_leden(m, [&lb, &lx], [&pb, &px], &mut verwijzend));
                             }
                         }
                     }
                 }
-                let herpositie = |p: u64| vast.get(&p).copied();
-                posities(&*self, i, j, tekst, &px, &herpositie, |k, p, _| {
+                let lid = |e: u32| if basis.is_some() { koppeling.get(&e).copied() } else { Some(e) };
+                posities(&*self, i, j, tekst, &px, &lid, |k, p, _| {
                     if self.nodig(k as u64) {
                         per_knoop.entry(k as u64).or_default().push((o as u32, j as u32, p));
                     }
@@ -656,6 +662,47 @@ impl<'d> Versie<'d> {
 
     fn puur(&self, k: u64) -> Hash {
         self.bereken_knoop(k, true)
+    }
+
+    /// De objecten die (rechtstreeks of via knopen) naar knoop `k` verwijzen en in beide versies staan, als
+    /// gesorteerde sleutels ([`Model::verwijzende_objecten`]). `eigenaar` verwijst zelf naar `k` (`k` staat in een SET
+    /// ervan). Heeft `k` één verwijzer, dan is dat `eigenaar`. Anders zoeken we de verwijzers in het hele bestand, laag
+    /// voor laag; dat onthouden we per knoop.
+    fn verwijzende_objecten(&self, k: u64, eigenaar: u64) -> Vec<String> {
+        let sleutel = |n: u64| {
+            let o = self.object_op_nummer(n).filter(|&o| self.objecten[o as usize].gemeen)?;
+            Some(self.sleutel(o).into_owned())
+        };
+        if self.vlag(k) & MEER_VERWEZEN == 0 {
+            return sleutel(eigenaar).into_iter().collect();
+        }
+        if let Some(uit) = self.verwijzend.borrow().get(&k) {
+            return uit.clone();
+        }
+        let mut uit = Vec::new();
+        let mut gezien: HashSet<u64> = HashSet::from([k]);
+        let mut laag: HashSet<u64> = HashSet::from([k]);
+        let mut delen = Delen::default();
+        while !laag.is_empty() {
+            let mut volgende = HashSet::new();
+            for (n, v) in self.plekken.op_volgorde() {
+                delen.refs.clear();
+                instantie_op(self.data, self.begin(n) as usize, &mut delen);
+                if !delen.refs.iter().any(|r| laag.contains(r)) {
+                    continue;
+                }
+                if v & OBJECT != 0 {
+                    uit.extend(sleutel(n));
+                } else if gezien.insert(n) {
+                    volgende.insert(n);
+                }
+            }
+            laag = volgende;
+        }
+        uit.sort_unstable();
+        uit.dedup();
+        self.verwijzend.borrow_mut().insert(k, uit.clone());
+        uit
     }
 
     /// Per knoop in `doelen` de eigenaar ([`Model::eigenaar`]): het enige object dat er komt (via een rechtstreekse
