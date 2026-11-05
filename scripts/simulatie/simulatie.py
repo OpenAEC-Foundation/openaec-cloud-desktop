@@ -102,6 +102,9 @@ class Client:
 		self.http.headers["Authorization"] = f"token {sleutel}"
 		self.cursor, self.gezien = 0, []
 		self.open, self.vereist = [], []  # opslagen die nog geen ronde zag, en opslagen die een ronde zag
+		# Markeringen die de gebruiker zelf weghaalde (wissen, overschrijven), gemeten aan de inhoud vlak ervoor: dat
+		# werk gooide hij zelf weg. Werk dat vóór die handeling al verdwenen was, staat hier niet in.
+		self.weggehaald = set()
 		self.teller, self.beurt = 0, 0
 		self.rondes = []
 		self.laatste = None
@@ -136,6 +139,9 @@ class Client:
 		self.teller += 1
 		return f"c{self.i}b{self.beurt}x{self.teller}"
 
+	def haalt_weg(self, oud: bytes, nieuw: bytes = b"") -> None:
+		self.weggehaald |= {m.decode() for m in set(MARKER.findall(oud)) - set(MARKER.findall(nieuw))}
+
 	def opgeslagen(self, pad: str, marker: str, soort: str) -> None:
 		opslag = {"client": self.i, "beurt": self.beurt, "pad": pad, "marker": marker, "soort": soort, "t": time.time()}
 		# Tijdens een ronde: alleen de sync kan dit nog weghalen, dus meteen vereist.
@@ -162,8 +168,11 @@ class Client:
 		n = self.rng.choice(plekken[:POOL])
 		m = OBJECT.match(regels[n].rstrip("\r"))
 		marker = self.marker()
+		oud = "\n".join(regels).encode()
 		regels[n] = m.group(1) + f"'{marker}'" + m.group(4) + ("\r" if regels[n].endswith("\r") else "")
-		sla_op(vol, "\n".join(regels).encode(), self.tmp)
+		nieuw = "\n".join(regels).encode()
+		self.haalt_weg(oud, nieuw)
+		sla_op(vol, nieuw, self.tmp)
 		self.opgeslagen(pad, marker, "ifc")
 
 	def wijzig_tekst(self) -> None:
@@ -187,6 +196,8 @@ class Client:
 			return
 		marker = self.marker()
 		vul = random.Random(marker).randbytes(GROOT)
+		with open(vol, "rb") as f:
+			self.haalt_weg(f.readline())
 		sla_op(vol, f"{marker}\n".encode() + vul, self.tmp)
 		self.opgeslagen("bijlagen/scan.bin", marker, "groot")
 
@@ -233,6 +244,8 @@ class Client:
 			return
 		pad = self.rng.choice(kandidaten)
 		try:
+			with open(os.path.join(self.map, pad), "rb") as f:
+				self.haalt_weg(f.read())
 			os.remove(os.path.join(self.map, pad))
 		except FileNotFoundError:
 			return
@@ -517,10 +530,14 @@ def controleer(frappe, ruimte: str, clients: list[Client]) -> dict:
 					for m in set(MARKER.findall(f.read())):
 						eigen[m.decode()].add(c.i)
 	vereist = [o for c in clients for o in c.vereist]
-	weg = [o for o in vereist if o["marker"] not in markers_server and o["marker"] not in eigen]
+	weggehaald = set().union(*(c.weggehaald for c in clients))
+	nergens = [o for o in vereist if o["marker"] not in markers_server and o["marker"] not in eigen]
+	weg = [o for o in nergens if o["marker"] not in weggehaald]
+	door_gebruiker = [o["marker"] for o in nergens if o["marker"] in weggehaald]
 	alleen_eigen = [o for o in vereist if o["marker"] not in markers_server and o["marker"] in eigen]
-	uit["verloren_werk"] = {"opslagen_gezien": len(vereist), "op_server": len(vereist) - len(weg) - len(alleen_eigen),
-							"alleen_in_eigen": [o["marker"] for o in alleen_eigen], "nergens": weg[:20], "aantal_nergens": len(weg)}
+	uit["verloren_werk"] = {"opslagen_gezien": len(vereist), "op_server": len(vereist) - len(nergens) - len(alleen_eigen),
+							"alleen_in_eigen": [o["marker"] for o in alleen_eigen], "door_gebruiker_weggehaald": door_gebruiker,
+							"nergens": weg[:20], "aantal_nergens": len(weg)}
 	if weg:
 		uit["fouten"]["verloren_werk"] = f"{len(weg)} opslagen staan nergens"
 
@@ -621,6 +638,15 @@ def na_verloren_klaar(pad: str) -> dict:
 	}
 
 
+def start_proxies(werk: str, stand: str, zaad: int) -> list[subprocess.Popen]:
+	"""proxy.py voor de API en voor S3; de kans op chaos staat in het bestand `stand`."""
+	return [
+		subprocess.Popen([sys.executable, os.path.join(HIER, "proxy.py"), "--luister", str(luister), "--doel", str(doel),
+						  "--log", os.path.join(werk, f"{naam}.jsonl"), "--stand", stand, "--zaad", str(zaad + k)])
+		for k, (naam, luister, doel) in enumerate([("api", API_PROXY, API_POORT), ("s3", S3_PROXY, S3_POORT)])
+	]
+
+
 def main() -> int:
 	p = argparse.ArgumentParser()
 	p.add_argument("--clients", type=int, default=8)
@@ -639,11 +665,7 @@ def main() -> int:
 	stand = os.path.join(args.werk, "chaos.txt")
 	with open(stand, "w") as f:
 		f.write("0")
-	proxies = [
-		subprocess.Popen([sys.executable, os.path.join(HIER, "proxy.py"), "--luister", str(luister), "--doel", str(doel),
-						  "--log", os.path.join(args.werk, f"{naam}.jsonl"), "--stand", stand, "--zaad", str(args.zaad + k)])
-		for k, (naam, luister, doel) in enumerate([("api", API_PROXY, API_POORT), ("s3", S3_PROXY, S3_POORT)])
-	]
+	proxies = start_proxies(args.werk, stand, args.zaad)
 	try:
 		frappe = verbind()
 		ruimte, sleutels = opzet(frappe, args.clients, args.zaad)

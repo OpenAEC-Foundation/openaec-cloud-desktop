@@ -1,0 +1,311 @@
+draai.sh: c2-10clients-zaad2, 2026-11-05 16:31:20, desktop 6e67e57, server 197d55b (integratie-4-4b)
+draai.sh: simulatie.py --clients 10 --beurten 20 --zaad 2 --chaos 0.15 --kill 0.25
+zwaar.sh: plek .zwaar.2 voor: bash -c echo "draai.sh: start $(date +%T), desktop $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' rev-parse --short HEAD), $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' status --short | wc -l) bestanden niet gecommit" && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/simulatie.py' --werk '/home/aia09/bench-proef/werk/c2-10clients-zaad2' --clients 10 --beurten 20 --zaad 2 --chaos 0.15 --kill 0.25
+draai.sh: start 16:31:20, desktop 6e67e57, 1 bestanden niet gecommit
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+16:31:23 ruimte j7iukbirui, 10 clients, 20 beurten, zaad 2, chaos 0.15, kill 0.25
+16:31:27 startbestanden staan bij iedereen; nu de beurten
+16:32:41 beurten klaar in 75 s; nu de rustige periode, zonder chaos
+16:32:46 rustig: clients wachten op een nieuwe poging; 46 s wachten
+16:33:35 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:33:39 rustig: clients wachten op een nieuwe poging; 1 s wachten
+16:33:40 rustig: clients wachten op een nieuwe poging; 3 s wachten
+16:33:44 rustig: clients wachten op een nieuwe poging; 4 s wachten
+16:33:48 rustig: clients wachten op een nieuwe poging; 5 s wachten
+16:33:53 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:33:55 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:33:57 rustig: clients wachten op een nieuwe poging; 3 s wachten
+16:34:00 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:34:02 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:34:04 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:34:12 rustig: clients wachten op een nieuwe poging; 1 s wachten
+16:34:28 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:34:32 rustig: clients wachten op een nieuwe poging; 1 s wachten
+16:34:35 rustig: clients wachten op een nieuwe poging; 78 s wachten
+16:35:55 rustig: clients wachten op een nieuwe poging; 21 s wachten
+16:36:22 rustige periode: alles staat stil
+{
+ "fouten": {
+  "verloren_werk": "2 opslagen staan nergens"
+ },
+ "s3": {
+  "versies": 387,
+  "objecten": 387,
+  "zonder_object": [],
+  "zonder_versie": [],
+  "onafgemaakte_multipart": 57
+ },
+ "gelijk": {
+  "bestanden_op_server": 197,
+  "verschillen": {}
+ },
+ "verloren_werk": {
+  "opslagen_gezien": 279,
+  "op_server": 277,
+  "alleen_in_eigen": [],
+  "nergens": [
+   {
+    "client": 0,
+    "beurt": 4,
+    "pad": "model/kopie-c0b3x11.ifc",
+    "marker": "c0b4x12",
+    "soort": "ifc",
+    "t": 1793892695.949344
+   },
+   {
+    "client": 3,
+    "beurt": 2,
+    "pad": "notities/n-c3b2x3.txt",
+    "marker": "c3b2x3",
+    "soort": "tekst",
+    "t": 1793892688.38948
+   }
+  ],
+  "aantal_nergens": 2
+ },
+ "wijzigingenlijst": {
+  "regels": 428,
+  "uniek": true,
+  "zonder_nummer": 0,
+  "per_client": {
+   "0": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "1": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "2": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "3": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "4": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "5": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "6": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "7": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "8": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "9": {
+    "gezien": 428,
+    "cursor": 7429,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   }
+  }
+ },
+ "server": {
+  "conflictkopieen_overbodig": 110,
+  "voorbeelden_overbodig": [
+   "gebouw (conflict Sim8 2026-11-05 2102) (conflict Sim6 2026-11-05 2102).ifc",
+   "gebouw (conflict Sim8 2026-11-05 2102).ifc",
+   "gebouw (conflict Sim8 2026-11-05 2102).ifc.samenvoegrapport (conflict Sim3 2026-11-05 2102).json",
+   "gebouw (conflict Sim8 2026-11-05 2102).ifc.samenvoegrapport (conflict Sim6 2026-11-05 2102).json",
+   "gebouw (conflict Sim8 2026-11-05 2102).ifc.samenvoegrapport.json"
+  ],
+  "bestanden": 235,
+  "verwijderd": 38,
+  "conflictkopieen": 127,
+  "samenvoegrapporten": 11,
+  "versies_samengevoegd_uit": 46,
+  "opeenvolgende_versies_met_gelijke_inhoud": 4
+ },
+ "rondes": {
+  "totaal": 528,
+  "gedood": 28,
+  "opslag_tijdens_ronde": 25,
+  "exitcode_niet_0": 19,
+  "met_fouten": 107,
+  "samengevoegd": 45,
+  "niet_samengevoegd": {
+   "onbekende_basis": 9,
+   "conflicten": 9
+  },
+  "conflicten_volgens_rapport": 78,
+  "duur_gemiddeld_s": 1.14,
+  "fouten_soorten": {
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.download)": 77,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.blokken)": 66,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_start)": 45,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_klaar)": 11,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/1141ac78f21c2169fcca4c97fb1f2345?response-conte": 4,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/a55e1454a6876a585937ff640c24da47?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/1223372b876fa86205d96efdee85e22a?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/5701d29db2bc33a79255791468de357c?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/a83202e4a001c6ee472c721bf67a8ff2?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/30414047a3229019819d6141d744e5e7?response-conte": 2
+  }
+ },
+ "proxy_api": {
+  "verzoeken": {
+   "download": 931,
+   "blokken": 850,
+   "wijzigingen": 570,
+   "mogelijkheden": 528,
+   "boom": 503,
+   "upload_start": 484,
+   "download_klein": 258,
+   "upload_klaar": 216,
+   "bladeren": 181,
+   "upload_klein": 50,
+   "verwijder": 40,
+   "maak_mappen": 1,
+   "?": 1
+  },
+  "upload_klaar_status": {
+   "None": 13,
+   "200": 196,
+   "409": 7
+  },
+  "foutcodes": {
+   "upload_start verouderde_basis": 181,
+   "upload_klaar verouderde_basis": 7,
+   "upload_start onbekende_basis": 9
+  },
+  "chaos": {
+   "knip upload_klaar": 8,
+   "knip download": 21,
+   "stil bladeren": 8,
+   "knip upload_start": 17,
+   "knip mogelijkheden": 8,
+   "stil download": 30,
+   "traag wijzigingen": 13,
+   "knip blokken": 20,
+   "stil upload_start": 17,
+   "stil blokken": 26,
+   "traag blokken": 22,
+   "traag download": 30,
+   "knip download_klein": 7,
+   "reset download": 37,
+   "reset wijzigingen": 8,
+   "stil upload_klaar": 9,
+   "reset bladeren": 7,
+   "knip wijzigingen": 7,
+   "reset boom": 2,
+   "traag upload_start": 19,
+   "reset download_klein": 5,
+   "reset upload_klaar": 5,
+   "reset blokken": 27,
+   "traag mogelijkheden": 6,
+   "reset upload_start": 16,
+   "stil boom": 10,
+   "stil download_klein": 5,
+   "reset mogelijkheden": 9,
+   "traag bladeren": 9,
+   "stil wijzigingen": 9,
+   "knip boom": 12,
+   "knip bladeren": 8,
+   "traag upload_klein": 2,
+   "traag boom": 1,
+   "stil mogelijkheden": 7,
+   "reset verwijder": 1,
+   "traag download_klein": 3,
+   "stil upload_klein": 1,
+   "traag upload_klaar": 1,
+   "knip upload_klein": 1,
+   "reset upload_klein": 1
+  }
+ },
+ "proxy_s3": {
+  "verzoeken": {
+   "GET": 737,
+   "PUT": 235
+  },
+  "upload_klaar_status": {},
+  "foutcodes": {},
+  "chaos": {
+   "knip PUT": 11,
+   "stil GET": 24,
+   "traag GET": 23,
+   "reset GET": 21,
+   "knip GET": 24,
+   "traag PUT": 3,
+   "stil PUT": 6,
+   "reset PUT": 8
+  }
+ },
+ "na_verloren_upload_klaar": {
+  "stil_bij_upload_klaar": 9,
+  "daarna": {
+   "bladeren 200 -> blokken 200 -> wijzigingen 200": 3,
+   "bladeren None -> wijzigingen None -> mogelijkheden 200": 1,
+   "bladeren 200 -> blokken 200 -> wijzigingen None": 1,
+   "bladeren 200 -> blokken 200 -> download 200": 1,
+   "bladeren 200 -> blokken None -> wijzigingen 200": 1,
+   "bladeren None -> verwijder 200 -> wijzigingen 200": 1,
+   "download 200 -> download 200 -> blokken 200": 1
+  },
+  "upload_klaar_403": 0,
+  "upload_start_200": 260,
+  "upload_klaar_verzoeken": 216
+ },
+ "args": {
+  "clients": 10,
+  "beurten": 20,
+  "zaad": 2,
+  "chaos": 0.15,
+  "kill": 0.25,
+  "tegelijk": 0.15,
+  "pauze": 1.5,
+  "rustig": 1800,
+  "werk": "/home/aia09/bench-proef/werk/c2-10clients-zaad2"
+ }
+}
+16:36:25 CONTROLES GEFAALD: verloren_werk: 2 opslagen staan nergens
+EXIT:1
