@@ -38,22 +38,24 @@ WK=$(realpath "$1") || exit 2
 code=99
 WERK=$(mktemp -d /tmp/proef-5b.XXXXXX)
 LINK="$BENCH_DIR/apps/openaec_storage"
+# Wat de opruimstap mag terugdraaien: alleen wat dit script zelf veranderde of startte.
 OUD_LINK=""
-DB_WAS_ACTIEF=0
+DB_GESTART=0
+SITE_GEMAAKT=0
 
 opruimen() {
 	echo "== opruimen"
 	systemctl --user stop proef-5b-web proef-5b-s3 2>/dev/null
 	systemctl --user reset-failed proef-5b-web proef-5b-s3 2>/dev/null
-	if [ -d "$BENCH_DIR/sites/$SITE" ]; then
+	if [ "$SITE_GEMAAKT" = 1 ] && [ -d "$BENCH_DIR/sites/$SITE" ]; then
 		(cd "$BENCH_DIR" && bench drop-site "$SITE" --db-root-password bench --no-backup --force >/dev/null 2>&1) \
 			&& echo "site $SITE verwijderd" || echo "LET OP: site $SITE niet te verwijderen"
 	fi
-	rm -rf "$BENCH_DIR/archived/sites/$SITE" "$BENCH_DIR/archived_sites/$SITE"
+	[ "$SITE_GEMAAKT" = 1 ] && rm -rf "$BENCH_DIR/archived/sites/$SITE" "$BENCH_DIR/archived_sites/$SITE"
 	if [ -n "$OUD_LINK" ]; then
 		ln -sfn "$OUD_LINK" "$LINK" && echo "apps/openaec_storage weer -> $OUD_LINK"
 	fi
-	if [ "$DB_WAS_ACTIEF" = 0 ]; then
+	if [ "$DB_GESTART" = 1 ]; then
 		systemctl --user stop bench-samen-mariadb bench-samen-valkey 2>/dev/null && echo "mariadb en valkey weer gestopt"
 	fi
 	rm -rf "$WERK"
@@ -85,16 +87,20 @@ echo "client: $(git -C "$REPO" rev-parse --abbrev-ref HEAD) $(git -C "$REPO" rev
 echo "server: $(git -C "$WK" rev-parse --abbrev-ref HEAD) $(git -C "$WK" rev-parse --short HEAD)$(git -C "$WK" diff --quiet HEAD && echo ", schoon" || echo ", MET LOKALE WIJZIGINGEN")"
 echo "voorbeeld: $VOORBEELD ($(grep -c 'IFCTASK(' "$VOORBEELD") taken)"
 
-systemctl --user is-active --quiet bench-samen-mariadb && DB_WAS_ACTIEF=1
+systemctl --user is-active --quiet bench-samen-mariadb || DB_GESTART=1
 "$B/start.sh" || exit
 OUD_LINK=$(readlink "$LINK")
 ln -sfn "$WK" "$LINK"
 cd "$BENCH_DIR" || exit
 
 echo "== site $SITE"
+SITE_GEMAAKT=1
 bench new-site "$SITE" --db-root-password bench --admin-password proef --mariadb-user-host-login-scope=% \
 	--install-app openaec_storage >"$WERK/new-site.log" 2>&1 || { tail -30 "$WERK/new-site.log"; exit; }
-for kv in "openaec_storage_endpoint=http://127.0.0.1:$S3POORT" openaec_storage_bucket=proef openaec_storage_region=eu-central-1; do
+# De sleutel voor geheimen (o.a. het API-geheim) vóór de server start: anders maakt Frappe hem pas bij het eerste
+# gebruik, en kan een worker een andere hebben dan de opzet hieronder.
+sleutel=$("$PY" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())') || exit
+for kv in "encryption_key=$sleutel" "openaec_storage_endpoint=http://127.0.0.1:$S3POORT" openaec_storage_bucket=proef openaec_storage_region=eu-central-1; do
 	bench --site "$SITE" set-config "${kv%%=*}" "${kv#*=}" >/dev/null || exit
 done
 
@@ -109,7 +115,7 @@ EOF
 systemd-run --user --quiet --unit=proef-5b-web -p WorkingDirectory="$BENCH_DIR/sites" \
 	-p Environment=PYTHONPYCACHEPREFIX="$B/pycache" -p Environment=AWS_ACCESS_KEY_ID=proef \
 	-p Environment=AWS_SECRET_ACCESS_KEY=proef \
-	"$BENCH_DIR/env/bin/gunicorn" -b "127.0.0.1:$POORT" -w 8 -t 120 --pythonpath "$WERK" proef_wsgi:application || exit
+	"$BENCH_DIR/env/bin/gunicorn" -b "127.0.0.1:$POORT" -w 4 -t 120 --pythonpath "$WERK" proef_wsgi:application || exit
 for _ in $(seq 90); do
 	curl -fsS "$ADRES/api/method/ping" 2>/dev/null | grep -q pong && ss -tln | grep -q "127.0.0.1:$S3POORT " && break
 	sleep 1
@@ -131,7 +137,24 @@ client() {  # client <a|b> <opdracht...>
 for wie in a b; do
 	mkdir -p "$WERK/$wie/config" "$WERK/$wie/map"
 	sleutel=$KA; [ "$wie" = b ] && sleutel=$KB
-	OPENAEC_SLEUTEL=$sleutel client "$wie" inloggen "$ADRES" --sleutel >/dev/null || exit
+	if ! OPENAEC_SLEUTEL=$sleutel client "$wie" inloggen "$ADRES" --sleutel >/dev/null; then
+		echo "inloggen van $wie mislukt. De server:"
+		curl -sS -o "$WERK/antwoord" -w "  ruimtes: HTTP %{http_code}\n" -X POST -H "Authorization: token $sleutel" "$ADRES/api/method/openaec_storage.api.ruimtes"
+		head -c 600 "$WERK/antwoord"; echo
+		curl -sS -o "$WERK/antwoord" -w "  get_logged_user: HTTP %{http_code}\n" -H "Authorization: token $sleutel" "$ADRES/api/method/frappe.auth.get_logged_user"
+		head -c 300 "$WERK/antwoord"; echo
+		(cd "$BENCH_DIR/sites" && "$PY" -c '
+import sys, frappe
+from frappe.utils.password import get_decrypted_password
+frappe.init(site=sys.argv[1], sites_path="."); frappe.connect()
+email = f"proef-{sys.argv[2]}@proef.localhost"; sleutel, geheim = sys.argv[3].split(":", 1)
+u = frappe.db.get_value("User", email, ["enabled", "user_type", "api_key"], as_dict=True)
+print("  gebruiker:", dict(u), "sleutel gelijk:", u.api_key == sleutel,
+      "geheim gelijk:", get_decrypted_password("User", email, "api_secret", raise_exception=False) == geheim)
+' "$SITE" "$wie" "$sleutel")
+		journalctl --user -u proef-5b-web -n 15 --no-pager | cut -c1-200
+		exit
+	fi
 	client "$wie" koppel "$RUIMTE" "$WERK/$wie/map" || exit
 done
 A="$WERK/a/map"
