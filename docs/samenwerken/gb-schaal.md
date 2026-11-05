@@ -68,7 +68,52 @@ gedood (knownbug 90 van PR #16).
 
 ## Getallen
 
-GETALLEN VOLGEN
+Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen, 13,9 GB), release-modus, elke meting onder
+`zwaar.sh --alleen` en met een harde grens van 2 GB (`systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0`).
+Het meetscript is `crates/openaec-samenvoegen/scripts/meet_geheugen.sh`: de tijd, het hoogste eigen geheugen van het
+programma (RssAnon) en het hoogste deel van de bestanden dat via de mmap in het geheugen stond (RssFile). Dat laatste
+kan het besturingssysteem altijd weer vrijgeven; onder de grens van 2 GB krijgt het wat RssAnon overlaat. Het
+script rekent MB als 1024 × 1024 bytes.
+
+De bestanden komen uit `metingen-data/groot`: het IFC2X3-model `infra-landscaping` (SketchUp, 27 419 instanties)
+k keer achter elkaar, met eigen GlobalIds en nummers per kopie. Ons en hun wijzigen elk 156 (1,2 GB) of 780 (6,3 GB)
+objecten. "Index" is `verschil basis basis`: beide versies lezen en vergelijken, zonder verschil. "Verschil" is
+`verschil basis ons`.
+
+| Bestand | Wat | Tijd | Eigen geheugen | Bestand in geheugen | Uitkomst |
+|---|---|---|---|---|---|
+| 1,2 GB (23,2 miljoen instanties, 155 849 objecten) | index | 176 s | 373 MB | 2,3 GB | leeg |
+| 1,2 GB | verschil | 164 s | 373 MB | 2,3 GB | 156 gewijzigd |
+| 6,3 GB (116 miljoen instanties, 779 609 objecten) | index | 1303 s | 1701 MB | 3,2 GB | leeg |
+| 6,3 GB | verschil | GETAL | GETAL | GETAL | GETAL |
+
+Ter vergelijking: met `Model` kost een dicht model van 1 GB 2,9 GB om te lezen, 9,8 GB voor het verschil en ongeveer
+20 GB voor samenvoegen (P4, desktop-PR #16, `349e3ec`; GB van 10^9 bytes). Het verschil van 1,2 GB past hier in
+373 MB, het verschil van 6,3 GB in 1701 MB.
+
+Waar het eigen geheugen heen gaat, op 6,3 GB (berekend uit de opzet, niet per onderdeel gemeten):
+
+- de plekken en bits: 5 bytes per instantie per versie, samen ongeveer 1,16 GB (2 × 116 miljoen × 5 bytes);
+- de bitmap per nummer en de tabellen `voor` en `basis`: samen ongeveer 30 MB;
+- de objecten (GlobalId, sleutel, plek, hash): ongeveer 64 bytes per object, samen ongeveer 100 MB;
+- de rest, ongeveer 0,5 GB: wat even nodig is bij de hashes (memo tot 2^18 knopen), de eigenaars van 254 219 losse
+  knopen per versie, de stapels per thread en wat de allocator vasthoudt.
+
+Per instantie is dat ongeveer 15 bytes voor beide versies samen. De grens van 2 GB houdt het daarom tot ongeveer
+7,5 GB per bestand. Daarboven moeten de plekken (4 van de 5 bytes per instantie) kleiner worden of op schijf; dat is
+nu niet gebouwd.
+
+Hoe we hier kwamen (dezelfde bestanden, dezelfde grens):
+
+| Versie | 1,2 GB index | 1,2 GB verschil | 6,3 GB |
+|---|---|---|---|
+| eerste (`330d350`): verwijzingen vooruit in een lijst | 226 s, 1589 MB | 288 s, 1522 MB | niet gemeten |
+| `707b083`: een bit en een tweede doorloop | 166 s, 945 MB | 164 s, 905 MB | index gestopt door de OOM-killer bij 2 GB |
+| `91ec27a`: eigenaars met een bit, kringen zonder lijst | 176 s, 373 MB | 164 s, 373 MB | index 1303 s, 1701 MB |
+
+De tijd is nog hoog: ongeveer 145 s per GB op 1,2 GB en 205 s per GB op 6,3 GB, tegen ongeveer 37 s per GB voor `verschil` met `Model` (3,4 s op 92 MB).
+We lezen elke knoop vier tot vijf keer (lezen, de tweede doorloop, kringen, hashes, eigenaars), en onder de grens
+van 2 GB past het bestand niet in het geheugen, zodat het besturingssysteem delen opnieuw van de schijf leest.
 
 ## Grenzen
 

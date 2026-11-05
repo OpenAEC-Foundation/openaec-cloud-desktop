@@ -189,9 +189,13 @@ Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote best
 
 | Wat | Tijd | Piekgeheugen |
 |---|---|---|
-| `verschil` (opdrachtregel, twee bestanden van 92 MB) | 3,4 s (3,3 tot 3,7) | 910 MB |
+| `verschil` met `Model` (opdrachtregel vóór `verschil_stromend`, twee bestanden van 92 MB) | 3,4 s (3,3 tot 3,7) | 910 MB |
 | `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,7 s (9,4 tot 10,3) | 1,9 GB |
 | `voeg-samen` op een planning van OPS (52 kB, 39 taken) | 0,02 s | 7 MB |
+
+De opdrachtregel `verschil` gebruikt nu `verschil_stromend`. Die is op 1,2 GB en 6,3 GB gemeten, onder een harde grens
+van 2 GB: 164 s en 373 MB eigen geheugen op 1,2 GB. De andere getallen en de opzet staan in
+`docs/samenwerken/gb-schaal.md`. Het bestand van 92 MB is met de stromende weg niet opnieuw gemeten.
 
 Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). Na de review daarvan (vluchtige velden per object,
 eigenaars per object) opnieuw vergeleken met de vorige versie (`422f9cb`), om en om onder dezelfde belasting:
