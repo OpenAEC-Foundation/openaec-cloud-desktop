@@ -519,10 +519,13 @@ async fn uitvinken_onderbroken_voor_het_bewaren_verwijdert_niets_op_de_server() 
     assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
 }
 
-/// Opslag die offline kan zijn: dan mislukt het eerste verzoek van een ronde (de lijst).
+/// Opslag die offline kan zijn: dan mislukt het eerste verzoek van een ronde (de lijst). Met `stoppen` stopt de ronde
+/// (panic) na de vergelijking, vóór alle overdrachten en vóór het bewaren van de toestand.
+#[derive(Default)]
 struct Offline {
     nep: NepOpslag,
     offline: AtomicBool,
+    stoppen: AtomicBool,
 }
 
 impl Opslag for Offline {
@@ -541,6 +544,71 @@ impl Opslag for Offline {
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
         self.nep.verwijder(bestand).await
     }
+    async fn klein_grenzen(&self) -> Option<Batchgrenzen> {
+        if self.stoppen.load(Ordering::SeqCst) {
+            panic!("de sync stopt hier (proef)");
+        }
+        None
+    }
+}
+
+/// Proef (review Sol ronde 2 op bbdfad1, punt 2): een map uitvinken; de sync stopt na de lokale verplaatsing en vóór het
+/// bewaren van de toestand. Het herstel gebeurt terwijl de server offline is (de ronde stopt bij de lijst). Weer online,
+/// met de map aangevinkt: niets naar de prullenbak op de server, en het bestand komt hier terug.
+#[tokio::test]
+async fn uitvinken_onderbroken_en_offline_hersteld_verwijdert_niets_op_de_server() {
+    use futures_util::FutureExt;
+    let opslag = Offline::default();
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "Oud/a.txt", b"een");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+
+    opslag.stoppen.store(true, Ordering::SeqCst);
+    let uit = ["Oud".to_string()];
+    let ronde = openaec_sync::motor::sync_met_selectie(&opslag, dir.path(), &uit);
+    assert!(std::panic::AssertUnwindSafe(ronde).catch_unwind().await.is_err());
+    opslag.stoppen.store(false, Ordering::SeqCst);
+    assert_eq!(lees(dir.path(), "Oud/a.txt"), None, "verplaatst naar de bron");
+    assert_eq!(journaal(dir.path()), 1);
+
+    opslag.offline.store(true, Ordering::SeqCst);
+    assert!(sync_eenmalig(&opslag, dir.path()).await.is_err(), "offline: de ronde stopt bij de lijst");
+    opslag.offline.store(false, Ordering::SeqCst);
+
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!((r.verwijderd, r.gedownload), (0, 1));
+    assert_eq!(opslag.nep.inhoud("Oud/a.txt").unwrap(), b"een", "het bestand staat nog op de server");
+    assert_eq!(lees(dir.path(), "Oud/a.txt").as_deref(), Some("een"));
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+}
+
+/// Proef (review Sol ronde 2 op bbdfad1, punt 3): een gesynchroniseerd bestand is open in een programma; de map wordt
+/// uitgevinkt en weer aangevinkt. Het bestand komt opnieuw binnen en is bekend. De oude bron (nog open) mag het daarna
+/// niet nog eens laten vergeten: zonder wijziging van de gebruiker geen conflict, upload of download.
+#[tokio::test]
+async fn oude_verwijderingsbron_vergeet_een_opnieuw_opgehaald_bestand_niet() {
+    let opslag = NepOpslag::default();
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "Oud/a.txt", b"een");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    let programma = std::fs::File::open(dir.path().join("Oud/a.txt")).unwrap();
+
+    let uit = ["Oud".to_string()];
+    openaec_sync::motor::sync_met_selectie(&opslag, dir.path(), &uit).await.unwrap();
+    assert_eq!(lees(dir.path(), "Oud/a.txt"), None);
+    assert_eq!(bronnen(dir.path()), 1, "het programma heeft de bron open");
+
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.gedownload, 1, "weer aangevinkt: opnieuw opgehaald");
+    for _ in 0..2 {
+        let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+        assert_eq!((r.geupload, r.gedownload, r.conflicten, r.verwijderd), (0, 0, 0, 0), "{r:?}");
+    }
+    drop(programma);
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!((r.geupload, r.gedownload, r.conflicten, r.verwijderd), (0, 0, 0, 0));
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+    assert_eq!(opslag.paden(), vec!["Oud/a.txt".to_string()]);
 }
 
 /// Proef (review Sol, PR #8, punt 4): een collega verwijdert het bestand; de sync verplaatst het hier naar een bron, maar
@@ -548,7 +616,7 @@ impl Opslag for Offline {
 /// terug op het pad (zonder de server), en gaat naar de server zodra die er weer is.
 #[tokio::test]
 async fn werk_in_een_verwijderde_bron_komt_ook_offline_terug() {
-    let opslag = Offline { nep: NepOpslag::default(), offline: AtomicBool::new(false) };
+    let opslag = Offline::default();
     let dir = tempfile::tempdir().unwrap();
     schrijf(dir.path(), "a.txt", b"een");
     sync_eenmalig(&opslag, dir.path()).await.unwrap();

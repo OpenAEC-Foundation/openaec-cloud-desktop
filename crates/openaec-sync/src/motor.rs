@@ -104,11 +104,13 @@ pub trait Opslag {
     }
 
     /// Zet deze opslag `bestand` zelf op `lokaal` neer, zonder inhoud op deze computer (een placeholder die alleen online
-    /// staat)? Dan Some met de uitkomst: daar is geen lokaal werk te beschermen. None: niet van toepassing (meer); dan
+    /// staat)? Dan Some met de uitkomst: daar is geen lokaal werk te beschermen. Bij succes het kenmerk (grootte,
+    /// wijzigingstijd) dat de bewerking zelf zette: dat hoort bij de versie op de server. Nooit een meting achteraf: wie
+    /// het bestand intussen opent en bewaart, heeft dan een lokale wijziging. None: niet van toepassing (meer); dan
     /// downloadt de motor naar een tijdelijk bestand en zet hij het veilig op zijn plek (zie `crate::vervang`). De
     /// controle en het neerzetten horen bij elkaar: een bewerking die een bestand van de gebruiker kan raken, mag hier
     /// niet; is de placeholder niet (meer) mogelijk, dan None, en nooit een gewone download op het pad. Standaard None.
-    async fn plaats_zelf(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
+    async fn plaats_zelf(&self, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(u64, u128), Fout>> {
         let _ = (bestand, lokaal);
         None
     }
@@ -584,15 +586,9 @@ impl<O: Opslag> Ronde<'_, O> {
         lokaal_bestand(self.root, &self.rel(sleutel))
     }
 
-    /// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]).
-    fn onthoud(&self, pad: &str, bestand: &str, versie: u64) -> Result<(), Fout> {
-        let k = kenmerk(&self.hier(pad))?;
-        self.onthoud_als(pad, bestand, versie, k);
-        Ok(())
-    }
-
-    /// Als [`Ronde::onthoud`], met het kenmerk (grootte, wijzigingstijd) dat bij die versie hoort, gemeten vóór het
-    /// bestand op zijn plek kwam: een programma dat er daarna meteen in schrijft, geeft zo een lokale wijziging.
+    /// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]). Met het
+    /// kenmerk (grootte, wijzigingstijd) dat bij die versie hoort, gemeten vóór het bestand op zijn plek kwam (of gezet
+    /// door de bewerking zelf): een programma dat er daarna meteen in schrijft, geeft zo een lokale wijziging.
     fn onthoud_als(&self, pad: &str, bestand: &str, versie: u64, (grootte, mtime_ns): (u64, u128)) {
         let rel = self.rel(pad);
         self.toestand
@@ -684,16 +680,16 @@ impl<O: Opslag> Ronde<'_, O> {
     /// gebeurde, false als het niet van toepassing is (dan gaat de download door de veilige routine).
     async fn placeholder(&self, pad: &str, server: &OpslagBestand, lokaal: &Path) -> Result<bool, Fout> {
         let Some(r) = self.opslag.plaats_zelf(server, lokaal).await else { return Ok(false) };
-        r?;
+        let k = r?;
         self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Download, totaal: 0 });
-        self.onthoud(pad, &server.bestand, server.versie)?;
+        self.onthoud_als(pad, &server.bestand, server.versie, k);
         Ok(true)
     }
 
     /// Zet een download (het tijdelijke bestand `nieuw`) veilig op het pad van `pad`; als [`Ronde::haal_op`].
     async fn plaats_download(&self, pad: &str, server: &OpslagBestand, nieuw: PathBuf) -> Result<bool, Fout> {
         let versie = vervang::Versie { bestand: server.bestand.clone(), versie: server.versie };
-        match self.vervang_hier(pad, Some((nieuw, versie)), vervang::Weg::OpServer).await? {
+        match self.vervang_hier(pad, Some((nieuw, versie))).await? {
             vervang::Uitkomst::Geplaatst(k) => {
                 self.onthoud_als(pad, &server.bestand, server.versie, k);
                 Ok(true)
@@ -702,15 +698,14 @@ impl<O: Opslag> Ronde<'_, O> {
         }
     }
 
-    /// Verwijder het bestand hier van `pad` veilig, om reden `weg`. Geeft false als het lokaal net gewijzigd is: dan blijft
-    /// het staan.
-    async fn verwijder_hier(&self, pad: &str, weg: vervang::Weg) -> Result<bool, Fout> {
-        Ok(self.vervang_hier(pad, None, weg).await? == vervang::Uitkomst::Verwijderd)
+    /// Verwijder het bestand hier van `pad` veilig. Geeft false als het lokaal net gewijzigd is: dan blijft het staan.
+    async fn verwijder_hier(&self, pad: &str) -> Result<bool, Fout> {
+        Ok(self.vervang_hier(pad, None).await? == vervang::Uitkomst::Verwijderd)
     }
 
     /// De veilige vervanging of verwijdering van het bestand hier van `pad` (zie [`vervang::vervang`]), met wat de
     /// toestand ervan weet.
-    async fn vervang_hier(&self, pad: &str, nieuw: Option<(PathBuf, vervang::Versie)>, weg: vervang::Weg) -> Result<vervang::Uitkomst, Fout> {
+    async fn vervang_hier(&self, pad: &str, nieuw: Option<(PathBuf, vervang::Versie)>) -> Result<vervang::Uitkomst, Fout> {
         let rel = self.rel(pad);
         let bekend = self.toestand.lock().unwrap().bestanden.get(pad).map(|b| {
             (vervang::Versie { bestand: b.bestand.clone(), versie: b.versie }, (b.grootte, b.mtime_ns))
@@ -722,7 +717,6 @@ impl<O: Opslag> Ronde<'_, O> {
             sleutel: pad.to_string(),
             bekend,
             nieuw,
-            weg,
         };
         // Een groot bestand lezen en hashen: niet op de thread van de ronde.
         Ok(tokio::task::spawn_blocking(move || vervang::vervang(opdracht)).await.map_err(std::io::Error::other)??)
@@ -733,7 +727,7 @@ impl<O: Opslag> Ronde<'_, O> {
     async fn rond_af(&self) -> bool {
         let root = self.root.to_path_buf();
         let afwijkend =
-            tokio::task::spawn_blocking(move || vervang::rond_af(&root, |rel| lokaal_bestand(&root, rel))).await.unwrap_or_default();
+            tokio::task::spawn_blocking(move || vervang::rond_af(&root, |rel| lokaal_bestand(&root, rel), false)).await.unwrap_or_default();
         let mut veranderd = false;
         for v in afwijkend {
             if self.stoppen() || self.opslag.alleen_lezen() {
@@ -774,9 +768,10 @@ impl<O: Opslag> Ronde<'_, O> {
         };
         // De inhoud staat nu op de server: eerst vastleggen dat de bron niet meer nodig is. Lukt het plaatsen hier niet
         // (er staat al iets), dan haalt een volgende ronde hem op; de bron mag dus hoe dan ook weg.
-        if let Err(e) = vervang::afgerond(self.root, v) {
+        let v = &vervang::afgerond(self.root, v).unwrap_or_else(|e| {
             log::warn!("{}: afronding niet vast te leggen: {e}", v.pad);
-        }
+            v.clone()
+        });
         let plek = (up.conflict || v.nieuw.is_none()).then(|| self.hier(&up.pad));
         let geplaatst = plek.is_some_and(|p| {
             p.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| vervang::plaats(&bron, &p)).is_ok()
@@ -816,7 +811,7 @@ impl<O: Opslag> Ronde<'_, O> {
             Taak::VerwijderLokaal { pad } => {
                 // Op de server verwijderd (staat daar in de prullenbak) en lokaal ongewijzigd: lokaal weg, maar alleen
                 // de inhoud die de sync verwerkte.
-                if !self.verwijder_hier(pad, vervang::Weg::OpServer).await? {
+                if !self.verwijder_hier(pad).await? {
                     return Ok(None);
                 }
                 self.vergeet(pad);
@@ -1087,11 +1082,18 @@ pub async fn sync_met_opties<O: Opslag>(
         toestand.bestanden.insert(sleutel, Bekend { bestand: n.bestand, versie: n.versie, grootte, mtime_ns });
     }
     // Een verwijdering staat, ook als de toestand van die ronde niet meer bewaard werd. Anders zou de vergelijking het
-    // lege pad als "lokaal verwijderd" zien en het bestand op de server verwijderen.
+    // lege pad als "lokaal verwijderd" zien en het bestand op de server verwijderen. Eerst duurzaam (ook zonder server),
+    // dan pas mag het journaal weg; zie `vervang::leg_vast`.
     for sleutel in &herstel.vergeten {
         toestand.bestanden.remove(sleutel);
         toestand.lokale_namen.remove(sleutel);
     }
+    if !herstel.vergeten.is_empty() {
+        bewaar(root, &toestand)?;
+        vervang::leg_vast(root, |s| toestand.bestanden.contains_key(s))?;
+    }
+    // Werk in de bron van een verwijdering komt zo ook offline terug op het pad.
+    vervang::rond_af(root, |rel| lokaal_bestand(root, rel), true);
     let server: BTreeMap<String, OpslagBestand> =
         opslag.lijst().await?.into_iter().map(|b| (b.pad.clone(), b)).collect();
     // De map aflopen kost bij duizenden bestanden even: op een aparte thread, zodat de runtime doorloopt.
@@ -1200,7 +1202,7 @@ pub async fn sync_met_opties<O: Opslag>(
             if hier {
                 // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg (veilig, zie `crate::vervang`), op de server
                 // blijft hij staan. Net gewijzigd: blijft staan en gaat de volgende ronde naar de server.
-                match ronde.verwijder_hier(&pad, vervang::Weg::Uitgevinkt).await {
+                match ronde.verwijder_hier(&pad).await {
                     Ok(true) => {}
                     Ok(false) => continue,
                     Err(fout) => {
@@ -1229,10 +1231,6 @@ pub async fn sync_met_opties<O: Opslag>(
                     overdrachten.push(Taak::Upload { pad, basis, server: Some(server.clone()) });
                 } else if server_gewijzigd {
                     overdrachten.push(Taak::Download { pad, server: server.clone() });
-                } else if bekend.is_none() {
-                    if let Err(fout) = ronde.onthoud(&pad, &server.bestand, server.versie) {
-                        ronde.rapport.lock().unwrap().fout(&pad, fout);
-                    }
                 }
             }
             (true, None) => {
@@ -1281,8 +1279,13 @@ pub async fn sync_met_opties<O: Opslag>(
     }
     // Ook wat bij alleen lezen niet naar de server ging, staat in de lijst met overgeslagen bestanden.
     ronde.toestand.lock().unwrap().overgeslagen = ronde.rapport.lock().unwrap().overgeslagen.clone();
-    // Ook als de sessie onderweg verliep: wat gelukt is, blijft bekend.
-    bewaar(root, &ronde.toestand.lock().unwrap())?;
+    // Ook als de sessie onderweg verliep: wat gelukt is, blijft bekend. De verwijderingen van deze ronde staan daarmee
+    // vast.
+    {
+        let toestand = ronde.toestand.lock().unwrap();
+        bewaar(root, &toestand)?;
+        vervang::leg_vast(root, |s| toestand.bestanden.contains_key(s))?;
+    }
     // Pas nu de toestand op schijf staat, de bronnen afronden (ook die van eerdere rondes); een journaal verdwijnt zo
     // nooit vóór de toestand die het verwerkt.
     if ronde.rond_af().await {
