@@ -9,17 +9,18 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 
 ## Wat het doet
 
-- Leest IFC als STEP-tekst (ISO 10303-21): HEADER en DATA, lijsten, teksten met codes (`''`, `\X2\…\X0\`, `\X\hh`,
-  `\S\`), opsommingen, `$`, `*`, getypte waarden, verwijzingen, complexe instanties en commentaar. Ongeldige invoer
-  geeft een fout met het regelnummer.
+- Leest IFC als STEP-tekst (ISO 10303-21): HEADER en DATA, lijsten, teksten met codes (`''`, `\\`, `\S\`, de
+  codetabellen `\PA\` tot en met `\PI\` (ISO 8859-1 tot en met 9), `\X\hh`, `\X2\…\X0\` en `\X4\…\X0\`),
+  opsommingen, `$`, `*`, getypte waarden, verwijzingen, complexe instanties en commentaar. Ongeldige invoer, ook een
+  kapotte code in een tekst, geeft een fout met het regelnummer.
 - Kent de schema's IFC2X3, IFC4 en IFC4X3 (uit FILE_SCHEMA). De tabellen komen uit de EXPRESS-schema's van
   buildingSMART (zie onder).
 - `verschil(a, b)`: wat erbij kwam, wat verdween en wat veranderde, per attribuut met de oude en de nieuwe waarde.
-- `voeg_samen(basis, ons, hun, &opties)`: three-way samenvoegen. Geeft het nieuwe bestand (of niets), de conflicten
-  met per conflict het object, het attribuut en de waarden van basis, ons en hun, en cijfers.
-- `sla_op(opslag, basis, ons, &opties)`: de opslaan-lus. Schrijf; is de basis verouderd, lees de basis en de huidige
-  versie, voeg samen en schrijf opnieuw. Een slot van een ander is een aparte fout: dan voegen we niet samen. Elke
-  opslag die de trait `Opslag` (`huidige`, `lees`, `schrijf_als`) heeft, past.
+  Vluchtige velden die veranderden, staan apart (zie onder).
+- `voeg_samen(basis, ons, hun)`: three-way samenvoegen. Geeft het nieuwe bestand, of bij een conflict niets. Het
+  rapport noemt per conflict het object, het attribuut en de waarden van basis, ons en hun, en geeft cijfers.
+- `sla_op(opslag, basis, ons, &opties)`: de opslaan-lus (zie onder). Elke opslag die de trait `Opslag` (`huidige`,
+  `lees`, `schrijf_als`) heeft, past.
 - `kan_samenvoegen(naam)`: alleen `.ifc`.
 
 ## Hoe het vergelijkt
@@ -28,15 +29,23 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 - Al het andere is een **knoop**: geometrie, plaatsing, eigenschapswaarden, IfcOwnerHistory, eenheden.
 - De nummers `#n` doen nergens mee. Twee bestanden met dezelfde inhoud en een andere nummering zijn gelijk. Dat is
   nodig, want Open Planner Studio nummert bij elk opslaan alles opnieuw.
-- Getallen vergelijken we als getal (`1.`, `1.0` en `1.E0` zijn gelijk), teksten na het decoderen van de codes.
+- Getallen vergelijken we precies op hun waarde, zonder afronden: `1.`, `1.0` en `1.E0` zijn gelijk,
+  `9007199254740992.` en `9007199254740993.` niet. Teksten vergelijken we na het decoderen van de codes.
+- De volgorde in een SET of BAG telt niet (bijv. de eigenschappen in `HasProperties`); in een LIST wel.
 - **Ankers.** Een knoop waar een object rechtstreeks naar verwijst (bijv. `ObjectPlacement`), is een anker van dat
   object. Een verwijzing naar het anker van een ánder object telt als dat anker, niet als zijn inhoud. Zo is "wand W
   hangt nu onder verdieping Q in plaats van P" een wijziging, ook als de plaatsingen van P en Q dezelfde inhoud
-  hebben. Een knoop die meer objecten gebruiken, heeft als identiteit al zijn ankers samen. Splitst een versie zo'n
-  knoop, dan is dat een wijziging.
-- **Vluchtige velden** tellen niet mee: in IfcOwnerHistory de tijdstempels en de velden over de laatste wijziging,
-  in IfcWorkPlan en IfcWorkSchedule `CreationDate` (Open Planner Studio schrijft daar bij elk opslaan het huidige
-  tijdstip), en in de HEADER de tijdstempel van FILE_NAME. De auteur en de organisatie tellen wel mee.
+  hebben. Een knoop die meer objecten gebruiken, heeft als identiteit al zijn ankers samen. Daarin tellen alleen
+  objecten die in beide versies staan: een nieuw object aan een gedeelde IfcOwnerHistory verandert de andere
+  objecten niet.
+- **Delen telt.** Delen twee objecten een knoop (bijv. W en V één plaatsing) en krijgt V in de andere versie een
+  eigen kopie met dezelfde inhoud, dan zijn W en V gewijzigd (`ObjectPlacement (gedeeld)`: "gedeeld met V" ->
+  "niet gedeeld"). Bij IfcOwnerHistory telt delen niet: sommige programma's geven een gewijzigd object een eigen
+  IfcOwnerHistory.
+- **Vluchtige velden** maken een object niet gewijzigd: in IfcOwnerHistory de tijdstempels en de velden over de
+  laatste wijziging, in IfcWorkPlan en IfcWorkSchedule `CreationDate` (Open Planner Studio schrijft daar bij elk
+  opslaan het huidige tijdstip, behalve bij een baseline), en in de HEADER de tijdstempel van FILE_NAME. Het
+  verschil noemt ze wel, apart onder `vluchtig`. De auteur, de organisatie en FILE_SCHEMA tellen gewoon mee.
 - **Losse knopen**: knopen waar niets naar verwijst (bijv. IfcStyledItem, IfcIndexedColourMap). Die vergelijken we
   per groep: het type, de naam en wat ze aanwijzen van een object (bijv. de geometrie onder een kleurkaart).
 - **Relaties met een nieuwe GlobalId.** Sommige programma's geven relaties (IfcRel*) bij elk opslaan een nieuwe
@@ -56,12 +65,15 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 | De ene kant verwijderde, de andere wijzigde | Conflict |
 | Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
 | Beide wijzigden dezelfde losse knopen (bijv. een kleur) of hetzelfde HEADER-veld anders | Conflict |
+| Beide vervingen dezelfde relatie door een nieuwe (bijv. een ander materiaal, met een nieuwe GlobalId) | Conflict |
+| Een vluchtig veld (tijdstempels in IfcOwnerHistory en FILE_NAME, `CreationDate` van een planning) | Alleen hun wijzigde: hun; anders ons. Nooit een conflict |
 
 Na het samenvoegen controleren we, en elk probleem is een conflict:
 
 - Iets verwijst naar een object dat er niet meer is (ook via een plaatsing).
 - Een object heeft meer relaties dan een INVERSE met een bovengrens toestaat (bijv. een wand in twee verdiepingen),
-  terwijl ons en hun elk binnen de grens bleven.
+  terwijl ons en hun elk binnen de grens bleven. Voor knopen tellen we hoeveel er over de grens gaan (bijv. twee
+  stijlen op één vorm: `StyledByItem`); zijn dat er meer dan in ons en in hun, dan is het een conflict.
 - Een aggregaat valt buiten de grenzen uit het schema (bijv. een lege `RelatedElements`).
 - **De koppelregel.** Een definitie (eigenschappenset, type, materiaal, classificatie, document) gold in de basis
   voor een object. Bij de ene kant geldt hij niet meer (koppeling weg, uit de `HasPropertySets` van het type, ander
@@ -70,20 +82,41 @@ Na het samenvoegen controleren we, en elk probleem is een conflict:
   het geen conflict.
 - **De boomregel.** In IfcRelAggregates, IfcRelNests en IfcRelContainedInSpatialStructure zit geen kring, en wat in
   ons én in hun vanaf het project bereikbaar was, is dat nog steeds.
-- **Zelfcontrole.** We lezen het geschreven bestand opnieuw. Elk object, elke groep losse knopen en de HEADER moeten
-  zijn wat we bedoelden.
-- Een onbekend schema, versies met een ander schema, onbekende types of een geval dat we niet kennen: conflict,
-  zonder samen te voegen.
+- **Plaatsingen.** Geen kring in `PlacementRelTo` (bijv. ons zet P relatief aan Q, hun Q relatief aan P). Een
+  kring die ons of hun zelf al had, melden we niet.
+- **Zelfcontrole.** We lezen het geschreven bestand opnieuw. Elk object, elke groep losse knopen, de HEADER en de
+  vluchtige velden moeten zijn wat we bedoelden.
+- Een onbekend schema, versies met een ander FILE_SCHEMA (ook IFC4 tegenover IFC4_ADD2), onbekende types of een
+  geval dat we niet kennen: conflict, zonder samen te voegen.
 
-Met `bij_conflict = weiger` (standaard) is er bij een conflict geen resultaat. Met `ons` of `hun` wint die kant per
-conflict: de betrokken objecten komen in hun geheel van die kant. Het rapport noemt de conflicten dan toch, met de
-gekozen kant.
+Bij een conflict is er geen resultaat. Een keuze "ons wint" of "hun wint" is er niet: de client bewaart de eigen
+versie als conflictkopie, met het rapport erbij.
 
 **Schrijven.** Het resultaat begint bij de tekst van ons. Alleen de regels van gewijzigde objecten en hun
 plaatsing of geometrie veranderen. Wat van hun komt, krijgt nieuwe nummers boven het hoogste nummer van ons. Een
-knoop van ons met dezelfde inhoud gebruiken we opnieuw. Knopen waar niets meer naar verwijst, halen we weg. De
-HEADER blijft van ons, behalve de velden die alleen hun wijzigde. Wijzigde een kant niets, dan is het resultaat de
-andere kant, byte voor byte.
+knoop van ons met dezelfde inhoud gebruiken we opnieuw, maar alleen als hij bij hetzelfde object hoort en nog niet
+voor een andere knoop van hun gebruikt is; een gelijk STEP-nummer zegt niets. Knopen waar niets meer naar
+verwijst, halen we weg. De HEADER blijft van ons, behalve de velden die alleen hun wijzigde. Het regeleinde (`\n` of
+`\r\n`) is dat van ons. Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte.
+
+## De opslaan-lus
+
+`sla_op` schrijft de eigen versie met de basis waarop hij gemaakt is. De basis is het bestand plus een id van de
+versie dat nooit terugkomt en altijd dezelfde inhoud aanwijst: bij openaec-storage `basis_bestand` en
+`basis_versie_id`, bij Nextcloud het fileid en de ETag. Een versienummer is alleen voor mensen. Een bestand dat op
+dezelfde plek opnieuw is gemaakt, is een ander bestand.
+
+De opslag kan het schrijven op drie manieren weigeren:
+
+- **Verouderd**: de basis hoort bij dit bestand, maar er is een nieuwere versie. De lus leest de basis en de huidige
+  versie, voegt samen en schrijft opnieuw, hoogstens `max_pogingen` keer (standaard 5).
+- **Onbekende basis**: de basis hoort niet (meer) bij dit bestand, of de opslag weet het niet zeker. De lus leest
+  niets en voegt niet samen: dat is een conflict. Zegt een opslag "verouderd" met een ander bestand, dan behandelt
+  de lus dat ook zo.
+- **Vergrendeld**: een slot van een ander. Daar helpt samenvoegen niet; de lus geeft een fout.
+
+Kan de lus de basis niet lezen (bijv. de versie is opgeruimd), dan voegt hij ook niet samen: conflict. Bij elk
+conflict is er niets geschreven.
 
 ## Wat het nog niet kan
 
@@ -92,14 +125,18 @@ andere kant, byte voor byte.
   conflict.
 - Twee kanten die hetzelfde attribuut van een knoop anders wijzigen (bijv. ons de x, hun de y van hetzelfde punt):
   dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop.
+- Knopen die zonder object ertussen in een kring naar elkaar verwijzen: `verschil` geeft een fout (`Fout::Kring`),
+  `voeg_samen` een conflict, want hun hash zou afhangen van de volgorde in het bestand.
 - Bestanden van 4 GiB of groter.
+
+Bekende kleinere punten staan in `knownbugs.md`.
 
 ## Opdrachtregel
 
 ```text
 cargo build --release --features cli
 openaec-samenvoegen verschil oud.ifc nieuw.ifc [--json]
-openaec-samenvoegen voeg-samen basis.ifc ons.ifc hun.ifc -o uit.ifc [--rapport rapport.json] [--bij-conflict weiger|ons|hun]
+openaec-samenvoegen voeg-samen basis.ifc ons.ifc hun.ifc -o uit.ifc [--rapport rapport.json]
 ```
 
 Voorbeeld:
@@ -126,7 +163,8 @@ Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote best
 | `voeg-samen` (opdrachtregel, drie bestanden van 92 MB) | 9,5 s | 1,9 GB |
 | `voeg-samen` op een planning van OPS (52 kB, 39 taken) | 0,02 s | 7 MB |
 
-Het geheugen is ongeveer 20 keer de bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de
+Deze cijfers zijn van vóór fixronde 1 (november 2026); daarna is niet opnieuw gemeten. Het geheugen is
+ongeveer 20 keer de bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de
 zelfcontrole). Zelf meten:
 
 ```text
@@ -143,15 +181,25 @@ SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test samenvoegen
 uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer_met_ifcopenshell.py /tmp/resultaten
 ```
 
+Laatste run (5 november 2026, fixronde 1): 109 van 109 resultaten geldig, met IfcOpenShell 0.9.0.post1.
+
 ## Bronnen
 
 - De schematabellen in `src/schema/` zijn gemaakt met `scripts/genereer_schema.py` uit de officiële EXPRESS-schema's
-  van buildingSMART International: `IFC2X3_TC1.exp`, `IFC4.exp` (IFC4 ADD2 TC1) en `IFC4X3_ADD2.exp`, uit
+  van buildingSMART International, uit
   [buildingSMART/Standards-builds](https://github.com/buildingSMART/Standards-builds/tree/main/IFC/RELEASE)
-  (commit `9e87befeccde8e876b0f06325779617dedd44aa5`). © buildingSMART International Limited. Volgens hun
-  copyrightvermelding mag de technische documentatie zonder voorafgaande toestemming in softwareontwikkeling worden
-  gebruikt, mits de bron volledig wordt vermeld. We nemen alleen de namen van entiteiten, supertypes en attributen
-  over, met de soort en de grenzen van aggregaten en de INVERSE-attributen.
+  (commit `9e87befeccde8e876b0f06325779617dedd44aa5`). We nemen alleen de namen van entiteiten, supertypes en
+  attributen over, met de soort en de grenzen van aggregaten en de INVERSE-attributen. De bestanden zelf staan niet
+  in deze repo. De voorwaarden verschillen per schema:
+
+  | Tabel | Bron | Voorwaarden in de bron |
+  |---|---|---|
+  | `ifc2x3.txt` | `IFC2x3/TC1/EXPRESS/IFC2X3_TC1.exp` | Kop van het bestand: "Copyright by: buildingSMART International Ltd., 1996-2020. All rights reserved. No part of this documentation may be reproduced, stored in a retrieval system, or transmitted in any form or by any means, without the prior written permission of the owner." |
+  | `ifc4.txt` | `IFC4/ADD2_TC1/EXPRESS/IFC4.exp` | Kop van het bestand: de technische documentatie "may be photocopied, used in software development, or translated into another computer language without prior written consent from buildingSMART International Limited provided that full attribution is given. Prior written consent is required if changes are made to the technical specification." |
+  | `ifc4x3_add2.txt` | `IFC4_3/HTML/IFC4X3_ADD2.exp` | Het bestand heeft geen copyrightkop. De README van Standards-builds zegt: "Copyright © buildingSMART International Ltd. All Rights reserved until formal release. Final IFC is licensed under the Creative Commons Attribution-NoDerivatives 4.0 International License (CC BY-ND 4.0)." |
+
+  Voor IFC2X3 vraagt de bron dus voorafgaande schriftelijke toestemming voor elke reproductie. Of een tabel met
+  alleen namen en structuur daaronder valt, is niet nagegaan (zie `knownbugs.md`).
 - Testbestanden: zie `tests/bestanden/README.md`.
 
 ## Licentie

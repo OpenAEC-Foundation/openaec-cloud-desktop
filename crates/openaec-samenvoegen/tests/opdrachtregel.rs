@@ -48,10 +48,14 @@ fn gelukt_conflict_en_fout() {
     assert!(!pad.join("uit.ifc").exists());
     let rapport: serde_json::Value = serde_json::from_slice(&std::fs::read(pad.join("rapport.json")).unwrap()).unwrap();
     assert_eq!(rapport["conflicten"][0]["attribuut"], "Name");
-    // Met hun als winnaar: wel een bestand, en exitcode 1 omdat er conflicten waren.
-    let (code, _) = voeg_samen(&pad, &b, &o, &h, &["--bij-conflict", "hun"]);
-    assert_eq!(code, 1);
-    assert!(std::fs::read_to_string(pad.join("uit.ifc")).unwrap().contains("'W-hun'"));
+    // Een keuze "ons wint" of "hun wint" is er niet meer (K4).
+    let uit = Command::new(env!("CARGO_BIN_EXE_openaec-samenvoegen"))
+        .current_dir(&pad)
+        .args(["voeg-samen", "basis.ifc", "ons.ifc", "hun.ifc", "-o", "uit.ifc", "--bij-conflict", "hun"])
+        .output()
+        .unwrap();
+    assert_eq!(uit.status.code(), Some(2));
+    assert!(!pad.join("uit.ifc").exists());
 
     let pad = map("fout");
     let (code, _) = voeg_samen(&pad, &b, "geen IFC", &h, &[]);

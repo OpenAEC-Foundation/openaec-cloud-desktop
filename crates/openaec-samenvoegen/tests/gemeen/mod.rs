@@ -239,3 +239,125 @@ pub fn gebouw(schema: &str) -> String {
     );
     ifc(schema, &data)
 }
+
+// --- Een losse lezer voor feiten in een resultaat. ---
+
+/// Een eenvoudige lezer voor de tests: per `#n` het type en de attributen als tekst. Hij deelt geen code met de
+/// bibliotheek. Zo gaat een test een feit na ("W is rood", "V heeft een eigen plaatsing") los van de vergelijker.
+/// Complexe instanties (`#n=(A()B());`) slaat hij over.
+pub struct Feiten {
+    instanties: HashMap<u64, (String, Vec<String>)>,
+}
+
+/// Splitst op komma's op het bovenste niveau, buiten teksten en haakjes.
+fn splits(tekst: &str) -> Vec<String> {
+    let mut uit = Vec::new();
+    let mut huidig = String::new();
+    let (mut diepte, mut in_tekst) = (0usize, false);
+    for c in tekst.chars() {
+        match c {
+            '\'' => in_tekst = !in_tekst,
+            '(' if !in_tekst => diepte += 1,
+            ')' if !in_tekst => diepte -= 1,
+            ',' if !in_tekst && diepte == 0 => {
+                uit.push(huidig.trim().to_string());
+                huidig.clear();
+                continue;
+            }
+            _ => {}
+        }
+        huidig.push(c);
+    }
+    if !huidig.trim().is_empty() || !uit.is_empty() {
+        uit.push(huidig.trim().to_string());
+    }
+    uit
+}
+
+/// De nummers `#n` in `tekst`, buiten teksten.
+fn nummers(tekst: &str) -> Vec<u64> {
+    let mut uit = Vec::new();
+    let mut in_tekst = false;
+    let tekens: Vec<char> = tekst.chars().collect();
+    let mut i = 0;
+    while i < tekens.len() {
+        match tekens[i] {
+            '\'' => in_tekst = !in_tekst,
+            '#' if !in_tekst => {
+                let j = (i + 1..tekens.len()).find(|&j| !tekens[j].is_ascii_digit()).unwrap_or(tekens.len());
+                uit.push(tekens[i + 1..j].iter().collect::<String>().parse().unwrap());
+                i = j;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    uit
+}
+
+impl Feiten {
+    pub fn lees(tekst: &str) -> Self {
+        let begin = tekst.find("DATA;").unwrap() + "DATA;".len();
+        let eind = tekst.rfind("ENDSEC;").unwrap();
+        let mut lijst = HashMap::new();
+        for inst in instanties(&tekst[begin..eind]) {
+            let (nummer, rest) = inst.split_once('=').unwrap();
+            let n: u64 = nummer.trim().trim_start_matches('#').parse().unwrap();
+            let rest = rest.trim();
+            let Some(haakje) = rest.find('(').filter(|&h| h > 0) else { continue };
+            let binnen = &rest[haakje + 1..rest.rfind(')').unwrap()];
+            lijst.insert(n, (rest[..haakje].trim().to_ascii_uppercase(), splits(binnen)));
+        }
+        Feiten { instanties: lijst }
+    }
+
+    /// Het type van `#n`, in hoofdletters.
+    pub fn type_van(&self, n: u64) -> &str {
+        &self.instanties[&n].0
+    }
+
+    /// Attribuut `j` van `#n`, als tekst.
+    pub fn attr(&self, n: u64, j: usize) -> &str {
+        &self.instanties[&n].1[j]
+    }
+
+    /// Attribuut `j` van `#n` is één verwijzing; dit is het nummer.
+    pub fn verwijzing(&self, n: u64, j: usize) -> u64 {
+        let w = self.attr(n, j);
+        w.strip_prefix('#').and_then(|x| x.parse().ok()).unwrap_or_else(|| panic!("#{n}.{j} = {w}"))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst; dit zijn de elementen.
+    pub fn lijst(&self, n: u64, j: usize) -> Vec<String> {
+        let w = self.attr(n, j);
+        splits(w.strip_prefix('(').and_then(|x| x.strip_suffix(')')).unwrap_or_else(|| panic!("#{n}.{j} = {w}")))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst van verwijzingen.
+    pub fn verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        self.lijst(n, j).iter().map(|e| e.trim_start_matches('#').parse().unwrap()).collect()
+    }
+
+    /// Het object met deze GlobalId (precies één).
+    pub fn met_globalid(&self, globalid: &str) -> u64 {
+        let tekst = format!("'{globalid}'");
+        let lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (_, a))| a.first() == Some(&tekst)).map(|(&n, _)| n).collect();
+        assert_eq!(lijst.len(), 1, "{globalid}: {lijst:?}");
+        lijst[0]
+    }
+
+    /// De instanties van dit type (in hoofdletters), op nummer.
+    pub fn van_type(&self, type_naam: &str) -> Vec<u64> {
+        let mut lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (t, _))| t == type_naam).map(|(&n, _)| n).collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De instanties van dit type die in attribuut `j` naar `#doel` verwijzen (ook in een lijst), op nummer.
+    pub fn naar(&self, type_naam: &str, j: usize, doel: u64) -> Vec<u64> {
+        self.van_type(type_naam).into_iter().filter(|&n| nummers(self.attr(n, j)).contains(&doel)).collect()
+    }
+}

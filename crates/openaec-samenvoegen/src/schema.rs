@@ -63,7 +63,7 @@ impl Entiteit {
 }
 
 /// Velden die een programma bij elk opslaan opnieuw invult, per entiteit (met haar subtypes). Ze tellen niet mee
-/// bij het vergelijken; bij samenvoegen blijft de waarde van ons staan.
+/// bij het vergelijken. Bij samenvoegen komt de waarde van hun als alleen hun het veld wijzigde, anders die van ons.
 /// - IfcOwnerHistory: de tijdstempels en wie het laatst wijzigde. OwningUser en OwningApplication tellen wel mee.
 /// - IfcWorkControl (IfcWorkPlan, IfcWorkSchedule): Open Planner Studio schrijft bij elk opslaan het huidige
 ///   tijdstip in CreationDate (`creationDate: now` in `ifcWriter.ts`).
@@ -78,12 +78,19 @@ pub(crate) const VLUCHTIG: &[(&str, &[&str])] = &[
 pub(crate) struct Schema {
     pub naam: &'static str,
     entiteiten: HashMap<String, Entiteit>,
+    /// De INVERSE-attributen met een bovengrens: (bron in hoofdletters, FOR-attribuut).
+    begrensd: Vec<(String, String)>,
 }
 
 impl Schema {
     /// De entiteit bij een type-naam in hoofdletters (zoals in een IFC-bestand).
     pub fn entiteit(&self, type_naam: &str) -> Option<&Entiteit> {
         self.entiteiten.get(type_naam)
+    }
+
+    /// Kan attribuut `naam` van entiteit `e` het FOR-attribuut van een INVERSE met een bovengrens zijn?
+    pub fn is_inverse_voor(&self, e: &Entiteit, naam: &str) -> bool {
+        self.begrensd.iter().any(|(bron, voor)| voor == naam && e.is_een(bron))
     }
 }
 
@@ -193,7 +200,13 @@ fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
             },
         );
     }
-    Schema { naam, entiteiten }
+    let mut begrensd: Vec<(String, String)> = entiteiten
+        .values()
+        .flat_map(|e| e.inverses.iter().filter(|i| i.max.is_some()).map(|i| (i.bron.clone(), i.voor.clone())))
+        .collect();
+    begrensd.sort();
+    begrensd.dedup();
+    Schema { naam, entiteiten, begrensd }
 }
 
 /// `Naam=Type.ForAttribuut[min:max]`.

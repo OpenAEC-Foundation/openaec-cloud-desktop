@@ -590,21 +590,14 @@ impl<'a> Lezer<'a> {
         }
     }
 
+    /// Een tekst `'...'`; de codes erin moeten kloppen ([`crate::tekst`]).
     fn tekst(&mut self) -> Result<(), Fout> {
-        let begin = self.pos;
-        self.pos += 1;
-        loop {
-            match zoek_byte(self.data, self.pos, b'\'') {
-                None => return Err(ongeldig(self.data, begin, "tekst zonder afsluitende '")),
-                Some(p) => {
-                    if self.data.get(p + 1) == Some(&b'\'') {
-                        self.pos = p + 2;
-                    } else {
-                        self.pos = p + 1;
-                        return Ok(());
-                    }
-                }
+        match crate::tekst::einde(self.data, self.pos + 1) {
+            Ok(eind) => {
+                self.pos = eind + 1;
+                Ok(())
             }
+            Err(f) => Err(ongeldig(self.data, f.positie, f.melding)),
         }
     }
 
@@ -634,11 +627,17 @@ impl<'a> Lezer<'a> {
                 self.pos += 1;
             }
             let start = self.pos;
-            while matches!(self.kijk(), Some(b) if b.is_ascii_digit()) {
+            let mut exponent: u64 = 0;
+            while let Some(b) = self.kijk().filter(u8::is_ascii_digit) {
+                exponent = (exponent * 10 + u64::from(b - b'0')).min(u64::from(u32::MAX));
                 self.pos += 1;
             }
             if self.pos == start {
                 return Err(ongeldig(self.data, begin, "ongeldig getal (exponent zonder cijfers)"));
+            }
+            // Zo vergelijken we getallen precies, zonder afronden (zie `model::getal`).
+            if exponent > i32::MAX as u64 {
+                return Err(ongeldig(self.data, begin, "getal met een te grote exponent"));
             }
         }
         Ok(())
@@ -783,22 +782,16 @@ impl<'a> Iterator for Tokens<'a> {
                 }
                 Token::Verwijzing(waarde)
             }
-            b'\'' => {
-                let mut p = begin + 1;
-                loop {
-                    match zoek_byte(data, p, b'\'') {
-                        None => {
-                            self.pos = data.len();
-                            return None;
-                        }
-                        Some(q) if data.get(q + 1) == Some(&b'\'') => p = q + 2,
-                        Some(q) => {
-                            self.pos = q + 1;
-                            break Token::Tekst(&data[begin + 1..q]);
-                        }
-                    }
+            b'\'' => match crate::tekst::einde(data, begin + 1) {
+                Ok(q) => {
+                    self.pos = q + 1;
+                    Token::Tekst(&data[begin + 1..q])
                 }
-            }
+                Err(_) => {
+                    self.pos = data.len();
+                    return None;
+                }
+            },
             b'"' => {
                 let eind = zoek_byte(data, begin + 1, b'"').unwrap_or(data.len());
                 self.pos = (eind + 1).min(data.len());

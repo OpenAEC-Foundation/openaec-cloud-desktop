@@ -4,14 +4,10 @@
 mod gemeen;
 
 use gemeen::*;
-use openaec_samenvoegen::{verschil, voeg_samen, BijConflict, ConflictSoort, Kant, Opties, Samenvoeging};
+use openaec_samenvoegen::{verschil, voeg_samen, ConflictSoort, Samenvoeging};
 
 fn voeg(b: &str, o: &str, h: &str) -> Samenvoeging {
-    voeg_met(b, o, h, BijConflict::Weiger)
-}
-
-fn voeg_met(b: &str, o: &str, h: &str, bij_conflict: BijConflict) -> Samenvoeging {
-    voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes(), &Opties { bij_conflict }).unwrap()
+    voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes()).unwrap()
 }
 
 /// Het resultaat; de samenvoeging moet zonder conflict lukken. Met `SAMENVOEGEN_UITVOER=<map>` schrijven we elk
@@ -106,16 +102,8 @@ fn hetzelfde_attribuut_anders_is_een_conflict() {
             (Some("'W'"), Some("'W-ons'"), Some("'W-hun'"))
         );
         assert_eq!(c.globalid.as_deref(), Some(gid("WandW").as_str()));
-        // Met een winnaar per conflict.
-        for (keuze, naam) in [(BijConflict::Ons, "'W-ons'"), (BijConflict::Hun, "'W-hun'")] {
-            let s = voeg_met(&b, &o, &h, keuze);
-            assert!(s.gelukt, "{:#?}", s.conflicten);
-            assert_eq!(s.conflicten.len(), 1);
-            let gekozen = if keuze == BijConflict::Ons { Kant::Ons } else { Kant::Hun };
-            assert_eq!(s.conflicten[0].gekozen, Some(gekozen));
-            let r = String::from_utf8(s.inhoud.unwrap()).unwrap();
-            assert!(r.contains(&format!("#5,{naam},$")), "{r}");
-        }
+        // Er is geen resultaat: geen kant wint (K4).
+        assert!(s.inhoud.is_none());
     }
 }
 
@@ -384,13 +372,6 @@ fn gedeelde_eigenschappenset_en_verwijderde_wand() {
         let c = &s.conflicten[0];
         assert_eq!((c.soort, c.naam.as_deref()), (ConflictSoort::KoppelingVerdwenen, Some("W")));
         assert_eq!((c.ons.as_deref(), c.hun.as_deref()), (Some("object verwijderd"), Some("geldt, gewijzigd")));
-        // Met hun als winnaar: W blijft, met P = 60. Met ons als winnaar: W is weg, P blijft 30.
-        let s = voeg_met(&b, &o, &h, BijConflict::Hun);
-        let r = String::from_utf8(s.inhoud.unwrap_or_else(|| panic!("hun wint: {:#?}", s.conflicten))).unwrap();
-        assert!(r.contains("'W'") && r.contains("IFCINTEGER(60)"), "{r}");
-        let s = voeg_met(&b, &o, &h, BijConflict::Ons);
-        let r = String::from_utf8(s.inhoud.expect("ons wint")).unwrap();
-        zelfde(&r, &o);
     }
 }
 
@@ -844,5 +825,370 @@ fn relaties_met_een_nieuwe_globalid_aan_beide_kanten() {
         assert!(s.gelukt, "{schema}: {:#?}", s.conflicten);
         assert_eq!(s.statistiek.relaties_gekoppeld, 4);
         zelfde(&String::from_utf8(s.inhoud.unwrap()).unwrap(), &verwacht);
+    }
+}
+
+// --- Regressies uit de review van PR #7 (Sol). Elke test gaat het feit na met een losse lezer (`Feiten`), niet met
+// de vergelijker van de bibliotheek. ---
+
+const ROOD: [f64; 3] = [1., 0., 0.];
+const GROEN: [f64; 3] = [0., 1., 0.];
+const BLAUW: [f64; 3] = [0., 0., 1.];
+
+/// Een vorm met een kleur vanaf nummer `n`: punt, box, representatie, productvorm, kleur, schaduw, stijl en het
+/// gestileerde item. In IFC2X3 staat er een IfcPresentationStyleAssignment tussen (op `n + 100`).
+fn vorm(schema: &str, n: u32, rgb: &str) -> String {
+    let ifc2x3 = schema == "IFC2X3";
+    let schaduw = if ifc2x3 { format!("#{}", n + 4) } else { format!("#{},$", n + 4) };
+    let stijl = if ifc2x3 { n + 100 } else { n + 6 };
+    let mut s = format!(
+        "#{n}=IFCCARTESIANPOINT((0.,0.,0.));\n#{b}=IFCBOUNDINGBOX(#{n},1.,1.,1.);\n\
+         #{r}=IFCSHAPEREPRESENTATION(#7,'Box','BoundingBox',(#{b}));\n#{p}=IFCPRODUCTDEFINITIONSHAPE($,$,(#{r}));\n\
+         #{k}=IFCCOLOURRGB($,{rgb});\n#{sch}=IFCSURFACESTYLESHADING({schaduw});\n\
+         #{st}=IFCSURFACESTYLE($,.BOTH.,(#{sch}));\n#{i}=IFCSTYLEDITEM(#{b},(#{stijl}),$);",
+        b = n + 1,
+        r = n + 2,
+        p = n + 3,
+        k = n + 4,
+        sch = n + 5,
+        st = n + 6,
+        i = n + 7,
+    );
+    if ifc2x3 {
+        s += &format!("\n#{}=IFCPRESENTATIONSTYLEASSIGNMENT((#{}));", n + 100, n + 6);
+    }
+    s
+}
+
+/// Het gebouw met een rode vorm voor W (#63-#70) en, met `v_ook`, een blauwe voor V (#71-#78), zoals in Sol's
+/// voorbeelden.
+fn met_vormen(schema: &str, v_ook: bool) -> String {
+    let b = vervang(&gebouw(schema), "#5,'W',$,$,#40,$,", "#5,'W',$,$,#40,#66,");
+    let w = vorm(schema, 63, "1.,0.,0.");
+    if !v_ook {
+        return voeg_toe(&b, &w);
+    }
+    let b = vervang(&b, "#5,'V',$,$,#45,$,", "#5,'V',$,$,#45,#74,");
+    voeg_toe(&b, &format!("{w}\n{}", vorm(schema, 71, "0.,0.,1.")))
+}
+
+/// Wisselt de nummers `#a` en `#b` overal: dezelfde inhoud, andere nummers.
+fn wissel(tekst: &str, a: u32, b: u32) -> String {
+    let mut uit = String::new();
+    let mut rest = tekst;
+    while let Some(p) = rest.find('#') {
+        uit.push_str(&rest[..p]);
+        let cijfers = rest[p + 1..].chars().take_while(|c| c.is_ascii_digit()).count();
+        match rest[p + 1..p + 1 + cijfers].parse::<u32>() {
+            Ok(n) => uit.push_str(&format!(
+                "#{}",
+                if n == a {
+                    b
+                } else if n == b {
+                    a
+                } else {
+                    n
+                }
+            )),
+            Err(_) => uit.push('#'),
+        }
+        rest = &rest[p + 1 + cijfers..];
+    }
+    uit + rest
+}
+
+/// De vorm (het eerste item van de eerste representatie) van het object met deze GlobalId.
+fn vorm_van(f: &Feiten, globalid: &str) -> u64 {
+    let pds = f.verwijzing(f.met_globalid(globalid), 6);
+    let rep = f.verwijzingen(pds, 2)[0];
+    f.verwijzingen(rep, 3)[0]
+}
+
+/// De kleuren van de gestileerde items op deze vorm.
+fn kleuren_op(f: &Feiten, vorm: u64) -> Vec<[f64; 3]> {
+    let mut uit = Vec::new();
+    for item in f.naar("IFCSTYLEDITEM", 0, vorm) {
+        let mut stijlen = f.verwijzingen(item, 1);
+        while let Some(s) = stijlen.pop() {
+            match f.type_van(s) {
+                "IFCPRESENTATIONSTYLEASSIGNMENT" => stijlen.extend(f.verwijzingen(s, 0)),
+                "IFCSURFACESTYLE" => {
+                    for e in f.verwijzingen(s, 2) {
+                        let kleur = f.verwijzing(e, 0);
+                        uit.push([1, 2, 3].map(|j| f.attr(kleur, j).parse::<f64>().unwrap()));
+                    }
+                }
+                t => panic!("onverwachte stijl {t}"),
+            }
+        }
+    }
+    uit
+}
+
+/// De waarden van eigenschap `naam` bij dit object, via IfcRelDefinesByProperties.
+fn eigenschap(f: &Feiten, object: u64, naam: &str) -> Vec<String> {
+    let mut uit = Vec::new();
+    for rel in f.naar("IFCRELDEFINESBYPROPERTIES", 4, object) {
+        for p in f.verwijzingen(f.verwijzing(rel, 5), 4) {
+            if f.attr(p, 0) == format!("'{naam}'") {
+                uit.push(f.attr(p, 2).to_string());
+            }
+        }
+    }
+    uit
+}
+
+/// Sol, PR #7 bevinding 1 (stijlverwisseling): hun nummert de vormen van W en V om (dezelfde inhoud, de nummers
+/// gewisseld) en maakt V groen; ons hernoemt W. W blijft rood en V wordt groen.
+#[test]
+fn stijlen_na_omnummeren() {
+    for schema in SCHEMAS {
+        let b = met_vormen(schema, true);
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        let h = wissel(&vervang(&b, "#75=IFCCOLOURRGB($,0.,0.,1.)", "#75=IFCCOLOURRGB($,0.,1.,0.)"), 64, 72);
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, hh);
+            let f = Feiten::lees(&r);
+            let (w, v) = (vorm_van(&f, &gid("WandW")), vorm_van(&f, &gid("WandV")));
+            assert_ne!(w, v, "{schema}\n{r}");
+            assert_eq!(kleuren_op(&f, w), vec![ROOD], "{schema}: W\n{r}");
+            assert_eq!(kleuren_op(&f, v), vec![GROEN], "{schema}: V\n{r}");
+            assert_eq!(f.attr(f.met_globalid(&gid("WandW")), 2), "'W-ons'");
+        }
+    }
+}
+
+/// Als hierboven, maar W en V zijn allebei blauw: hun maakt alleen V groen. Hun twee gestileerde items verschillen
+/// dan alleen in de vorm waar ze bij horen.
+#[test]
+fn stijl_van_een_van_twee_gelijke_vormen() {
+    for schema in SCHEMAS {
+        let b = vervang(&met_vormen(schema, true), "#67=IFCCOLOURRGB($,1.,0.,0.)", "#67=IFCCOLOURRGB($,0.,0.,1.)");
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        let h = vervang(&b, "#75=IFCCOLOURRGB($,0.,0.,1.)", "#75=IFCCOLOURRGB($,0.,1.,0.)");
+        for (oo, hh) in [(&o, &h), (&h, &o), (&o, &wissel(&h, 64, 72)), (&o, &hernummer(&h, 3))] {
+            let r = gelukt(&b, oo, hh);
+            let f = Feiten::lees(&r);
+            let (w, v) = (vorm_van(&f, &gid("WandW")), vorm_van(&f, &gid("WandV")));
+            assert_ne!(w, v, "{schema}\n{r}");
+            assert_eq!(kleuren_op(&f, w), vec![BLAUW], "{schema}: W\n{r}");
+            assert_eq!(kleuren_op(&f, v), vec![GROEN], "{schema}: V\n{r}");
+        }
+        // Elke kant wijzigt de stijl van een andere vorm: geen conflict, want de stijlen horen bij een ander object.
+        let o = vervang(&b, "#67=IFCCOLOURRGB($,0.,0.,1.)", "#67=IFCCOLOURRGB($,1.,0.,0.)");
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, &hernummer(hh, 11));
+            let f = Feiten::lees(&r);
+            assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("WandW"))), vec![ROOD], "{schema}: W\n{r}");
+            assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("WandV"))), vec![GROEN], "{schema}: V\n{r}");
+        }
+    }
+}
+
+/// Sol, PR #7 bevinding 3: alleen W heeft een vorm (rood). Hun geeft V een eigen vorm met dezelfde inhoud en een
+/// eigen kleur (blauw); ons hernoemt W. V houdt zijn eigen vorm, en elke vorm heeft één stijl.
+#[test]
+fn eigen_vorm_met_dezelfde_inhoud() {
+    for schema in SCHEMAS {
+        let b = met_vormen(schema, false);
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        let h = met_vormen(schema, true);
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, &hernummer(hh, 5));
+            let f = Feiten::lees(&r);
+            let (w, v) = (vorm_van(&f, &gid("WandW")), vorm_van(&f, &gid("WandV")));
+            assert_ne!(w, v, "{schema}: V deelt de vorm van W\n{r}");
+            assert_eq!(kleuren_op(&f, w), vec![ROOD], "{schema}: W\n{r}");
+            assert_eq!(kleuren_op(&f, v), vec![BLAUW], "{schema}: V\n{r}");
+        }
+    }
+}
+
+/// Een materiaal en een IfcRelAssociatesMaterial voor W en V.
+fn materiaal(schema: &str, naam: &str, rel: &str) -> String {
+    let m = if schema == "IFC2X3" { format!("IFCMATERIAL('{naam}')") } else { format!("IFCMATERIAL('{naam}',$,$)") };
+    format!("#71={m};\n#72=IFCRELASSOCIATESMATERIAL('{}',#5,$,$,(#43,#44),#71);", gid(rel))
+}
+
+/// Sol, PR #7 bevinding 2 (materiaalbotsing): W en V zijn van beton. Ons maakt ze van staal en hun van hout, elk
+/// met een nieuwe relatie (een nieuwe GlobalId) in plaats van de oude. Dat is een conflict. Eén kant alleen niet.
+#[test]
+fn materiaal_aan_beide_kanten_vervangen() {
+    for schema in SCHEMAS {
+        let beton = materiaal(schema, "Beton", "MatRel");
+        let b = voeg_toe(&gebouw(schema), &beton);
+        let o = vervang(&vervang(&b, "#5,'W',$", "#5,'W-ons',$"), &beton, &materiaal(schema, "Staal", "MatOns"));
+        let h = vervang(&vervang(&b, "#5,'V',$", "#5,'V-hun',$"), &beton, &materiaal(schema, "Hout", "MatHun"));
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let soorten = conflicten(&b, oo, &hernummer(hh, 7));
+            assert!(soorten.contains(&ConflictSoort::RelatieVervangen), "{schema}: {soorten:?}");
+        }
+        // Alleen ons vervangt: één materiaalrelatie, voor W en V, van staal.
+        let h = vervang(&b, "#5,'V',$", "#5,'V-hun',$");
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, &hernummer(hh, 9));
+            let f = Feiten::lees(&r);
+            let rels = f.van_type("IFCRELASSOCIATESMATERIAL");
+            assert_eq!(rels.len(), 1, "{schema}\n{r}");
+            let mut doelen = f.verwijzingen(rels[0], 4);
+            doelen.sort_unstable();
+            let mut wv = vec![f.met_globalid(&gid("WandW")), f.met_globalid(&gid("WandV"))];
+            wv.sort_unstable();
+            assert_eq!(doelen, wv, "{schema}\n{r}");
+            assert_eq!(f.attr(rels[0], 0), format!("'{}'", gid("MatOns")));
+            assert_eq!(f.attr(f.verwijzing(rels[0], 5), 0), "'Staal'");
+        }
+    }
+}
+
+/// Sol, PR #7 bevinding 4 (splitsing): W en V delen een plaatsing. Ons geeft V een eigen kopie; hun zet de
+/// brandwerendheid op 60. In het resultaat hebben W en V elk een eigen plaatsing met dezelfde inhoud, en is de
+/// brandwerendheid 60.
+#[test]
+fn gedeelde_plaatsing_splitsen_door_een_kant() {
+    for schema in SCHEMAS {
+        let b = vervang(&gebouw(schema), "#5,'V',$,$,#45,", "#5,'V',$,$,#40,");
+        let b = verwijder_regel(&verwijder_regel(&verwijder_regel(&b, "#45="), "#46="), "#47=");
+        let o = met(&b, &[("#5,'V',$,$,#40,", "#5,'V',$,$,#71,")], "#71=IFCLOCALPLACEMENT(#20,#41);");
+        let h = vervang(&b, BRAND, "IFCINTEGER(60)");
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let r = gelukt(&b, oo, &hernummer(hh, 13));
+            let f = Feiten::lees(&r);
+            let (w, v) = (f.met_globalid(&gid("WandW")), f.met_globalid(&gid("WandV")));
+            let (pw, pv) = (f.verwijzing(w, 5), f.verwijzing(v, 5));
+            assert_ne!(pw, pv, "{schema}: W en V delen nog een plaatsing\n{r}");
+            let p = f.verwijzing(f.met_globalid(&gid("StoreyP")), 5);
+            for x in [pw, pv] {
+                assert_eq!(f.verwijzing(x, 0), p, "{schema}\n{r}");
+                let punt = f.verwijzing(f.verwijzing(x, 1), 0);
+                assert_eq!(f.attr(punt, 0), "(1.,0.,0.)", "{schema}\n{r}");
+            }
+            for x in [w, v] {
+                assert_eq!(eigenschap(&f, x, "Brandwerendheid"), vec!["IFCINTEGER(60)"], "{schema}\n{r}");
+            }
+        }
+    }
+}
+
+/// Sol, PR #7 bevinding 5: ons zet de plaatsing van P relatief aan die van Q, hun die van Q relatief aan die van P.
+/// Elke kant apart is goed; samen staan de plaatsingen in een kring. Dat is een conflict.
+#[test]
+fn plaatsingen_in_een_kring() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let o = vervang(&b, "#20=IFCLOCALPLACEMENT($,", "#20=IFCLOCALPLACEMENT(#23,");
+        let h = vervang(&b, "#23=IFCLOCALPLACEMENT($,", "#23=IFCLOCALPLACEMENT(#20,");
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let s = voeg(&b, oo, &hernummer(hh, 17));
+            assert!(!s.gelukt && s.inhoud.is_none(), "{schema}");
+            let c = s.conflicten.iter().find(|c| c.soort == ConflictSoort::PlaatsingKring);
+            let c = c.unwrap_or_else(|| panic!("{schema}: {:#?}", s.conflicten));
+            assert_eq!(c.attribuut.as_deref(), Some("ObjectPlacement.PlacementRelTo"));
+        }
+        // Eén kant alleen: geen kring.
+        let h = vervang(&b, "#5,'W',$", "#5,'W-hun',$");
+        let r = gelukt(&b, &o, &hernummer(&h, 19));
+        let f = Feiten::lees(&r);
+        let p = f.verwijzing(f.met_globalid(&gid("StoreyP")), 5);
+        let q = f.verwijzing(f.met_globalid(&gid("StoreyQ")), 5);
+        assert_eq!((f.attr(p, 0), f.attr(q, 0)), (format!("#{q}").as_str(), "$"), "{schema}\n{r}");
+    }
+}
+
+/// Het gebouw met een baseline-planning (IfcWorkSchedule) met CreationDate 15 januari.
+fn met_planning(schema: &str) -> String {
+    voeg_toe(
+        &gebouw(schema),
+        &format!(
+            "#80=IFCWORKSCHEDULE('{}',#5,'Baseline 1',$,$,$,'2027-01-15T09:00:00',$,$,$,$,'2027-03-01T07:00:00',\
+             '2027-06-02T07:00:00',.BASELINE.);",
+            gid("Planning")
+        ),
+    )
+}
+
+fn creatiedatum(t: &str, datum: &str) -> String {
+    vervang(t, "'Baseline 1',$,$,$,'2027-01-15T09:00:00'", &format!("'Baseline 1',$,$,$,'{datum}'"))
+}
+
+/// De IfcOwnerHistory gewijzigd op tijdstip `tijd`.
+fn gewijzigd_op(t: &str, tijd: u64) -> String {
+    vervang(t, "#4,$,.NOCHANGE.,$,$,$,1700000000);", &format!("#4,$,.MODIFIED.,{tijd},$,$,1700000000);"))
+}
+
+fn met_tijdstempel(t: &str, tijd: &str) -> String {
+    vervang(t, "FILE_NAME('test.ifc','2026-11-05T10:00:00',", &format!("FILE_NAME('test.ifc','{tijd}',"))
+}
+
+/// De vluchtige waarden in een resultaat: CreationDate van de planning, ChangeAction en LastModifiedDate van de
+/// IfcOwnerHistory van W, en de tijdstempel in FILE_NAME.
+fn vluchtig(r: &str) -> (String, String, String, String) {
+    let f = Feiten::lees(r);
+    let plan = f.met_globalid(&gid("Planning"));
+    let eigenaar = f.verwijzing(f.met_globalid(&gid("WandW")), 1);
+    let kop = r.lines().find(|l| l.starts_with("FILE_NAME(")).unwrap();
+    let tijd = kop.split(',').nth(1).unwrap().to_string();
+    (f.attr(plan, 6).into(), f.attr(eigenaar, 3).into(), f.attr(eigenaar, 4).into(), tijd)
+}
+
+/// Vluchtige velden geven nooit een conflict. Wijzigde alleen hun zo'n veld, dan komt de waarde van hun; wijzigden
+/// beide, dan blijft die van ons. Bijv. de CreationDate van een baseline, die Open Planner Studio niet bij elk
+/// opslaan overschrijft.
+#[test]
+fn vluchtige_velden_samenvoegen() {
+    for schema in ["IFC4", "IFC4X3_ADD2"] {
+        let b = met_planning(schema);
+        // Alleen hun wijzigt de vluchtige velden; ons wijzigt een naam.
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        let h =
+            met_tijdstempel(&gewijzigd_op(&creatiedatum(&b, "2027-02-15T09:00:00"), 1800000000), "2026-11-06T08:00:00");
+        let hun = (
+            "'2027-02-15T09:00:00'".to_string(),
+            ".MODIFIED.".to_string(),
+            "1800000000".to_string(),
+            "'2026-11-06T08:00:00'".to_string(),
+        );
+        let r = gelukt(&b, &o, &hernummer(&h, 23));
+        assert_eq!(vluchtig(&r), hun, "{schema}\n{r}");
+        assert!(r.contains("'W-ons'"));
+        // Ook als ons verder niets wijzigde.
+        assert_eq!(vluchtig(&gelukt(&b, &b, &hernummer(&h, 25))), hun, "{schema}");
+        // Beide wijzigen: de waarde van ons blijft, zonder conflict.
+        let o2 =
+            met_tijdstempel(&gewijzigd_op(&creatiedatum(&o, "2027-03-15T09:00:00"), 1900000000), "2026-11-07T08:00:00");
+        let r = gelukt(&b, &o2, &hernummer(&h, 27));
+        let ons = (
+            "'2027-03-15T09:00:00'".to_string(),
+            ".MODIFIED.".to_string(),
+            "1900000000".to_string(),
+            "'2026-11-07T08:00:00'".to_string(),
+        );
+        assert_eq!(vluchtig(&r), ons, "{schema}\n{r}");
+        // Elke kant een ander vluchtig veld: allebei komen ze over.
+        let o3 = gewijzigd_op(&b, 1900000000);
+        let h3 = creatiedatum(&b, "2027-02-15T09:00:00");
+        let r = gelukt(&b, &o3, &hernummer(&h3, 29));
+        let (creatie, actie, tijd, _) = vluchtig(&r);
+        assert_eq!(
+            (creatie.as_str(), actie.as_str(), tijd.as_str()),
+            ("'2027-02-15T09:00:00'", ".MODIFIED.", "1900000000")
+        );
+    }
+}
+
+/// Een ander FILE_SCHEMA bij één kant (bijv. IFC4 naar IFC4_ADD2, dezelfde tabel) is een conflict: we kiezen niet
+/// stil een schema.
+#[test]
+fn ander_file_schema_is_een_conflict() {
+    let b = gebouw("IFC4");
+    let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+    let h = vervang(&b, "FILE_SCHEMA(('IFC4'))", "FILE_SCHEMA(('IFC4_ADD2'))");
+    for (bb, oo, hh) in [(&b, &o, &h), (&b, &h, &o), (&b, &b, &h)] {
+        let s = voeg(bb, oo, hh);
+        assert!(!s.gelukt && s.inhoud.is_none());
+        let c = s.conflicten.iter().find(|c| c.attribuut.as_deref() == Some("FILE_SCHEMA"));
+        let c = c.unwrap_or_else(|| panic!("{:#?}", s.conflicten));
+        assert_eq!(c.soort, ConflictSoort::NietOndersteund);
+        assert!(c.melding.contains("IFC4_ADD2"), "{}", c.melding);
     }
 }
