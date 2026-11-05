@@ -48,3 +48,73 @@ code), **S** = afgeleid, niet getoetst.
 14. **Samenvoegen met bestanden op aanvraag is niet op Windows getoetst** (eigen bevinding bij stap 5b, 5 november
     2026). Het resultaat van een samenvoeging komt via de veilige routine op het pad, ook in een map met placeholders.
     De proeven draaien op Linux, zonder Cloud Filter API. — S
+
+De punten 20 tot en met 29 en 110 tot en met 119 horen bij de offline wachtrij (werkstroom 6,
+`docs/samenwerken/offline.md`).
+
+20. **Een eigen upload waarna een ander alweer schreef, wordt niet herkend** (eigen bevinding, 5 november 2026). Alleen
+    de huidige versie telt. Kwam de upload aan (versie 2) en schreef een ander versie 3 vóór de volgende ronde, dan
+    gaat het werk nog eens: bij IFC een samenvoeging met dezelfde wijzigingen (een versie te veel, of een conflictkopie
+    als de ander dezelfde attributen terugdraaide), anders een conflictkopie. Geen verlies. Kan met `versies(bestand)`
+    en de blokhashes per versie, of met optie C. — S
+21. **Hernoemen wordt alleen herkend als een ronde het zag vóór de volgende wijziging** (eigen bevinding, 5 november
+    2026). Grootte en wijzigingstijd kiezen de kandidaat; de vingerafdruk van de inhoud in de toestand bewijst het
+    (review Sol op PR #11, punt 1). Draaide de app niet, of hernoemde en wijzigde de gebruiker binnen de 2 s van de
+    bestandswachter, dan blijft het zoals vóór deze stap: het nieuwe pad een nieuw bestand, het oude naar de prullenbak
+    (of terug als een ander het wijzigde). Zo ook zonder vingerafdruk: een placeholder die alleen online staat, en een
+    bestand uit een toestand van vóór deze stap (tot de volgende overdracht). Een lastige naam (een veilige naam, een
+    spatie vooraan) valt er ook buiten. Geen verlies, wel een nieuw bestand-id en geen samenvoeging. — S
+22. **Een hernoeming op de server door een ander wordt niet gevolgd** (eigen bevinding, 5 november 2026). Wijzigde ik
+    offline `a.ifc` en hernoemde een ander het naar `b.ifc`, dan komt mijn werk als nieuw bestand op `a.ifc`, en komt
+    `b.ifc` erbij. Geen verlies, wel twee bestanden en geen samenvoeging. Kan door in de lijst het bestand-id te volgen
+    en het lokale bestand mee te hernoemen. — S
+23. **Twee hernoemingen tegelijk: de onze wint** (eigen bevinding, 5 november 2026). `verplaats` heeft geen basis.
+    Hernoemde een ander het bestand intussen ook, dan zet onze hernoeming het naar ons pad. Geen verlies van inhoud.
+    Optie D uit `offline.md`. — S
+24. **Een opslaan-patroon met een tijdelijke hernoeming kan als hernoeming gelden** (eigen bevinding, 5 november 2026).
+    Een programma dat bij opslaan `a` hernoemt naar `a.bak`, een nieuwe `a` schrijft en `a.bak` wist: valt een ronde
+    precies tussen de eerste twee stappen, dan gaat `a` op de server naar `a.bak`, wordt de nieuwe `a` een nieuw bestand
+    en gaat `a.bak` daarna naar de prullenbak. Geen verlies (de geschiedenis staat in de prullenbak), wel een nieuw
+    bestand-id. Staat `*.bak` op de negeerlijst, dan speelt het niet. — S
+25. **Een afwijkende bron (5a) kan na een crash nog eens naar de server** (eigen bevinding, 5 november 2026).
+    `Ronde::lever_in` legt de upload wel vast als onderweg, maar kijkt bij een volgende ronde niet in de toestand: crasht
+    het programma na die upload en vóór het afronden van de bron, dan gaat de bron nog eens (een tweede conflictkopie of
+    nieuw bestand). Zeldzaam (een programma schreef na een vervanging in de bron) en zonder verlies. — S
+26. **Elke overdracht kost een extra lezing, en een upload ook een fsync** (eigen bevinding, 5 november 2026; review
+    Sol op PR #11, "dubbele volledige hashlezing"). Vóór elke upload hasht de motor het bestand (`Ronde::noteer_bestand`)
+    en schrijft hij een klein bestand met fsync; de client hasht het daarna nog eens voor de upload zelf
+    (`upload_poging` in `lib.rs`). Na elke download leest de motor het bestand nog eens voor de vingerafdruk
+    (`Ronde::inhoud`). Bij duizenden kleine bestanden of een heel groot bestand kost dat tijd; niet gemeten. Sol
+    bevestigt het (ronde 2 op `e2a79c6`). Richting: laat de voorbereiding van de upload en de controle van de download
+    de hashes teruggeven die ze al berekenden. Dan blijven één meting van de inhoud, één vingerafdruk en het duurzame
+    bestand onderweg over. — B
+27. **Verwijderen op de server: de race blijft open** (ontwerp §5.5, review Sol over het geheel en op PR #11, punt 3
+    en ronde 2). Een verwijdering gaat alleen met een zekere basis (de versieregel in de toestand), als de lijst die basis
+    toont, en als het bestand vlak vóór het verwijderen opnieuw opgevraagd nog op die versie staat (`Opslag::huidig`).
+    Die hercontrole is de tussenoplossing; het contract (ontwerp §5.5) accepteert haar, en Sol ook (ronde 2, ja op
+    `e2a79c6`). De race tussen het opvragen en het verwijderen blijft wel open: `Opslag::verwijder` stuurt nog alleen
+    het bestand-id. Slaat een ander precies in dat gat op, dan gaat zijn nieuwe versie naar de prullenbak op de server
+    (terug te halen, maar weg uit het actieve dossier). Het definitieve sluiten wacht op de server:
+    `verwijder(bestand, basis_versie_id)` (optie E in `offline.md`). Proef
+    `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` dekt het gat tussen de lijst en het opvragen. — B
+28. **Het bewijs van een eigen upload hangt aan het volgnummer** (review Sol op PR #11, punt 5). `eigen_upload`
+    vergelijkt de blokhashes van de huidige versie, maar `ClientOpslag::blokhashes` vraagt ze op met het volgnummer
+    (`api.blokken`), niet met de versieregel. Komt hetzelfde nummer met een andere regel terug tussen de lijst en die
+    vraag, dan kan de toestand een regel krijgen waar de hashes niet bij horen. Zeldzaam (een herstel of verplaatsing
+    met overschrijven precies dan); de volgende ronde ziet dan een andere regel en haalt op of voegt samen. Sol
+    bevestigt het (ronde 2 op `e2a79c6`): punt 5 van ronde 1 is niet gesloten. Richting: gebruik de exacte versieregel,
+    bijvoorbeeld via het bestaande `Opslag::lees_versie`; een nieuwe algemene bewijslaag is niet nodig. Andere wegen:
+    `blokken` per versieregel op de server, of na de vergelijking met `Opslag::huidig` nagaan dat dezelfde regel er nog
+    staat. — B
+29. **Een bulkverwijdering vraagt per bestand de hele map opnieuw op** (review Sol op PR #11, ronde 2 op `e2a79c6`).
+    `ClientOpslag::huidig` haalt voor elke verwijdering de volledige inhoud van de map op (`api.bladeren`). Honderden
+    verwijderingen in één map zijn zo honderden volledige mapaanvragen. De vertraging is niet gemeten. Kleiner kan het
+    met één gericht verzoek per bestand via `info(bestand)`: in de voorgestelde serverversie geeft die `versie_id` en
+    `verwijderd`, maar `BestandInfo` in `api.rs` leest die velden nog niet. De hercontrole blijft dezelfde. — B
+
+110. **De herstelmelding krijgt een verkeerd opschrift** (review Sol op PR #11, ronde 2 op `e2a79c6`). De melding "hier
+     verwijderd, maar de basis is niet zeker; teruggehaald" komt in `Rapport::meldingen`. De app zet boven alle meldingen
+     van een ronde "bestanden met een naam die niet kan" (`src-tauri/src/lib.rs`, de melding per map na de ronde). Een
+     gewone `planning.ifc` die terugkomt wegens een onzekere basis krijgt zo een verkeerde uitleg. Richting: maak het
+     opschrift neutraal (bijvoorbeeld "Meldingen van de sync"). Of de systeemmelding echt zichtbaar is, is niet
+     nagegaan. — B

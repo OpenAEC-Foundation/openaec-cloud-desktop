@@ -132,6 +132,14 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
     async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
         self.binnen.blokhashes(versie).await
     }
+
+    async fn verplaats(&self, bestand: &str, naar: &str) -> Result<(), Fout> {
+        self.binnen.verplaats(bestand, naar).await
+    }
+
+    async fn huidig(&self, bestand: &OpslagBestand) -> Result<Option<OpslagBestand>, Fout> {
+        self.binnen.huidig(bestand).await
+    }
 }
 
 /// Bestanden op aanvraag: de regels van de schil, los van de Cloud Filter API (die alleen op Windows bestaat), zodat ze
@@ -368,6 +376,10 @@ mod tests {
         bestanden: Mutex<std::collections::BTreeMap<String, (u64, Vec<u8>)>>,
         /// Elke versie die ooit op de server kwam (pad, inhoud).
         versies: Mutex<Vec<(String, Vec<u8>)>>,
+        /// Het id van een verplaatst bestand op zijn nieuwe pad (anders "id-<pad>").
+        ids: Mutex<std::collections::BTreeMap<String, String>>,
+        /// Elke verplaatsing (id, naar).
+        verplaatst: Mutex<Vec<(String, String)>>,
     }
 
     impl Server {
@@ -380,13 +392,16 @@ mod tests {
         fn inhoud(&self, pad: &str) -> Option<Vec<u8>> {
             self.bestanden.lock().unwrap().get(pad).map(|x| x.1.clone())
         }
+        fn id(&self, pad: &str) -> String {
+            self.ids.lock().unwrap().get(pad).cloned().unwrap_or_else(|| format!("id-{pad}"))
+        }
     }
 
     impl Opslag for Server {
         async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
             let b = self.bestanden.lock().unwrap();
             Ok(b.iter()
-                .map(|(pad, (versie, inhoud))| OpslagBestand { pad: pad.clone(), bestand: format!("id-{pad}"), versie: *versie, grootte: inhoud.len() as u64, versie_id: None })
+                .map(|(pad, (versie, inhoud))| OpslagBestand { pad: pad.clone(), bestand: self.id(pad), versie: *versie, grootte: inhoud.len() as u64, versie_id: None })
                 .collect())
         }
         async fn upload(&self, pad: &str, lokaal: &Path, basis: Option<u64>) -> Result<Upload, Fout> {
@@ -408,6 +423,19 @@ mod tests {
         }
         async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
             self.bestanden.lock().unwrap().remove(&bestand.pad);
+            Ok(())
+        }
+        async fn verplaats(&self, bestand: &str, naar: &str) -> Result<(), Fout> {
+            let van = self.bestanden.lock().unwrap().keys().find(|p| self.id(p) == bestand).cloned();
+            let Some(van) = van else { return Err(Fout::Controle("niet gevonden".into())) };
+            let mut b = self.bestanden.lock().unwrap();
+            if b.contains_key(naar) {
+                return Err(Fout::Controle("bezet".into()));
+            }
+            let x = b.remove(&van).unwrap();
+            b.insert(naar.into(), x);
+            self.ids.lock().unwrap().insert(naar.into(), bestand.into());
+            self.verplaatst.lock().unwrap().push((bestand.into(), naar.into()));
             Ok(())
         }
     }
@@ -564,6 +592,26 @@ mod tests {
             "B staat als versie op de server"
         );
         assert_eq!(std::fs::read_to_string(&pad).unwrap(), "C van een collega");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Proef (review Sol op PR #11, punt 4): een hernoeming hier gaat via de schil naar de server. Hetzelfde bestand
+    /// staat daarna op het nieuwe pad: geen nieuwe upload en geen verwijdering.
+    #[tokio::test]
+    async fn hernoemen_gaat_door_de_schil() {
+        let dir = proefmap("hernoemen");
+        let server = Server::default();
+        server.zet("a.txt", b"inhoud");
+        let schil = Verkenneropslag::new(&server, &dir, false, NieuweMappen::Automatisch, &[]);
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        std::fs::rename(dir.join("a.txt"), dir.join("b.txt")).unwrap();
+
+        let r = openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert_eq!((r.geupload, r.verwijderd, r.fouten.len()), (0, 0, 0), "{r:?}");
+        assert_eq!(*server.verplaatst.lock().unwrap(), vec![("id-a.txt".to_string(), "b.txt".to_string())]);
+        assert_eq!(server.inhoud("b.txt").unwrap(), b"inhoud");
+        assert!(server.inhoud("a.txt").is_none());
+        assert_eq!(server.versies.lock().unwrap().len(), 1, "geen nieuwe upload");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
