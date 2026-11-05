@@ -37,8 +37,19 @@ assert len(c) == 1, c
 c = c[0]
 print(f"conflict: {c['soort']} op {c['type']} [{c['globalid']}], attribuut {c['attribuut']}")
 print(f"  basis {c['basis']}, ons (Piet) {c['ons']}, hun (Anna) {c['hun']}")
-for kant, waarde in (("basis", "REI30"), ("ons", "REI90"), ("hun", "REI60")):
-    assert waarde in (c[kant] or ""), (kant, c[kant])
+verwacht = {
+    "soort": "beide_gewijzigd",
+    "type": "IfcPropertySet",
+    "globalid": "3IPHMao9vAlQSQdn4mt1Bm",
+    "attribuut": "HasProperties[FireRating]",
+    "basis": "IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $)",
+    "ons": "IfcPropertySingleValue('FireRating', $, IFCLABEL('REI90'), $)",
+    "hun": "IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $)",
+}
+for veld, waarde in verwacht.items():
+    if c.get(veld) != waarde:
+        sys.exit(f"rapport klopt niet: {veld} is {c.get(veld)!r}, verwacht {waarde!r}")
+print("controle: soort, object, attribuut en de drie waarden zijn precies zoals verwacht")
 EOF
 echo "Daarna: de client slaat Piets versie op als conflictkopie, zoals openaec-storage nu doet"
 echo "(test_api.py: test_verouderde_basisversie_geeft_conflictkopie). Anna's versie 13 blijft de huidige."
@@ -46,6 +57,7 @@ echo "(test_api.py: test_verouderde_basisversie_geeft_conflictkopie). Anna's ver
 kop "Wat Microsoft 365 in dit geval doet"
 m365 "https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues" \
   "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+m5_voorbehoud
 m365 "https://support.microsoft.com/en-us/excel/get-started/collaborate-on-excel-workbooks-at-the-same-time-with-co-authoring" \
   "In general, the last change that is saved, either with the Save button or automatically with AutoSave, is the one that \"wins.\""
 m365 "https://support.microsoft.com/en-us/word/troubleshoot-common-coauthoring-errors" \

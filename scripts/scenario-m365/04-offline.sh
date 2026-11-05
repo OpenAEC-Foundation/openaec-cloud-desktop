@@ -30,9 +30,9 @@ samenvoegen v12.ifc anna-lokaal-2.ifc v14.ifc v15.ifc
 
 kop "Controle: versie 15 bevat alle vier de wijzigingen, en verder niets"
 verschil v12.ifc v15.ifc v12-v15 > /dev/null
-"${IFC[@]}" controleer v12-v15.json --gewijzigd "$FUNDERING,$DAK_A,$KELDERVLOER,$DAK_B"
+"${IFC[@]}" controleer v12-v15.json --gewijzigd "$FUNDERING,$DAK_A,$KELDERVLOER,$DAK_B" --waarden "$HIER/verwacht/04-v12-v15.txt"
 verschil v14.ifc v15.ifc v14-v15 > /dev/null
-"${IFC[@]}" controleer v14-v15.json --gewijzigd "$FUNDERING,$DAK_A"
+"${IFC[@]}" controleer v14-v15.json --gewijzigd "$FUNDERING,$DAK_A" --waarden "$HIER/verwacht/04-v14-v15.txt"
 
 kop "Wat Microsoft 365 in dit geval doet"
 m365 "https://support.microsoft.com/en-gb/sharepoint/get-started-with-sharepoint/document-collaboration-and-co-authoring" \
@@ -40,6 +40,7 @@ m365 "https://support.microsoft.com/en-gb/sharepoint/get-started-with-sharepoint
   "When you go offline with Word, it's possible to work on the same paragraph as someone else in your group. When you save your changes, you'll get a pop-up message saying there's a conflict."
 m365 "https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues" \
   "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+m5_voorbehoud
 echo "Dus: voor Word een melding en een conflict per alinea; voor een .ifc twee bestanden naast elkaar."
 
 kop "Uitkomst"

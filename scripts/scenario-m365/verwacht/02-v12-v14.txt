@@ -1,0 +1,6 @@
+# Scenario 02, verschil 12 -> 14.
+# Anna: de wand 1AQA... schuift 250 mm (y van 1800 naar 2050).
+# Piet: FireRating in Pset_SlabCommon van de vloer (3IPH...) van REI30 naar REI60.
+# Een regel per gewijzigde waarde: GLOBALID | ATTRIBUUT | OUD | NIEUW. ifc.py controleer eist precies deze regels.
+1AQAupaRP1txwK1AGiN61V | ObjectPlacement.RelativePlacement.Location.Coordinates | (4100., 1800., 0.) | (4100., 2050., 0.)
+3IPHMao9vAlQSQdn4mt1Bm | HasProperties | eraf: IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $) | erbij: IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $)

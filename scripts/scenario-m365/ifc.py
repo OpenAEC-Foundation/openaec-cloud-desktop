@@ -6,8 +6,11 @@ Gebruik (altijd met `python3 -I`):
   ifc.py duur IN UIT GLOBALID DAGEN   ScheduleDuration van die taak wordt DAGEN dagen; het einde schuift mee
   ifc.py vervang IN UIT OUD NIEUW     vervang een tekst die precies één keer voorkomt
   ifc.py plaats IN UIT GLOBALID X Y Z het object krijgt een nieuw punt in zijn IfcAxis2Placement3D
-  ifc.py controleer VERSCHIL.json [--gewijzigd G,G] [--toegevoegd G] [--verwijderd G]
-                                      het verschil noemt precies deze objecten, en verder niets
+  ifc.py controleer VERSCHIL.json [--gewijzigd G,G] [--toegevoegd G] [--verwijderd G] [--waarden BESTAND]
+                                      het verschil noemt precies deze objecten, en verder niets; de HEADER en de
+                                      losse knopen zijn gelijk; en elke gewijzigde waarde staat letterlijk in
+                                      BESTAND (een regel per waarde, zie `waarde_regel`). Zonder BESTAND mag er
+                                      geen enkele waarde gewijzigd zijn
   ifc.py status VERSCHIL.json GLOBALID
                                       bestaat, gewijzigd of verwijderd volgens het verschil
   ifc.py blokken NIEUW OUD            hoeveel blokken van 8 MiB op dezelfde plek gelijk zijn
@@ -135,7 +138,22 @@ def plaats(tekst, globalid, x, y, z):
     return vervang_een(tekst, oud, f"#{punt.group(1)}=IFCCARTESIANPOINT(({x},{y},{z}));")
 
 
-def controleer(pad, gewijzigd, toegevoegd, verwijderd):
+def waarde_regel(waar, a):
+    """Eén gewijzigde waarde als regel: `WAAR | ATTRIBUUT | OUD | NIEUW`. WAAR is een GlobalId of `HEADER`. Bij een
+    lijst van verwijzingen (bijv. HasProperties) staan er wat eraf ging en wat erbij kwam, want oud en nieuw zijn
+    daar ingekort."""
+    if a.get("erbij") or a.get("eraf"):
+        return f"{waar} | {a['attribuut']} | eraf: {'; '.join(a.get('eraf', []))} | erbij: {'; '.join(a.get('erbij', []))}"
+    return f"{waar} | {a['attribuut']} | {a['oud']} | {a['nieuw']}"
+
+
+def waarden_van(v):
+    regels = [waarde_regel("HEADER", h) for h in v.get("header", [])]
+    regels += [waarde_regel(o["globalid"], a) for o in v["gewijzigd"] for a in o["attributen"]]
+    return sorted(regels)
+
+
+def controleer(pad, gewijzigd, toegevoegd, verwijderd, waarden_pad=None):
     v = json.loads(lees(pad))
     echt = {
         "gewijzigd": sorted(o["globalid"] for o in v["gewijzigd"]),
@@ -148,7 +166,19 @@ def controleer(pad, gewijzigd, toegevoegd, verwijderd):
     los = v["losse_knopen"]
     if los["toegevoegd"] or los["verwijderd"]:
         fout(f"onverwachte losse knopen: {los}")
+    verwachte_waarden = []
+    if waarden_pad:
+        verwachte_waarden = sorted(
+            r for r in lees(waarden_pad).splitlines() if r.strip() and not r.startswith("#")
+        )
+    echte_waarden = waarden_van(v)
+    if echte_waarden != verwachte_waarden:
+        teveel = [r for r in echte_waarden if r not in verwachte_waarden]
+        mist = [r for r in verwachte_waarden if r not in echte_waarden]
+        fout("waarden kloppen niet:\n  niet verwacht:\n    " + "\n    ".join(teveel) + "\n  ontbreken:\n    " + "\n    ".join(mist))
     print(f"controle: het verschil noemt precies {verwacht}")
+    print(f"controle: de HEADER is gelijk, en de {len(echte_waarden)} gewijzigde waarden zijn precies die uit "
+          f"{waarden_pad.rsplit('/', 1)[-1] if waarden_pad else '(geen)'}")
 
 
 BLOK = 8 * 1024 * 1024
@@ -192,10 +222,16 @@ def main(a):
         return
     if soort == "controleer":
         lijst = {"--gewijzigd": [], "--toegevoegd": [], "--verwijderd": []}
+        waarden_pad = None
         rest = a[2:]
         for i in range(0, len(rest), 2):
-            lijst[rest[i]] = [g for g in rest[i + 1].split(",") if g]
-        controleer(a[1], lijst["--gewijzigd"], lijst["--toegevoegd"], lijst["--verwijderd"])
+            if rest[i] == "--waarden":
+                waarden_pad = rest[i + 1]
+            elif rest[i] in lijst:
+                lijst[rest[i]] = [g for g in rest[i + 1].split(",") if g]
+            else:
+                fout(f"onbekende optie {rest[i]}")
+        controleer(a[1], lijst["--gewijzigd"], lijst["--toegevoegd"], lijst["--verwijderd"], waarden_pad)
         return
     tekst = lees(a[1])
     if soort == "hernummer":

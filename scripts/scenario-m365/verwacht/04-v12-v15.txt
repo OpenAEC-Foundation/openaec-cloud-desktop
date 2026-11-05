@@ -1,0 +1,26 @@
+# Scenario 04, verschil 12 -> 15: alle vier de wijzigingen.
+# Anna offline: fundering (3Lz$0...) +14 dagen, dak toren A (0AOK...) +7 dagen.
+# Piet online: keldervloer (1FPw...) duur 5 -> 8 dagen (einde +3), dak toren B (0_4I...) +3 dagen.
+# Een regel per gewijzigde waarde: GLOBALID | ATTRIBUUT | OUD | NIEUW. ifc.py controleer eist precies deze regels.
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.EarlyFinish | '2027-10-28T16:00:00' | '2027-11-04T16:00:00'
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.EarlyStart | '2027-10-22T07:00:00' | '2027-10-29T07:00:00'
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.LateFinish | '2027-10-28T16:00:00' | '2027-11-04T16:00:00'
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.LateStart | '2027-10-22T07:00:00' | '2027-10-29T07:00:00'
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.ScheduleFinish | '2027-03-05T16:00:00' | '2027-03-12T16:00:00'
+0AOKES1U_N1S7hr$6tCHXH | TaskTime.ScheduleStart | '2027-03-01T07:00:00' | '2027-03-08T07:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.EarlyFinish | '2027-10-28T16:00:00' | '2027-10-31T16:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.EarlyStart | '2027-10-22T07:00:00' | '2027-10-25T07:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.LateFinish | '2027-10-28T16:00:00' | '2027-10-31T16:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.LateStart | '2027-10-22T07:00:00' | '2027-10-25T07:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.ScheduleFinish | '2027-03-05T16:00:00' | '2027-03-08T16:00:00'
+0_4IdJo_cQzpN_Ek772XwL | TaskTime.ScheduleStart | '2027-03-01T07:00:00' | '2027-03-04T07:00:00'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.EarlyFinish | '2027-05-27T15:00:00' | '2027-05-30T15:00:00'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.LateFinish | '2027-05-27T15:00:00' | '2027-05-30T15:00:00'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.ScheduleDuration | 'P0Y0M5D' | 'P0Y0M8D'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.ScheduleFinish | '2027-03-05T15:00:00' | '2027-03-08T15:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.EarlyFinish | '2027-05-07T16:00:00' | '2027-05-21T16:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.EarlyStart | '2027-04-30T07:00:00' | '2027-05-14T07:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.LateFinish | '2027-05-07T16:00:00' | '2027-05-21T16:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.LateStart | '2027-04-30T07:00:00' | '2027-05-14T07:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.ScheduleFinish | '2027-03-04T16:00:00' | '2027-03-18T16:00:00'
+3Lz$0hQ_JxtHXIVlnG3JSI | TaskTime.ScheduleStart | '2027-03-01T07:00:00' | '2027-03-15T07:00:00'

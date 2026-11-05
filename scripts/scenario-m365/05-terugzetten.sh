@@ -29,7 +29,7 @@ samenvoegen v13.ifc anna.ifc v14.ifc v15.ifc
 
 kop "Controle: versie 15 is versie 12 plus de wijziging van Anna"
 verschil v12.ifc v15.ifc v12-v15
-"${IFC[@]}" controleer v12-v15.json --gewijzigd "$FUNDERING"
+"${IFC[@]}" controleer v12-v15.json --gewijzigd "$FUNDERING" --waarden "$HIER/verwacht/05-v12-v15.txt"
 
 kop "Wat Microsoft 365 in dit geval doet"
 m365 "https://support.microsoft.com/en-us/onedrive/restore-a-previous-version-of-a-file-stored-in-onedrive" \
@@ -38,6 +38,7 @@ m365 "https://support.microsoft.com/en-us/sharepoint/documents-and-library/resto
   "SharePoint doesn't remove the earlier version you just restored. It creates a copy and makes it the latest version."
 m365 "https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues" \
   "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+m5_voorbehoud
 echo "Dus (afgeleid, niet zo beschreven): slaat Anna daarna een .ifc op via de sync-app, dan komt er een tweede"
 echo "bestand naast het teruggezette."
 

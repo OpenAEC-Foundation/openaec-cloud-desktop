@@ -28,7 +28,7 @@ samenvoegen v12.ifc piet.ifc v13.ifc v14.ifc
 
 kop "Controle: versie 14 bevat beide wijzigingen, en verder niets"
 verschil v12.ifc v14.ifc v12-v14
-"${IFC[@]}" controleer v12-v14.json --gewijzigd "$WAND,$VLOERSET"
+"${IFC[@]}" controleer v12-v14.json --gewijzigd "$WAND,$VLOERSET" --waarden "$HIER/verwacht/02-v12-v14.txt"
 
 kop "De opmerking aan de wand: wat het verschil over versie 14 zegt"
 "${IFC[@]}" status v12-v14.json "$WAND"
@@ -38,6 +38,7 @@ echo "Opmerkingen zelf (opslaan, anker_status in de API) zijn nog niet gebouwd: 
 kop "Wat Microsoft 365 in dit geval doet"
 m365 "https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues" \
   "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions. The online version keeps the original file name and is downloaded, and the copy on your computer has your device name appended to the file name such as Report-JOHNS-SURFACE.txt."
+m5_voorbehoud
 m365 "https://support.microsoft.com/en-us/onedrive/see-comments-and-activity-on-your-onedrive-files" \
   "OneDrive now lets you @mention someone in the details pane of any non-Office file that you've saved in OneDrive for home, including photos, videos, PDFs, and more." \
   "@mentions for non-office file types are not yet available for the OneDrive sync app or OneDrive for work or school accounts."

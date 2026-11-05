@@ -23,15 +23,16 @@ samenvoegen v12.ifc piet.ifc v13.ifc v14.ifc
 
 kop "Controle: versie 14 bevat beide wijzigingen, en verder niets"
 verschil v12.ifc v14.ifc v12-v14
-"${IFC[@]}" controleer v12-v14.json --gewijzigd "$FUNDERING,$KELDERVLOER"
+"${IFC[@]}" controleer v12-v14.json --gewijzigd "$FUNDERING,$KELDERVLOER" --waarden "$HIER/verwacht/01-v12-v14.txt"
 verschil v13.ifc v14.ifc v13-v14
-"${IFC[@]}" controleer v13-v14.json --gewijzigd "$KELDERVLOER"
+"${IFC[@]}" controleer v13-v14.json --gewijzigd "$KELDERVLOER" --waarden "$HIER/verwacht/01-v13-v14.txt"
 
 kop "Wat Microsoft 365 in dit geval doet (een .ifc is geen Office-bestand)"
 m365 "https://support.microsoft.com/en-gb/sharepoint/get-started-with-sharepoint/document-collaboration-and-co-authoring" \
   "Co-authoring is only supported on modern file formats including: .docx (Word), .pptx (PowerPoint), and .xlsx (Excel)."
 m365 "https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues" \
   "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions. The online version keeps the original file name and is downloaded, and the copy on your computer has your device name appended to the file name such as Report-JOHNS-SURFACE.txt."
+m5_voorbehoud
 echo "Dus: twee bestanden naast elkaar, en iemand voegt de taken met de hand samen."
 
 kop "Uitkomst"

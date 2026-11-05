@@ -39,6 +39,14 @@ m365() {
   for zin in "$@"; do printf '  "%s"\n' "$zin"; done
 }
 
+# De bron over conflicten bij een ander soort bestand ([M5]) noemt de oude client groove.exe. Of de huidige app
+# (OneDrive.exe) hetzelfde doet, zegt geen bron die we vonden. Daarom staat dit na elk citaat uit die bron.
+m5_voorbehoud() {
+  echo "  Let op: deze pagina noemt \"the groove.exe sync app\", de oude client. Die synchroniseert sinds 1 februari 2021"
+  echo "  geen bestanden in Microsoft 365 meer (https://learn.microsoft.com/en-us/sharepoint/transition-from-previous-sync-client)."
+  echo "  Dat de huidige OneDrive.exe hetzelfde doet, staat in geen bron die we vonden: de vergelijking is niet bewezen."
+}
+
 # Herkomst van een invoerbestand: naam, grootte en sha256.
 herkomst() {
   printf '%s: %s bytes, sha256 %s\n' "$(basename "$1")" "$(stat -c %s "$1")" "$(sha256sum "$1" | cut -c1-16)"
