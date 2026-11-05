@@ -61,6 +61,7 @@ impl Opslag for NepOpslag {
                 bestand: id.clone(),
                 versie: *versie,
                 grootte: inhoud.len() as u64,
+                versie_id: None,
             })
             .collect())
     }
@@ -84,7 +85,7 @@ impl Opslag for NepOpslag {
         };
         self.zet(&doel, &inhoud);
         let (id, versie, _) = self.bestanden.lock().unwrap()[&doel].clone();
-        Ok(Upload { pad: doel.clone(), bestand: id, versie, conflict: doel != pad })
+        Ok(Upload { pad: doel.clone(), bestand: id, versie, conflict: doel != pad, versie_id: None })
     }
 
     async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {

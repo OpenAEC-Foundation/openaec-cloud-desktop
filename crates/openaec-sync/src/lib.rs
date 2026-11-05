@@ -26,7 +26,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub use api::{Client, UploadResultaat};
 use motor::Voortgang;
-use api::Etag;
+use api::{Etag, SchrijfAls};
 use blokken::{aantal_blokken, blokgrootte, gewijzigde_blokken, hash_bestand};
 
 #[derive(Debug, thiserror::Error)]
@@ -192,6 +192,14 @@ impl Fout {
         }
     }
 
+    /// Bij een weigering met `verouderde_basis` of `onbekende_basis`: wat er nu op de plek staat (bestand-id, versie,
+    /// versie_id), elk None als de server het niet meegaf (bijv. geen bestand op de plek).
+    pub fn huidige(&self) -> (Option<String>, Option<u64>, Option<String>) {
+        let a = self.antwoord().unwrap_or_default();
+        let tekst = |v: &str| a.get(v).and_then(|x| x.as_str()).map(str::to_string);
+        (tekst("huidig_bestand"), a.get("huidige_versie").and_then(|x| x.as_u64()), tekst("huidige_versie_id"))
+    }
+
     /// Waarom een gedeelde map niet meer te syncen is: de deling is ingetrokken, verlopen, weg (de map is verwijderd)
     /// of onbekend. Geeft de foutcode van de server, of None bij elke andere fout (bijv. geen verbinding).
     pub fn deling_gestopt(&self) -> Option<String> {
@@ -261,10 +269,43 @@ pub async fn upload_met_rem(
     voortgang: Voortgang<'_>,
     rem: &Rem,
 ) -> Result<UploadResultaat, Fout> {
+    upload_als(client, ruimte, map, naam, pad, basis_versie, None, voortgang, rem).await
+}
+
+/// Als [`upload_met_rem`], met vergelijk-en-schrijf: alleen een nieuwe versie als de versieregel uit `als` nog de
+/// huidige van het bestand is (`basis_versie` is haar volgnummer). Anders een weigering met de foutcode
+/// `verouderde_basis` (met de huidige versie, zie [`Fout::huidige`]), `onbekende_basis` of `bestand_vergrendeld`.
+#[allow(clippy::too_many_arguments)]
+pub async fn schrijf_als_met_rem(
+    client: &Client,
+    ruimte: &str,
+    map: Option<&str>,
+    naam: &str,
+    pad: &Path,
+    basis_versie: u64,
+    als: &SchrijfAls,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
+) -> Result<UploadResultaat, Fout> {
+    upload_als(client, ruimte, map, naam, pad, Some(basis_versie), Some(als), voortgang, rem).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_als(
+    client: &Client,
+    ruimte: &str,
+    map: Option<&str>,
+    naam: &str,
+    pad: &Path,
+    basis_versie: Option<u64>,
+    als: Option<&SchrijfAls>,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
+) -> Result<UploadResultaat, Fout> {
     // Verloopt een uploadlink onderweg, dan een nieuwe upload met nieuwe links (blokken die er al zijn, hergebruikt de
     // server); de autorisatie van de API zelf staat daar los van.
-    match upload_poging(client, ruimte, map, naam, pad, basis_versie, voortgang, rem).await {
-        Err(f) if link_verlopen(&f) => upload_poging(client, ruimte, map, naam, pad, basis_versie, voortgang, rem).await,
+    match upload_poging(client, ruimte, map, naam, pad, basis_versie, als, voortgang, rem).await {
+        Err(f) if link_verlopen(&f) => upload_poging(client, ruimte, map, naam, pad, basis_versie, als, voortgang, rem).await,
         r => r,
     }
 }
@@ -282,6 +323,7 @@ async fn upload_poging(
     naam: &str,
     pad: &Path,
     basis_versie: Option<u64>,
+    als: Option<&SchrijfAls>,
     voortgang: Voortgang<'_>,
     rem: &Rem,
 ) -> Result<UploadResultaat, Fout> {
@@ -289,7 +331,7 @@ async fn upload_poging(
     let blok = blokgrootte(grootte);
     let hashes = hash_bestand(pad, blok).await?;
     let start = client
-        .upload_start(ruimte, map, naam, grootte, basis_versie, &hashes, "sync")
+        .upload_start(ruimte, map, naam, grootte, basis_versie, &hashes, "sync", als)
         .await?;
 
     let lengte_van = |nummer: u64| {
@@ -370,16 +412,69 @@ pub async fn download_met_voortgang(client: &Client, bestand: &str, pad: &Path, 
 
 /// Als [`download_met_voortgang`], met een gedeelde [`Rem`]: elk blok dat over de lijn moet, wacht op een vrije plek.
 pub async fn download_met_rem(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>, rem: &Rem) -> Result<(), Fout> {
+    download_versie_met_rem(client, bestand, None, pad, voortgang, rem).await
+}
+
+/// Als [`download_met_rem`]; met `versie` (volgnummer en versie_id) precies die versie in plaats van de huidige. Hoort
+/// de versieregel niet (meer) bij het bestand, dan een weigering met de foutcode `onbekende_basis`.
+pub async fn download_versie_met_rem(
+    client: &Client,
+    bestand: &str,
+    versie: Option<(u64, &str)>,
+    pad: &Path,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
+) -> Result<(), Fout> {
     // Verloopt de downloadlink onderweg, dan nog één keer met een nieuwe link.
-    match download_poging(client, bestand, pad, voortgang, rem).await {
-        Err(f) if link_verlopen(&f) => download_poging(client, bestand, pad, voortgang, rem).await,
+    match download_poging(client, bestand, versie, pad, voortgang, rem).await {
+        Err(f) if link_verlopen(&f) => download_poging(client, bestand, versie, pad, voortgang, rem).await,
         r => r,
     }
 }
 
-async fn download_poging(client: &Client, bestand: &str, pad: &Path, voortgang: Voortgang<'_>, rem: &Rem) -> Result<(), Fout> {
-    let info = client.blokken(bestand).await?;
-    let link = client.download(bestand).await?;
+/// De inhoud van precies versie `versie` (volgnummer en versie_id) van een bestand, in het geheugen, gecontroleerd met
+/// de blokhashes van die versie.
+pub async fn lees_versie(client: &Client, bestand: &str, versie: (u64, &str), rem: &Rem) -> Result<Vec<u8>, Fout> {
+    let lees = || async {
+        let link = client.download_op_id(bestand, versie.1).await?;
+        let info = client.blokken_van(bestand, link.versie).await?;
+        let _plek = plek(rem).await?;
+        // Een ondertekende link: zonder Authorization-header.
+        let antwoord = client.http.get(&link.url).send().await?;
+        if !antwoord.status().is_success() {
+            let status = antwoord.status().as_u16();
+            return Err(Fout::Link { status, tekst: antwoord.text().await.unwrap_or_default() });
+        }
+        let inhoud = antwoord.bytes().await?.to_vec();
+        if inhoud.len() as u64 != info.grootte || info.hashes.is_some_and(|h| crate::blokken::hash_bytes(&inhoud, info.blokgrootte) != h) {
+            return Err(Fout::Controle(format!("versie {} van {bestand} kwam niet goed binnen", versie.0)));
+        }
+        Ok(inhoud)
+    };
+    match lees().await {
+        Err(f) if link_verlopen(&f) => lees().await,
+        r => r,
+    }
+}
+
+async fn download_poging(
+    client: &Client,
+    bestand: &str,
+    versie: Option<(u64, &str)>,
+    pad: &Path,
+    voortgang: Voortgang<'_>,
+    rem: &Rem,
+) -> Result<(), Fout> {
+    let (info, link) = match versie {
+        None => (client.blokken(bestand).await?, client.download(bestand).await?),
+        Some((nummer, id)) => {
+            let link = client.download_op_id(bestand, id).await?;
+            if link.versie != nummer {
+                return Err(Fout::Controle(format!("versie {id} van {bestand} heeft nummer {}, verwacht {nummer}", link.versie)));
+            }
+            (client.blokken_van(bestand, nummer).await?, link)
+        }
+    };
     let blok = info.blokgrootte;
     let aantal = aantal_blokken(info.grootte, blok) as usize;
 

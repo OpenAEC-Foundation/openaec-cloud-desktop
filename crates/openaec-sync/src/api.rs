@@ -398,6 +398,17 @@ pub struct Boom {
     pub meer: bool,
 }
 
+/// Vergelijk-en-schrijf bij een upload (`bij_conflict="weiger"`, ontwerp §5.5): de basis is de versieregel waaruit de
+/// client werkte. Is die niet meer de huidige versie van dit bestand, dan weigert de server (`verouderde_basis` met de
+/// huidige versie, of `onbekende_basis`) in plaats van een conflictkopie te maken.
+#[derive(Debug, Clone)]
+pub struct SchrijfAls {
+    pub basis_bestand: String,
+    pub basis_versie_id: String,
+    /// (basis, hun): deze inhoud is een samenvoeging van die twee versies (volgnummers; `hun` is de basis van de upload).
+    pub samengevoegd_uit: Option<(u64, u64)>,
+}
+
 /// Eén klein bestand voor [`Client::upload_klein`].
 #[derive(Debug, Clone)]
 pub struct KleinBestand {
@@ -415,7 +426,6 @@ pub struct KleinBestand {
 pub struct KleinInhoud {
     pub bestand: String,
     pub versie: u64,
-    #[serde(default)]
     pub versie_id: Option<String>,
     /// BLAKE3 van de inhoud, als de server die kent.
     pub blokhash: Option<String>,
@@ -680,12 +690,25 @@ impl Client {
 
     /// Kleine bestanden (bestand-id's) in één antwoord; per bestand de inhoud of de weigering, in dezelfde volgorde.
     pub async fn download_klein(&self, bestanden: &[String]) -> Result<Vec<Result<KleinInhoud, Fout>>, Fout> {
+        let vragen: Vec<(String, Option<String>)> = bestanden.iter().map(|b| (b.clone(), None)).collect();
+        self.download_klein_versies(&vragen).await
+    }
+
+    /// Als [`Client::download_klein`]; met een `versie_id` precies die versieregel (een nieuwere server).
+    pub async fn download_klein_versies(&self, bestanden: &[(String, Option<String>)]) -> Result<Vec<Result<KleinInhoud, Fout>>, Fout> {
         use base64::Engine;
         #[derive(Deserialize)]
         struct Inhoud {
             bestanden: Vec<PerBestand>,
         }
-        let r: Inhoud = self.roep("download_klein", json!({"bestanden": bestanden})).await?;
+        let vragen: Vec<Value> = bestanden
+            .iter()
+            .map(|(b, id)| match id {
+                Some(id) => json!({"bestand": b, "versie_id": id}),
+                None => json!(b),
+            })
+            .collect();
+        let r: Inhoud = self.roep("download_klein", json!({"bestanden": vragen})).await?;
         if r.bestanden.len() != bestanden.len() {
             return Err(Fout::Controle(format!("{} antwoorden voor {} bestanden", r.bestanden.len(), bestanden.len())));
         }
@@ -712,6 +735,8 @@ impl Client {
             .collect())
     }
 
+    /// Begin een upload. Met `als` vergelijk-en-schrijf (alleen op een server die dat kent: een oudere server weigert
+    /// onbekende parameters).
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_start(
         &self,
@@ -722,13 +747,19 @@ impl Client {
         basis_versie: Option<u64>,
         blokhashes: &[String],
         bron: &str,
+        als: Option<&SchrijfAls>,
     ) -> Result<UploadStart, Fout> {
-        self.roep(
-            "upload_start",
-            json!({"ruimte": ruimte, "map": map, "naam": naam, "grootte": grootte,
-                   "basis_versie": basis_versie, "blokhashes": blokhashes, "bron": bron}),
-        )
-        .await
+        let mut gegevens = json!({"ruimte": ruimte, "map": map, "naam": naam, "grootte": grootte,
+                                  "basis_versie": basis_versie, "blokhashes": blokhashes, "bron": bron});
+        if let Some(als) = als {
+            gegevens["bij_conflict"] = json!("weiger");
+            gegevens["basis_bestand"] = json!(als.basis_bestand);
+            gegevens["basis_versie_id"] = json!(als.basis_versie_id);
+            if let Some((basis, hun)) = als.samengevoegd_uit {
+                gegevens["samengevoegd_uit"] = json!({"basis": basis, "hun": hun});
+            }
+        }
+        self.roep("upload_start", gegevens).await
     }
 
     pub async fn upload_klaar(&self, upload: &str, delen: &[Etag]) -> Result<UploadResultaat, Fout> {
@@ -739,8 +770,19 @@ impl Client {
         self.roep("blokken", json!({"bestand": bestand})).await
     }
 
+    /// Blokhashes van versie `versie` (een volgnummer) van een bestand.
+    pub async fn blokken_van(&self, bestand: &str, versie: u64) -> Result<Blokken, Fout> {
+        self.roep("blokken", json!({"bestand": bestand, "versie": versie})).await
+    }
+
     pub async fn download(&self, bestand: &str) -> Result<DownloadLink, Fout> {
         self.roep("download", json!({"bestand": bestand})).await
+    }
+
+    /// Downloadlink voor precies de versieregel `versie_id`; hoort die niet (meer) bij het bestand, dan een weigering
+    /// met de foutcode `onbekende_basis`.
+    pub async fn download_op_id(&self, bestand: &str, versie_id: &str) -> Result<DownloadLink, Fout> {
+        self.roep("download", json!({"bestand": bestand, "versie_id": versie_id})).await
     }
 
     pub async fn wijzigingen(&self, ruimte: &str, sinds: u64) -> Result<Wijzigingen, Fout> {

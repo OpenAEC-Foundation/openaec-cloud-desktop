@@ -1004,6 +1004,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "openaec-samenvoegen"
+version = "2026.45.1"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "openaec-sync"
 version = "2026.44.10"
 dependencies = [
@@ -1015,6 +1025,7 @@ dependencies = [
  "libc",
  "log",
  "notify",
+ "openaec-samenvoegen",
  "rand 0.8.8",
  "reqwest",
  "serde",
