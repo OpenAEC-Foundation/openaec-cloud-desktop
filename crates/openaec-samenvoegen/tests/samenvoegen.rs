@@ -831,47 +831,6 @@ fn relaties_met_een_nieuwe_globalid_aan_beide_kanten() {
 // --- Regressies uit de review van PR #7 (Sol). Elke test gaat het feit na met een losse lezer (`Feiten`), niet met
 // de vergelijker van de bibliotheek. ---
 
-const ROOD: [f64; 3] = [1., 0., 0.];
-const GROEN: [f64; 3] = [0., 1., 0.];
-const BLAUW: [f64; 3] = [0., 0., 1.];
-
-/// Een vorm met een kleur vanaf nummer `n`: punt, box, representatie, productvorm, kleur, schaduw, stijl en het
-/// gestileerde item. In IFC2X3 staat er een IfcPresentationStyleAssignment tussen (op `n + 100`).
-fn vorm(schema: &str, n: u32, rgb: &str) -> String {
-    let ifc2x3 = schema == "IFC2X3";
-    let schaduw = if ifc2x3 { format!("#{}", n + 4) } else { format!("#{},$", n + 4) };
-    let stijl = if ifc2x3 { n + 100 } else { n + 6 };
-    let mut s = format!(
-        "#{n}=IFCCARTESIANPOINT((0.,0.,0.));\n#{b}=IFCBOUNDINGBOX(#{n},1.,1.,1.);\n\
-         #{r}=IFCSHAPEREPRESENTATION(#7,'Box','BoundingBox',(#{b}));\n#{p}=IFCPRODUCTDEFINITIONSHAPE($,$,(#{r}));\n\
-         #{k}=IFCCOLOURRGB($,{rgb});\n#{sch}=IFCSURFACESTYLESHADING({schaduw});\n\
-         #{st}=IFCSURFACESTYLE($,.BOTH.,(#{sch}));\n#{i}=IFCSTYLEDITEM(#{b},(#{stijl}),$);",
-        b = n + 1,
-        r = n + 2,
-        p = n + 3,
-        k = n + 4,
-        sch = n + 5,
-        st = n + 6,
-        i = n + 7,
-    );
-    if ifc2x3 {
-        s += &format!("\n#{}=IFCPRESENTATIONSTYLEASSIGNMENT((#{}));", n + 100, n + 6);
-    }
-    s
-}
-
-/// Het gebouw met een rode vorm voor W (#63-#70) en, met `v_ook`, een blauwe voor V (#71-#78), zoals in Sol's
-/// voorbeelden.
-fn met_vormen(schema: &str, v_ook: bool) -> String {
-    let b = vervang(&gebouw(schema), "#5,'W',$,$,#40,$,", "#5,'W',$,$,#40,#66,");
-    let w = vorm(schema, 63, "1.,0.,0.");
-    if !v_ook {
-        return voeg_toe(&b, &w);
-    }
-    let b = vervang(&b, "#5,'V',$,$,#45,$,", "#5,'V',$,$,#45,#74,");
-    voeg_toe(&b, &format!("{w}\n{}", vorm(schema, 71, "0.,0.,1.")))
-}
-
 /// Wisselt de nummers `#a` en `#b` overal: dezelfde inhoud, andere nummers.
 fn wissel(tekst: &str, a: u32, b: u32) -> String {
     let mut uit = String::new();
@@ -895,34 +854,6 @@ fn wissel(tekst: &str, a: u32, b: u32) -> String {
         rest = &rest[p + 1 + cijfers..];
     }
     uit + rest
-}
-
-/// De vorm (het eerste item van de eerste representatie) van het object met deze GlobalId.
-fn vorm_van(f: &Feiten, globalid: &str) -> u64 {
-    let pds = f.verwijzing(f.met_globalid(globalid), 6);
-    let rep = f.verwijzingen(pds, 2)[0];
-    f.verwijzingen(rep, 3)[0]
-}
-
-/// De kleuren van de gestileerde items op deze vorm.
-fn kleuren_op(f: &Feiten, vorm: u64) -> Vec<[f64; 3]> {
-    let mut uit = Vec::new();
-    for item in f.naar("IFCSTYLEDITEM", 0, vorm) {
-        let mut stijlen = f.verwijzingen(item, 1);
-        while let Some(s) = stijlen.pop() {
-            match f.type_van(s) {
-                "IFCPRESENTATIONSTYLEASSIGNMENT" => stijlen.extend(f.verwijzingen(s, 0)),
-                "IFCSURFACESTYLE" => {
-                    for e in f.verwijzingen(s, 2) {
-                        let kleur = f.verwijzing(e, 0);
-                        uit.push([1, 2, 3].map(|j| f.attr(kleur, j).parse::<f64>().unwrap()));
-                    }
-                }
-                t => panic!("onverwachte stijl {t}"),
-            }
-        }
-    }
-    uit
 }
 
 /// De waarden van eigenschap `naam` bij dit object, via IfcRelDefinesByProperties.
@@ -1280,16 +1211,6 @@ fn kring_over_ankers_is_een_conflict() {
 
 // --- Uit de review van PR #7 op 6a27723 (Sol). ---
 
-/// Sol's basis: W en V delen één rode vorm (#66). In IFC2X3 mag een IfcProductDefinitionShape maar bij één product
-/// horen (`ShapeOfProduct` is daar SET [1:1]); daar heeft alleen W de vorm.
-fn gedeelde_vorm(schema: &str) -> String {
-    let b = met_vormen(schema, false);
-    if schema == "IFC2X3" {
-        return b;
-    }
-    vervang(&b, "#5,'V',$,$,#45,$,", "#5,'V',$,$,#45,#66,")
-}
-
 /// De IfcOwnerHistory van het object met deze GlobalId: (ChangeAction, LastModifiedDate).
 fn eigenaar_van(f: &Feiten, globalid: &str) -> (String, String) {
     let e = f.verwijzing(f.met_globalid(globalid), 1);
@@ -1393,9 +1314,15 @@ fn eigen_ownerhistory_van_een_kant() {
     }
 }
 
-/// Kan een object de deling van de andere kant niet krijgen, dan is een botsing van vluchtige waarden een conflict,
-/// geen stille keuze. Ons geeft de gedeelde IfcOwnerHistory een andere OwningApplication; hun geeft W een eigen
-/// (MODIFIED) met de oude. W en V delen dan bij ons één knoop, maar vragen een andere ChangeAction.
+/// De applicatie (ApplicationFullName) van de IfcOwnerHistory van het object met deze GlobalId.
+fn applicatie_van(f: &Feiten, globalid: &str) -> String {
+    let e = f.verwijzing(f.met_globalid(globalid), 1);
+    f.attr(f.verwijzing(e, 1), 2).to_string()
+}
+
+/// Sol ronde 3 op 0655eda (bevinding 2): ons geeft de gedeelde IfcOwnerHistory een andere OwningApplication; hun geeft
+/// W een eigen (MODIFIED) met de oude. W krijgt een eigen IfcOwnerHistory met de applicatie van ons en de vluchtige
+/// waarden van hun; V en de rest houden de gedeelde van ons. Een vluchtig veld geeft geen conflict.
 #[test]
 fn botsende_vluchtige_waarden_in_een_gedeelde_knoop() {
     for schema in SCHEMAS {
@@ -1407,14 +1334,20 @@ fn botsende_vluchtige_waarden_in_een_gedeelde_knoop() {
         );
         let h =
             met(&b, &[("#5,'W',$", "#90,'W',$")], "#90=IFCOWNERHISTORY(#3,#4,$,.MODIFIED.,1800000000,$,$,1700000000);");
-        for (oo, hh) in [(&o, &h), (&h, &o)] {
-            let s = voeg(&b, oo, &hernummer(hh, 47));
-            assert!(!s.gelukt && s.inhoud.is_none(), "{schema}: {:?}", s.statistiek);
-            assert!(
-                s.conflicten.iter().any(|c| c.soort == ConflictSoort::GedeeldAnker),
-                "{schema}: {:#?}",
-                s.conflicten
-            );
+        for (oo, hh) in [(&o, &h), (&h, &o), (&o, &hernummer(&h, 47))] {
+            let r = gelukt(&b, oo, hh);
+            let f = Feiten::lees(&r);
+            let (w, v) = (f.met_globalid(&gid("WandW")), f.met_globalid(&gid("WandV")));
+            assert_ne!(f.verwijzing(w, 1), f.verwijzing(v, 1), "{schema}: W heeft een eigen\n{r}");
+            let hun = (".MODIFIED.".to_string(), "1800000000".to_string());
+            let basis = (".NOCHANGE.".to_string(), "$".to_string());
+            assert_eq!(eigenaar_van(&f, &gid("WandW")), hun, "{schema}: W\n{r}");
+            for naam in ["WandV", "Project", "StoreyP"] {
+                assert_eq!(eigenaar_van(&f, &gid(naam)), basis, "{schema}: {naam}\n{r}");
+            }
+            for naam in ["WandW", "WandV", "Project"] {
+                assert_eq!(applicatie_van(&f, &gid(naam)), "'Ander'", "{schema}: {naam}\n{r}");
+            }
         }
     }
 }
@@ -1444,8 +1377,8 @@ fn nieuw_object_volgt_de_gedeelde_ownerhistory() {
 }
 
 /// Twee objecten delen bij ons een eigen IfcOwnerHistory (#95), en ons geeft die een andere OwningApplication. Hun
-/// geeft W en V elk een eigen, met een ander tijdstip. Ze kunnen de deling van hun niet krijgen, en vragen in de
-/// knoop van ons elk een andere waarde: een conflict.
+/// geeft W en V elk een eigen, met een ander tijdstip. Ze vragen in de knoop van ons elk een andere waarde: elk krijgt
+/// een IfcOwnerHistory met de applicatie van ons en het eigen tijdstip van hun (Sol ronde 3 op 0655eda, bevinding 2).
 #[test]
 fn twee_objecten_vragen_elk_een_andere_waarde() {
     for schema in SCHEMAS {
@@ -1465,14 +1398,87 @@ fn twee_objecten_vragen_elk_een_andere_waarde() {
             "#90=IFCOWNERHISTORY(#3,#4,$,.MODIFIED.,1800000000,$,$,1700000000);\n\
              #91=IFCOWNERHISTORY(#3,#4,$,.MODIFIED.,1900000000,$,$,1700000000);",
         );
-        for (oo, hh) in [(&o, &h), (&h, &o)] {
-            let s = voeg(&b, oo, &hernummer(hh, 51));
-            assert!(!s.gelukt && s.inhoud.is_none(), "{schema}: {:?}", s.statistiek);
-            assert!(
-                s.conflicten.iter().any(|c| c.soort == ConflictSoort::GedeeldAnker),
-                "{schema}: {:#?}",
-                s.conflicten
-            );
+        for (oo, hh) in [(&o, &h), (&h, &o), (&o, &hernummer(&h, 51))] {
+            let r = gelukt(&b, oo, hh);
+            let f = Feiten::lees(&r);
+            for (naam, tijd) in [("WandW", "1800000000"), ("WandV", "1900000000")] {
+                let verwacht = (".MODIFIED.".to_string(), tijd.to_string());
+                assert_eq!(eigenaar_van(&f, &gid(naam)), verwacht, "{schema}: {naam}\n{r}");
+                assert_eq!(applicatie_van(&f, &gid(naam)), "'Ander'", "{schema}: {naam}\n{r}");
+            }
+            let basis = (".NOCHANGE.".to_string(), "$".to_string());
+            assert_eq!(eigenaar_van(&f, &gid("Project")), basis, "{schema}\n{r}");
+        }
+    }
+}
+
+/// Sol ronde 3 op 0655eda (bevinding 2): alleen vluchtige wijzigingen. Ons zet de gedeelde IfcOwnerHistory op
+/// MODIFIED, 1800000000. Hun geeft W een eigen op MODIFIED, 1900000000, met LastModifyingUser = #3. Het tijdstip van
+/// W veranderden beide kanten (dan geldt ons), de gebruiker alleen de kant met de eigen. W krijgt een eigen
+/// IfcOwnerHistory met het tijdstip van ons en de gebruiker; V en de rest houden de gedeelde, op MODIFIED,
+/// 1800000000 en zonder gebruiker. Geen conflict, ook niet met de kanten omgewisseld.
+#[test]
+fn alleen_vluchtig_met_een_eigen_ownerhistory() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let o = gewijzigd_op(&b, 1800000000);
+        let h = met(
+            &b,
+            &[("#5,'W',$", "#90,'W',$")],
+            "#90=IFCOWNERHISTORY(#3,#4,$,.MODIFIED.,1900000000,#3,$,1700000000);",
+        );
+        let gevallen = [
+            (&o, h.clone(), "1800000000"),
+            (&h, o.clone(), "1900000000"),
+            (&o, hernummer(&h, 55), "1800000000"),
+            (&h, hernummer(&o, 57), "1900000000"),
+        ];
+        for (oo, hh, tijd_w) in gevallen {
+            let r = gelukt(&b, oo, &hh);
+            let f = Feiten::lees(&r);
+            let gebruiker = |naam: &str| f.attr(f.verwijzing(f.met_globalid(&gid(naam)), 1), 5).to_string();
+            let w_verwacht = (".MODIFIED.".to_string(), tijd_w.to_string());
+            assert_eq!(eigenaar_van(&f, &gid("WandW")), w_verwacht, "{schema}: W\n{r}");
+            let gedeeld = (".MODIFIED.".to_string(), "1800000000".to_string());
+            for naam in ["WandV", "Project", "StoreyP"] {
+                assert_eq!(eigenaar_van(&f, &gid(naam)), gedeeld, "{schema}: {naam}\n{r}");
+            }
+            let w = f.met_globalid(&gid("WandW"));
+            let persoon = f.verwijzing(f.verwijzing(w, 1), 5);
+            assert_eq!(f.type_van(persoon), "IFCPERSONANDORGANIZATION", "{schema}: W\n{r}");
+            assert_eq!(f.attr(f.verwijzing(persoon, 0), 1), "'Anne'", "{schema}\n{r}");
+            for naam in ["WandV", "Project", "StoreyP"] {
+                assert_eq!(gebruiker(naam), "$", "{schema}: {naam}\n{r}");
+            }
+        }
+    }
+}
+
+/// Sol ronde 3 op 0655eda (bevinding 1): W en V delen een rode vorm, X en Y een blauwe met dezelfde geometrie. Ons
+/// hernoemt W; hun wisselt de kleuren (W/V blauw, X/Y rood), ook samen met een nieuwe naam voor X. W en V worden
+/// blauw, X en Y rood, en W heet 'W-ons'. Alleen IFC4 en IFC4X3: in IFC2X3 mogen producten geen vorm delen.
+#[test]
+fn kleuren_wisselen_tussen_gedeelde_vormen() {
+    for schema in ["IFC4", "IFC4X3_ADD2"] {
+        let b = twee_gedeelde_vormen(schema);
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        let h = kleuren_gewisseld(&b);
+        let h_ook = vervang(&h, "#5,'X',$", "#5,'X-hun',$");
+        // Los nagegaan in de invoer: in de basis W rood en X blauw, bij hun andersom.
+        for (tekst, kleur_w, kleur_x) in [(&b, ROOD, BLAUW), (&h, BLAUW, ROOD)] {
+            let f = Feiten::lees(tekst);
+            assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("WandW"))), vec![kleur_w], "{schema}");
+            assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("NieuwX"))), vec![kleur_x], "{schema}");
+        }
+        for (oo, hh) in [(&o, &h), (&h, &o), (&o, &hernummer(&h, 53)), (&o, &h_ook), (&h_ook, &o)] {
+            let r = gelukt(&b, oo, hh);
+            let f = Feiten::lees(&r);
+            let [w, v, x, y] = ["WandW", "WandV", "NieuwX", "NieuwY"].map(|n| vorm_van(&f, &gid(n)));
+            assert_eq!((w, x), (v, y), "{schema}: W/V en X/Y delen hun vorm\n{r}");
+            assert_ne!(w, x, "{schema}\n{r}");
+            assert_eq!(kleuren_op(&f, w), vec![BLAUW], "{schema}: W en V\n{r}");
+            assert_eq!(kleuren_op(&f, x), vec![ROOD], "{schema}: X en Y\n{r}");
+            assert_eq!(f.attr(f.met_globalid(&gid("WandW")), 2), "'W-ons'", "{schema}\n{r}");
         }
     }
 }

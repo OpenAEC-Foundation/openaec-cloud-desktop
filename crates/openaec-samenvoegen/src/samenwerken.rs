@@ -2,11 +2,10 @@
 //! samen, en schrijf opnieuw met de nieuwe basis. Na enkele pogingen geven we op.
 //!
 //! De basis is het bestand plus een id van de versie dat nooit terugkomt en altijd dezelfde inhoud aanwijst: bij
-//! openaec-storage `basis_bestand` en `basis_versie_id`, bij Nextcloud het fileid en de ETag. Het is geen
-//! versienummer; dat is alleen voor mensen. Een bestand dat op dezelfde plek opnieuw is gemaakt, is een ander
-//! bestand.
+//! openaec-storage `basis_bestand` en `basis_versie_id`. Het is geen versienummer; dat is alleen voor mensen. Een
+//! bestand dat op dezelfde plek opnieuw is gemaakt, is een ander bestand.
 //!
-//! Een opslag past op de trait [`Opslag`]. Hij kan een schrijfverzoek op drie manieren weigeren:
+//! Een opslag past op de trait [`Opslag`]; openaec-storage past er nu op. Een opslag kan een schrijfverzoek op drie manieren weigeren:
 //! - **verouderd**: de basis hoort bij dit bestand, maar is niet meer de huidige versie. De lus leest de basis en de
 //!   huidige versie, voegt samen en schrijft opnieuw.
 //! - **onbekende basis**: de basis hoort niet (meer) bij dit bestand (bijv. een ander bestand op dezelfde plek), of
@@ -24,9 +23,10 @@ use crate::Fout;
 /// Een basis: het bestand en een id van de versie dat nooit terugkomt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Basis<B, V> {
-    /// De identiteit van het bestand (bijv. een file-id); een opnieuw gemaakt bestand heeft een andere.
+    /// De identiteit van het bestand (bij openaec-storage `basis_bestand`); een opnieuw gemaakt bestand heeft een
+    /// andere.
     pub bestand: B,
-    /// Het id van de versie (bijv. `versie_id` of een ETag); wijst altijd naar dezelfde inhoud of naar niets.
+    /// Het id van de versie (bij openaec-storage `basis_versie_id`); wijst altijd naar dezelfde inhoud of naar niets.
     pub versie: V,
 }
 
@@ -49,7 +49,7 @@ pub type BasisVan<S> = Basis<<S as Opslag>::Bestand, <S as Opslag>::Versie>;
 /// Een antwoord van opslag `S`: een waarde, of een [`Weigering`].
 pub type Antwoord<S, T> = Result<T, Weigering<<S as Opslag>::Bestand, <S as Opslag>::Versie>>;
 
-/// Een opslag met versies van één bestand.
+/// Een opslag met versies van één bestand. openaec-storage past hierop.
 pub trait Opslag {
     /// De identiteit van een bestand.
     type Bestand: Clone + PartialEq + Debug;

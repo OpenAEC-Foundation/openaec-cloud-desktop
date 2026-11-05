@@ -20,7 +20,7 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 - `voeg_samen(basis, ons, hun)`: three-way samenvoegen. Geeft het nieuwe bestand, of bij een conflict niets. Het
   rapport noemt per conflict het object, het attribuut en de waarden van basis, ons en hun, en geeft cijfers.
 - `sla_op(opslag, basis, ons, &opties)`: de opslaan-lus (zie onder). Elke opslag die de trait `Opslag` (`huidige`,
-  `lees`, `schrijf_als`) heeft, past.
+  `lees`, `schrijf_als`) heeft, past; openaec-storage past er nu op.
 - `kan_samenvoegen(naam)`: alleen `.ifc`.
 
 ## Hoe het vergelijkt
@@ -122,7 +122,7 @@ verwijst, halen we weg. De HEADER blijft van ons, behalve de velden die alleen h
 
 `sla_op` schrijft de eigen versie met de basis waarop hij gemaakt is. De basis is het bestand plus een id van de
 versie dat nooit terugkomt en altijd dezelfde inhoud aanwijst: bij openaec-storage `basis_bestand` en
-`basis_versie_id`, bij Nextcloud het fileid en de ETag. Een versienummer is alleen voor mensen. Een bestand dat op
+`basis_versie_id`. Een versienummer is alleen voor mensen. Een bestand dat op
 dezelfde plek opnieuw is gemaakt, is een ander bestand.
 
 De opslag kan het schrijven op drie manieren weigeren:

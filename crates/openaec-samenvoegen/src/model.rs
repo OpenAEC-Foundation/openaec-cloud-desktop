@@ -361,7 +361,8 @@ impl<'a> Model<'a> {
             o.hash = h;
         }
         self.eigenaar = self.eigenaars();
-        self.wortel_sleutel = self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize)).collect();
+        let mut terug = None;
+        self.wortel_sleutel = self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize, &mut terug)).collect();
     }
 
     /// Kringen tussen knopen, ook via ankerknopen (bijv. twee plaatsingen die relatief aan elkaar staan): het aantal
@@ -780,10 +781,12 @@ impl<'a> Model<'a> {
     /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing naar een object
     /// of naar een knoop die bij een object hoort (bijv. de geometrie waar een IfcStyledItem of IfcIndexedColourMap
     /// op ligt), met de sleutel van dat object. Zo valt de stijl van W in een andere groep dan die van V, ook als hun
-    /// geometrie gelijk is. Een verwijzing naar een waarde die alleen de losse knoop gebruikt (bijv. de kleuren in
+    /// geometrie gelijk is. Hoort de knoop bij meer objecten, dan telt die verzameling ([`Model::eigenaars_id`]): de
+    /// stijl op de vorm van W en V valt in een andere groep dan die op de vorm van X en Y. `terug` maken we pas als
+    /// het nodig is. Een verwijzing naar een waarde die alleen de losse knoop gebruikt (bijv. de kleuren in
     /// `Colours`), hoort niet in de sleutel: anders vallen twee versies van dezelfde kleurkaart in verschillende
     /// groepen.
-    fn wortel_sleutel_van(&self, i: usize) -> Hash {
+    fn wortel_sleutel_van(&self, i: usize, terug: &mut Option<Verwijzers>) -> Hash {
         let mut buffer = Vec::new();
         let naam = self.bestand.type_naam(i);
         lengte_en(naam.as_bytes(), &mut buffer);
@@ -800,9 +803,13 @@ impl<'a> Model<'a> {
                 buffer.extend_from_slice(&(j as u32).to_le_bytes());
                 let mut deel = Vec::new();
                 self.canoniek(tekst, false, &mut deel);
-                match eigenaar {
-                    Some(MEER_EIGENAARS) => deel.push(b'M'),
-                    Some(o) if o != GEEN_EIGENAAR => {
+                match (eigenaar, doel) {
+                    (Some(MEER_EIGENAARS), Some(k)) => {
+                        let t = terug.get_or_insert_with(|| self.verwijzers());
+                        deel.push(b'M');
+                        deel.extend_from_slice(&self.eigenaars_id(&self.alle_eigenaars(k, t)));
+                    }
+                    (Some(o), _) if o != GEEN_EIGENAAR => {
                         deel.push(b'O');
                         lengte_en(self.objecten[o as usize].sleutel.as_bytes(), &mut deel);
                     }

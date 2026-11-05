@@ -9,9 +9,9 @@ use std::sync::{Arc, Barrier, Mutex};
 use gemeen::*;
 use openaec_samenvoegen::{sla_op, verschil, Basis, LusFout, LusOpties, Opslag, Reden, Uitkomst, Weigering};
 
-/// Een opslag in het geheugen, zoals openaec-storage of Nextcloud. Op de plek staat één bestand met een eigen
-/// identiteit; elke versie heeft een id dat nooit terugkomt (één teller voor alle bestanden, als tekst zoals een
-/// ETag). Een bestand dat opnieuw wordt gemaakt, krijgt een nieuwe identiteit.
+/// Een opslag in het geheugen, zoals openaec-storage. Op de plek staat één bestand met een eigen identiteit; elke
+/// versie heeft een id dat nooit terugkomt (één teller voor alle bestanden, als tekst). Een bestand dat opnieuw wordt
+/// gemaakt, krijgt een nieuwe identiteit.
 #[derive(Default)]
 struct Geheugen {
     teller: u64,
@@ -37,7 +37,7 @@ impl Geheugen {
     }
 
     fn nieuwe_versie(&mut self, inhoud: &[u8]) -> Basis<String, String> {
-        let versie = self.id("etag");
+        let versie = self.id("versie");
         self.inhoud.insert(versie.clone(), (self.bestand.clone(), inhoud.to_vec()));
         self.versies.push(versie.clone());
         Basis { bestand: self.bestand.clone(), versie }
@@ -323,4 +323,28 @@ fn basis_niet_te_lezen() {
     }
     let g = opslag.0.lock().unwrap();
     assert_eq!((g.geschreven, g.versies.len()), (1, 2));
+}
+
+/// Sol, PR #7 ronde 3 op 0655eda (bevinding 1), door de opslaan-lus: hun slaat eerst een kleurwissel op (W/V blauw,
+/// X/Y rood), daarna ons met dezelfde basis een nieuwe naam voor W. De opgeslagen versie heeft beide.
+#[test]
+fn kleurwissel_door_de_opslaan_lus() {
+    for schema in ["IFC4", "IFC4X3_ADD2"] {
+        let basis = twee_gedeelde_vormen(schema);
+        let mut opslag = Klant::nieuw(&basis);
+        let begin = opslag.basis();
+        let h = kleuren_gewisseld(&basis);
+        let o = vervang(&basis, "#5,'W',$", "#5,'W-ons',$");
+        sla_op(&mut opslag, begin.clone(), h.as_bytes(), &LusOpties::default()).unwrap();
+        let inhoud = match sla_op(&mut opslag, begin, o.as_bytes(), &LusOpties::default()).unwrap() {
+            Uitkomst::Opgeslagen { inhoud, pogingen: 2, .. } => inhoud,
+            u => panic!("{schema}: {u:?}"),
+        };
+        let r = String::from_utf8(inhoud).unwrap();
+        let f = Feiten::lees(&r);
+        assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("WandW"))), vec![BLAUW], "{schema}\n{r}");
+        assert_eq!(kleuren_op(&f, vorm_van(&f, &gid("NieuwX"))), vec![ROOD], "{schema}\n{r}");
+        assert_eq!(f.attr(f.met_globalid(&gid("WandW")), 2), "'W-ons'", "{schema}\n{r}");
+        assert_eq!(opslag.0.lock().unwrap().versies.len(), 3);
+    }
 }
