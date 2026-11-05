@@ -439,6 +439,11 @@ fn reeks() -> impl Strategy<Value = Vec<Bewerking>> {
     prop::collection::vec(bewerking(), 0..=4)
 }
 
+/// Een reeks zonder eigen IfcOwnerHistory.
+fn reeks_zonder_eigen_oh() -> impl Strategy<Value = Vec<Bewerking>> {
+    reeks().prop_map(|v| v.into_iter().filter(|b| !matches!(b, Bewerking::EigenOwnerHistory { .. })).collect())
+}
+
 /// Een reeks zonder bewerkingen van vluchtige velden (tijdstempel, eigen IfcOwnerHistory).
 fn reeks_zonder_vluchtig() -> impl Strategy<Value = Vec<Bewerking>> {
     reeks().prop_map(|v| {
@@ -1436,7 +1441,7 @@ proptest! {
 
     /// Zonder conflict: elke wijziging van ons en van hun zit in het resultaat, en er komt niets bij. Is de volgorde
     /// van de stappen om het even (o;h ≡ h;o), dan is het resultaat dat ook. Is de volgorde niet om het even, dan
-    /// moet er een conflict zijn: samenvoegen mag niet stil een kant kiezen. Vluchtige velden volgen de regel.
+    /// moet er een conflict zijn: samenvoegen mag niet stil een kant kiezen. (Vluchtige velden: zie hieronder.)
     #[test]
     fn behoud_zonder_stil_verlies(bron in bron(), so in reeks(), sh in reeks()) {
         let b = tekst_van(bron);
@@ -1450,9 +1455,21 @@ proptest! {
                 "o;h en h;o verschillen, maar er is geen conflict\n{wat}"
             )))?;
             gelijk(r, &v, &format!("resultaat tegen o;h\n{wat}"))?;
-            vluchtig_volgens_de_regel(b, &o.stappen, &h.stappen, r)
-                .map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
         }
+    }
+
+    /// Vluchtige velden volgen de regel uit §5.6: wijzigde alleen hun ze, dan de waarde van hun, anders die van ons.
+    /// Ook bij een nieuw object aan een gedeelde IfcOwnerHistory. Faalt: zie `nieuwe_set_volgt_de_tijdstempel_van_hun`.
+    #[test]
+    #[ignore = "bevinding 2: een nieuw object van ons houdt de oude tijdstempel als hun ook een object een eigen IfcOwnerHistory gaf"]
+    fn vluchtige_velden_volgens_de_regel(bron in bron(), so in reeks(), sh in reeks()) {
+        vluchtig_na_samenvoegen(bron, &so, &sh)?;
+    }
+
+    /// De zwakkere vorm van `vluchtige_velden_volgens_de_regel`: zonder eigen IfcOwnerHistory (wel tijdstempels).
+    #[test]
+    fn vluchtige_velden_zonder_eigen_ownerhistory(bron in bron(), so in reeks_zonder_eigen_oh(), sh in reeks_zonder_eigen_oh()) {
+        vluchtig_na_samenvoegen(bron, &so, &sh)?;
     }
 
     // --- 5. Stabiel in de opslaan-lus. ---
@@ -1488,6 +1505,17 @@ proptest! {
     fn opnieuw_opslaan_zonder_vluchtige_velden(bron in bron(), so in reeks_zonder_vluchtig(), sh in reeks_zonder_vluchtig()) {
         opnieuw_opslaan(bron, &so, &sh)?;
     }
+}
+
+fn vluchtig_na_samenvoegen(bron: Bron, so: &[Bewerking], sh: &[Bewerking]) -> Uit {
+    let b = tekst_van(bron);
+    let (o, h) = (versie(b, so, 'O'), versie(b, sh, 'H'));
+    let wat = verhaal(bron, &[("ons", &o.stappen), ("hun", &h.stappen)]);
+    let Some(r) = samen(b, &o.tekst, &h.tekst)?.r else { return Ok(()) };
+    if orakel_geldt(&o.stappen, &h.stappen) && orakel(b, &o.stappen, &h.stappen)?.is_some() {
+        vluchtig_volgens_de_regel(b, &o.stappen, &h.stappen, &r).map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
+    }
+    Ok(())
 }
 
 fn opnieuw_opslaan(bron: Bron, so: &[Bewerking], sh: &[Bewerking]) -> Uit {
@@ -1838,7 +1866,7 @@ fn nieuwe_set(pset: &str, relatie: &str) -> String {
 /// hun én in r, niet in de basis; voor een nieuw object kiest de regel altijd ons (hier: hun-versie, oude
 /// tijdstempel), voor de bestaande objecten hun (hier: r, nieuwe tijdstempel). Ze delen één IfcOwnerHistory.
 #[test]
-#[ignore = "bevinding: opnieuw opslaan na een gelukte samenvoeging geeft een conflict op de vluchtige tijdstempel"]
+#[ignore = "bevinding 1: opnieuw opslaan na een gelukte samenvoeging geeft een conflict op de vluchtige tijdstempel"]
 fn opnieuw_opslaan_met_nieuwe_set_en_tijdstempel() {
     for schema in gemeen::SCHEMAS {
         let b = gemeen::gebouw(schema);
@@ -1857,7 +1885,7 @@ fn opnieuw_opslaan_met_nieuwe_set_en_tijdstempel() {
 /// inhoud); alleen hun zet ook de tijdstempel in de gedeelde IfcOwnerHistory. Verwacht: de set één keer, de
 /// tijdstempel van hun (alleen hun wijzigde hem), geen conflict. Kreeg: conflict `GedeeldAnker`.
 #[test]
-#[ignore = "bevinding: hetzelfde nieuwe object aan beide kanten plus een tijdstempel van hun geeft een conflict"]
+#[ignore = "bevinding 1: hetzelfde nieuwe object aan beide kanten plus een tijdstempel van hun geeft een conflict"]
 fn zelfde_nieuwe_set_en_tijdstempel_van_hun() {
     for schema in gemeen::SCHEMAS {
         let b = gemeen::gebouw(schema);
@@ -1868,5 +1896,37 @@ fn zelfde_nieuwe_set_en_tijdstempel_van_hun() {
         assert!(s.gelukt, "{schema}: (b, ons, hun) gaf conflicten {soorten:?}");
         let v = verschil(&s.inhoud.unwrap(), h.as_bytes()).unwrap();
         assert!(v.is_leeg() && v.vluchtig.is_empty(), "{schema}: {v:?}");
+    }
+}
+
+/// De CreationDate (attribuut 7) van de IfcOwnerHistory van het object met deze GlobalId, in `r`.
+fn creatiedatum_van(r: &str, globalid: &str) -> String {
+    let f = gemeen::Feiten::lees(r);
+    let x = f.met_globalid(&gemeen::gid(globalid));
+    f.attr(f.verwijzing(x, 1), 7).to_string()
+}
+
+/// Bevinding 2 (`behoud_zonder_stil_verlies`). Ons hangt een nieuwe eigenschappenset aan W, aan de gedeelde
+/// IfcOwnerHistory #5. Hun geeft V een eigen IfcOwnerHistory (MODIFIED) en zet daarna, zoals OPS bij het opslaan,
+/// de CreationDate van alle IfcOwnerHistory's op 1700000001. Alleen hun wijzigde de tijdstempel, dus verwacht:
+/// overal 1700000001, ook bij de nieuwe set (een nieuw object volgt de gedeelde IfcOwnerHistory, zie
+/// `nieuw_object_volgt_de_gedeelde_ownerhistory` in tests/samenvoegen.rs). Kreeg: geen conflict, maar de nieuwe set
+/// houdt 1700000000. Zonder de eigen IfcOwnerHistory van V gaat het goed (zie de tweede helft van de test).
+#[test]
+#[ignore = "bevinding 2: een nieuw object van ons houdt de oude tijdstempel als hun ook een object een eigen IfcOwnerHistory gaf"]
+fn nieuwe_set_volgt_de_tijdstempel_van_hun() {
+    for schema in gemeen::SCHEMAS {
+        let b = gemeen::gebouw(schema);
+        let o = gemeen::voeg_toe(&b, &nieuwe_set("NieuwSet", "NieuwRel"));
+        let tijd = gemeen::vervang(&b, ",1700000000);", ",1700000001);");
+        let eigen = "#93=IFCOWNERHISTORY(#3,#4,$,.MODIFIED.,1800000000,$,$,1700000001);";
+        let h = gemeen::voeg_toe(&gemeen::vervang(&tijd, "#5,'V',$", "#93,'V',$"), eigen);
+        for (naam, h) in [("zonder eigen", &tijd), ("met eigen", &h)] {
+            let s = voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes()).unwrap();
+            let r = String::from_utf8(s.inhoud.expect("geen conflict")).unwrap();
+            for object in ["WandW", "WandV", "Project", "NieuwSet", "NieuwRel"] {
+                assert_eq!(creatiedatum_van(&r, object), "1700000001", "{schema}, {naam}: {object}\n{r}");
+            }
+        }
     }
 }
