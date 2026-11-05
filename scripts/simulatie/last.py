@@ -261,22 +261,42 @@ def voeg_regels_toe(frappe, ruimte: str, doel: str, aantal: int) -> None:
 		aantal -= stuk
 
 
-async def lijst(frappe, c: Client, ruimte: str, stil: str, doel: str, stappen: list[int]) -> list[dict]:
+async def lijst(frappe, c: Client, anderen: list[Client], ruimte: str, stil: str, doel: str, stappen: list[int]) -> list[dict]:
 	uit = []
 	for stap in stappen:
 		frappe.db.rollback()
 		nu = frappe.db.sql("select count(*) from `tabOpslagwijziging` where ruimte = %s", ruimte)[0][0]
 		erbij = max(0, stap - nu)
 		voeg_regels_toe(frappe, ruimte, doel, erbij)
-		# De eerste lezing na de achterstand: de veger nummert alle regels met 0 in één keer.
+		# De eerste lezing na de achterstand: de veger nummert alle regels met 0 in één keer. Intussen pollen andere
+		# clients de stille ruimte (een poll per client): ook hun veger wacht op het tellerslot.
 		t = time.perf_counter()
-		status, _ = await c.roep("wijzigingen", ruimte=ruimte, sinds=c.cursor)
+		klaar = asyncio.Event()
+
+		async def eerste():
+			r = await c.roep("wijzigingen", ruimte=ruimte, sinds=c.cursor)
+			klaar.set()
+			return r
+
+		async def ander(a: Client):
+			tijden, codes = [], collections.Counter()
+			while not klaar.is_set():
+				t0 = time.perf_counter()
+				status, _ = await a.roep("wijzigingen", ruimte=stil, sinds=0)
+				tijden.append(time.perf_counter() - t0)
+				codes[str(status)] += 1
+				await asyncio.sleep(0.5)
+			return tijden, codes
+
+		(status, _), *rest = await asyncio.gather(eerste(), *(ander(a) for a in anderen))
 		veger = time.perf_counter() - t
 		frappe.db.rollback()
 		nul = frappe.db.sql("select count(*) from `tabOpslagwijziging` where commitnummer = 0")[0][0]
 		totaal = frappe.db.sql("select count(*) from `tabOpslagwijziging`")[0][0]
+		codes = sum((r[1] for r in rest), collections.Counter())
 		regel = {"regels_in_ruimte": nu + erbij, "regels_op_site": totaal, "achterstand_voor_veger": erbij,
-				 "eerste_lezing_s": round(veger, 2), "status": status, "na_veger_nog_nul": nul}
+				 "eerste_lezing_s": round(veger, 2), "status": status, "na_veger_nog_nul": nul,
+				 "polls_van_anderen_intussen": {**samenvatting([x for r in rest for x in r[0]]), "status": dict(codes)}}
 		log(f"lijst: {regel}")
 		if status == 200:
 			regel.update(await meet_lijst(c, ruimte, stil))
@@ -347,7 +367,8 @@ async def hoofd(args) -> dict:
 			verslag["doorvoer"].append(r)
 		if args.lijst:
 			c = Client(0, sleutels[0], ruimte, http, Meter())
-			verslag["lijst"] = await lijst(frappe, c, ruimte, stil, bestand, [int(s) for s in args.lijst.split(",")])
+			anderen = [Client(i, sleutels[i], stil, http, Meter()) for i in range(1, min(len(sleutels), 21))]
+			verslag["lijst"] = await lijst(frappe, c, anderen, ruimte, stil, bestand, [int(s) for s in args.lijst.split(",")])
 	return verslag
 
 
