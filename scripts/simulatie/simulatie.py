@@ -566,6 +566,8 @@ def tel_proxy(pad: str) -> dict:
 		with open(pad) as f:
 			for regel in f:
 				r = json.loads(regel)
+				if (r.get("pad") or "").startswith("/"):
+					r["pad"] = r.get("methode")  # S3: per methode (PUT is een deel, GET een download)
 				tel[r.get("pad") or "?"] += 1
 				if r.get("fout"):
 					chaos[f"{r['fout']} {r.get('pad')}"] += 1
