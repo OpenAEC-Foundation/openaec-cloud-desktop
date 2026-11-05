@@ -580,6 +580,29 @@ def tel_proxy(pad: str) -> dict:
 	return {"verzoeken": dict(tel.most_common(25)), "upload_klaar_status": dict(klaar_status), "foutcodes": dict(foutcodes), "chaos": dict(chaos)}
 
 
+def na_verloren_klaar(pad: str) -> dict:
+	"""Wat een client doet na een upload_klaar waarvan het antwoord wegviel ("stil": de server deed het wel): zijn
+	volgende drie verzoeken aan de API. Een herhaalde upload_klaar met hetzelfde token zou 403 geven (PR #9)."""
+	try:
+		with open(pad) as f:
+			regels = sorted((json.loads(r) for r in f), key=lambda r: r["t"])
+	except FileNotFoundError:
+		return {}
+	volgende = collections.Counter()
+	for n, r in enumerate(regels):
+		if r.get("pad") == "upload_klaar" and r.get("fout") == "stil":
+			na = [f"{x.get('pad')} {x.get('status')}" for x in regels[n + 1:] if x.get("wie") == r.get("wie")][:3]
+			volgende[" -> ".join(na)] += 1
+	return {
+		"stil_bij_upload_klaar": sum(volgende.values()),
+		"daarna": dict(volgende.most_common(10)),
+		"upload_klaar_403": sum(1 for r in regels if r.get("pad") == "upload_klaar" and r.get("status") == 403),
+		# Meer afrondingen dan geslaagde starts kan alleen met een herhaalde upload_klaar.
+		"upload_start_200": sum(1 for r in regels if r.get("pad") == "upload_start" and r.get("status") == 200),
+		"upload_klaar_verzoeken": sum(1 for r in regels if r.get("pad") == "upload_klaar"),
+	}
+
+
 def main() -> int:
 	p = argparse.ArgumentParser()
 	p.add_argument("--clients", type=int, default=8)
@@ -659,6 +682,7 @@ def main() -> int:
 	uitkomst["rondes"]["fouten_soorten"] = dict(foutregels.most_common(10))
 	uitkomst["proxy_api"] = tel_proxy(os.path.join(args.werk, "api.jsonl"))
 	uitkomst["proxy_s3"] = tel_proxy(os.path.join(args.werk, "s3.jsonl"))
+	uitkomst["na_verloren_upload_klaar"] = na_verloren_klaar(os.path.join(args.werk, "api.jsonl"))
 	uitkomst["args"] = vars(args)
 	print(json.dumps(uitkomst, indent=1, default=str))
 	if uitkomst["fouten"]:

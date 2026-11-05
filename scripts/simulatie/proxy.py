@@ -6,7 +6,7 @@ Per verbinding beslist hij met een vast zaad of er iets misgaat, en wat:
   traag  wacht 0,5 tot 3 s voordat het antwoord doorgaat
   reset  verbreek meteen, met een RST
 De kans staat in het bestand --stand; hij leest het bij elke nieuwe verbinding. Zo zet de simulatie de chaos uit voor
-de rustige periode. Per verbinding één regel JSON in --log: methode, pad, status, foutcodes, fout en bytes.
+de rustige periode. Per verbinding één regel JSON in --log: methode, pad, wie (de API-sleutel), status, foutcodes, fout en bytes.
 
   proxy.py --luister 18201 --doel 18200 --log api.jsonl --stand chaos.txt --zaad 1
 """
@@ -22,6 +22,7 @@ import time
 
 FOUTCODE = re.compile(rb'"foutcode":\s*"([a-z_]+)"')
 LENGTE = re.compile(rb"\r\ncontent-length:\s*(\d+)", re.I)
+WIE = re.compile(rb"\r\nauthorization:\s*token ([^:\r\n]{1,64}):", re.I)
 
 
 def lees_stand(pad: str) -> float:
@@ -71,6 +72,8 @@ class Proxy:
 		methode, pad = (kop + ["", ""])[:2]
 		regel["methode"] = methode
 		regel["pad"] = pad.split("?")[0].removeprefix("/api/method/openaec_storage.api.")
+		if m := WIE.search(eerste):
+			regel["wie"] = m.group(1).decode()  # de API-sleutel (niet het geheim): wie het verzoek deed
 		fout = self.kies(pad) if eerste else None
 		regel["fout"] = fout
 		regel["in"] = regel["uit"] = 0
