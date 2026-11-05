@@ -268,7 +268,9 @@ impl<'a> Model<'a> {
         for (o, h) in self.objecten.iter_mut().zip(objecthashes) {
             o.hash = h;
         }
-        self.wortel_sleutel = self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize)).collect();
+        let onder_object = self.onder_object();
+        self.wortel_sleutel =
+            self.wortels.iter().map(|&w| self.wortel_sleutel_van(w as usize, &onder_object)).collect();
     }
 
     /// Legt per knoop zijn ankers vast, zijn identiteit, en hoeveel objecten rechtstreeks naar hem verwijzen.
@@ -381,8 +383,25 @@ impl<'a> Model<'a> {
         *hasher.finalize().as_bytes()
     }
 
-    /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing.
-    fn wortel_sleutel_van(&self, i: usize) -> Hash {
+    /// Per instantie: hoort hij bij een object (bereikbaar vanaf een object)?
+    fn onder_object(&self) -> Vec<bool> {
+        let mut uit = vec![false; self.bestand.instanties.len()];
+        let mut stapel: Vec<u32> = self.objecten.iter().map(|o| o.inst).collect();
+        while let Some(x) = stapel.pop() {
+            let x = x as usize;
+            if std::mem::replace(&mut uit[x], true) {
+                continue;
+            }
+            stapel.extend(self.bestand.verwijzingen(x).iter().copied().filter(|&c| !uit[c as usize]));
+        }
+        uit
+    }
+
+    /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing naar iets wat
+    /// bij een object hoort (bijv. de geometrie waar een IfcStyledItem of IfcIndexedColourMap op ligt). Een
+    /// verwijzing naar een waarde die alleen de losse knoop gebruikt (bijv. de kleuren in `Colours`), hoort niet in de
+    /// sleutel: anders vallen twee versies van dezelfde kleurkaart in verschillende groepen.
+    fn wortel_sleutel_van(&self, i: usize, onder_object: &[bool]) -> Hash {
         let mut buffer = Vec::new();
         let naam = self.bestand.type_naam(i);
         lengte_en(naam.as_bytes(), &mut buffer);
@@ -390,7 +409,10 @@ impl<'a> Model<'a> {
         for (j, &attr) in self.bestand.attributen(i).iter().enumerate() {
             let tekst = self.bestand.tekst(attr);
             let is_naam = entiteit.is_some_and(|e| e.attributen[j].naam == "Name");
-            if is_naam || enkele_verwijzing(tekst).is_some() {
+            let doel = enkele_verwijzing(tekst)
+                .and_then(|n| self.bestand.index.get(&n))
+                .is_some_and(|&k| onder_object[k as usize]);
+            if is_naam || doel {
                 buffer.extend_from_slice(&(j as u32).to_le_bytes());
                 let mut deel = Vec::new();
                 self.canoniek(tekst, false, &mut deel);

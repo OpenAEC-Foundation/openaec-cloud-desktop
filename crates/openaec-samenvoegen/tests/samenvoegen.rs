@@ -373,7 +373,7 @@ fn gedeelde_eigenschappenset_en_verwijderde_wand() {
         assert_eq!((c.ons.as_deref(), c.hun.as_deref()), (Some("object verwijderd"), Some("geldt, gewijzigd")));
         // Met hun als winnaar: W blijft, met P = 60. Met ons als winnaar: W is weg, P blijft 30.
         let s = voeg_met(&b, &o, &h, BijConflict::Hun);
-        let r = String::from_utf8(s.inhoud.expect("hun wint")).unwrap();
+        let r = String::from_utf8(s.inhoud.unwrap_or_else(|| panic!("hun wint: {:#?}", s.conflicten))).unwrap();
         assert!(r.contains("'W'") && r.contains("IFCINTEGER(60)"), "{r}");
         let s = voeg_met(&b, &o, &h, BijConflict::Ons);
         let r = String::from_utf8(s.inhoud.expect("ons wint")).unwrap();
@@ -734,4 +734,82 @@ fn rapport_als_json() {
         (Some("'W'"), Some("'W-ons'"), Some("'W-hun'"))
     );
     assert_eq!(json["gelukt"], false);
+}
+
+#[test]
+fn losse_knopen_beide_anders() {
+    let b = bestand("ifc4-tessellation-with-individual-colors.ifc");
+    let o = vervang(&b, "IFCCOLOURRGBLIST(((1.0,0.0,0.0)", "IFCCOLOURRGBLIST(((0.0,1.0,0.0)");
+    let h = vervang(&b, "IFCCOLOURRGBLIST(((1.0,0.0,0.0)", "IFCCOLOURRGBLIST(((0.0,0.0,1.0)");
+    assert_eq!(conflicten(&b, &o, &h), vec![ConflictSoort::LosseKnopen]);
+    // Dezelfde kleur aan beide kanten: geen conflict.
+    zelfde(&gelukt(&b, &o, &hernummer(&o, 3)), &o);
+}
+
+/// Hun zet een nieuw element X met een plaatsing relatief aan die van Q; ons verwijdert Q.
+#[test]
+fn plaatsing_van_een_verwijderd_object() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let o = met(
+            &verwijder_regel(&verwijder_regel(&verwijder_regel(&verwijder_regel(&b, "#31="), "#23="), "#24="), "#25="),
+            &[("#6,(#30,#31));", "#6,(#30));")],
+            "",
+        );
+        let h = met(
+            &b,
+            &[(bevat("#43,#44").as_str(), bevat("#43,#44,#73").as_str())],
+            &format!(
+                "#70=IFCLOCALPLACEMENT(#23,#71);\n#71=IFCAXIS2PLACEMENT3D(#72,$,$);\n#72=IFCCARTESIANPOINT((5.,0.,0.));\n\
+                 #73=IFCBUILDINGELEMENTPROXY('{}',#5,'X',$,$,#70,$,$,$);",
+                gid("X")
+            ),
+        );
+        let soorten = conflicten(&b, &o, &h);
+        assert!(soorten.contains(&ConflictSoort::VerwijzingNaarVerwijderd), "{schema}: {soorten:?}");
+    }
+}
+
+/// Wat het schrijven doet: alleen de regels van gewijzigde objecten veranderen; wat van hun komt, staat achteraan
+/// met nummers boven het hoogste nummer van ons; knopen waar niets meer naar verwijst, zijn weg.
+#[test]
+fn schrijven_houdt_ons_en_nummert_hun_achteraan() {
+    let b = gebouw("IFC4");
+    let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+    // Hun verplaatst V (nieuwe punten) en voegt X toe.
+    let h = met(
+        &b,
+        &[("#47=IFCCARTESIANPOINT((2.,0.,0.));", "#47=IFCCARTESIANPOINT((2.,5.,0.));")],
+        &format!(
+            "#70=IFCLOCALPLACEMENT(#20,#71);\n#71=IFCAXIS2PLACEMENT3D(#72,$,$);\n#72=IFCCARTESIANPOINT((5.,0.,0.));\n\
+             #73=IFCBUILDINGELEMENTPROXY('{}',#5,'X',$,$,#70,$,$,$);",
+            gid("X")
+        ),
+    );
+    let s = voeg(&b, &o, &hernummer(&h, 8));
+    assert!(s.gelukt, "{:#?}", s.conflicten);
+    let r = String::from_utf8(s.inhoud.unwrap()).unwrap();
+    // De HEADER en de regels van ons, behalve die van V's plaatsing, staan er nog.
+    let ons: Vec<&str> = o.lines().collect();
+    let erin: Vec<&str> = r.lines().collect();
+    let weg: Vec<&&str> = ons.iter().filter(|l| !erin.contains(l)).collect();
+    // De plaatsing van V (#45) krijgt op zijn eigen regel de inhoud van hun; de oude punten zijn weg.
+    assert_eq!(
+        weg,
+        vec![
+            &"#45=IFCLOCALPLACEMENT(#20,#46);",
+            &"#46=IFCAXIS2PLACEMENT3D(#47,$,$);",
+            &"#47=IFCCARTESIANPOINT((2.,0.,0.));"
+        ],
+        "{r}"
+    );
+    // Nieuwe regels hebben een nummer boven 62 (het hoogste van ons).
+    for l in erin.iter().filter(|l| !ons.contains(l)) {
+        let n: u64 = l.trim_start_matches('#').split('=').next().unwrap().parse().unwrap();
+        assert!(n == 45 || n > 62, "{l}");
+    }
+    let st = &s.statistiek;
+    // V zelf blijft dezelfde tekst; alleen #45 is herschreven.
+    assert_eq!((st.objecten_van_hun, st.instanties_verwijderd, st.instanties_herschreven), (2, 2, 1), "{st:?}");
+    assert!(r.contains("#44=IFCBUILDINGELEMENTPROXY('0WandV0000000000000000',#5,'V',$,$,#45,$,$,$);"));
 }

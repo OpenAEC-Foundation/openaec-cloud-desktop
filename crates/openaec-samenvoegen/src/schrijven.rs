@@ -775,25 +775,29 @@ impl Schrijver<'_, '_, '_> {
             }
             return Some(n);
         }
-        let kandidaten = self.ons_op_waarde(&m[H].knoop_hash[d as usize]);
+        // Alleen knopen van ons die net als deze knoop wel (of niet) bij een object horen: anders verandert de
+        // sleutel van een losse knoop die ernaar wijst.
+        let eh = self.eigenaar(H)[d as usize];
+        let kandidaten: Vec<(u32, u32)> = {
+            let lijst = self.ons_op_waarde(&m[H].knoop_hash[d as usize]);
+            let eo = self.eigenaar(O);
+            lijst.into_iter().map(|k| (k, eo[k as usize])).filter(|&(_, e)| (e == GEEN) == (eh == GEEN)).collect()
+        };
         if kandidaten.is_empty() {
             return Some(self.kopie(d));
         }
         let hun_nummer = m[H].bestand.instanties[d as usize].id;
-        let (keuze, dubbel) = if let Some(&k) =
-            kandidaten.iter().find(|&&k| m[O].bestand.instanties[k as usize].id == hun_nummer)
+        let zelfde: Vec<u32> = kandidaten.iter().filter(|&&(_, e)| eh < MEER && e == eh).map(|&(k, _)| k).collect();
+        let (keuze, dubbel) = if let Some(&(k, _)) =
+            kandidaten.iter().find(|&&(k, _)| m[O].bestand.instanties[k as usize].id == hun_nummer)
         {
             (k, false)
         } else if kandidaten.len() == 1 {
-            (kandidaten[0], false)
+            (kandidaten[0].0, false)
+        } else if let [k] = zelfde.as_slice() {
+            (*k, false)
         } else {
-            let eh = self.eigenaar(H)[d as usize];
-            let eo = self.eigenaar(O);
-            let zelfde: Vec<u32> = kandidaten.iter().copied().filter(|&k| eh < MEER && eo[k as usize] == eh).collect();
-            match zelfde.as_slice() {
-                [k] => (*k, false),
-                _ => (zelfde.first().copied().unwrap_or(kandidaten[0]), eh != GEEN),
-            }
+            (zelfde.first().copied().unwrap_or(kandidaten[0].0), eh != GEEN)
         };
         if wortel && dubbel {
             self.dubbelzinnig(d);
@@ -883,19 +887,23 @@ impl Schrijver<'_, '_, '_> {
         let data = ons.data;
         let mut wijzigingen: Vec<(usize, usize, Vec<u8>)> = Vec::new();
         let mut verwijderd = 0;
+        let mut herschreven = 0;
         for (i, inst) in ons.instanties.iter().enumerate() {
             let (b, e) = (inst.bereik.0 as usize, inst.bereik.1 as usize);
             if verwijder[i] {
                 verwijderd += 1;
                 wijzigingen.push((regel_begin(data, b), regel_eind(data, b, e), Vec::new()));
             } else if let Some(t) = self.vervangen.get(&(i as u32)) {
+                if t.as_slice() == inhoud_zonder_puntkomma(&m[O], i) {
+                    continue;
+                }
+                herschreven += 1;
                 let mut tekst = format!("#{}=", inst.id).into_bytes();
                 tekst.extend_from_slice(t);
                 tekst.push(b';');
                 wijzigingen.push((b, e, tekst));
             }
         }
-        let herschreven = self.vervangen.len();
         for (&(regel, j), &kant) in &self.plan.header {
             let Some(r) = ons.header.iter().find(|r| r.naam == regel) else { continue };
             let Some(&(b, e)) = r.parameters.get(j) else { continue };
