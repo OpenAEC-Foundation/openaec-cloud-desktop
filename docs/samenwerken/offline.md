@@ -140,7 +140,9 @@ alleen wat de trait `Opslag` al vraagt, en legt geen vorm vast die alleen bij PR
 
 - **E. Verwijderen met een basis.** `verwijder(bestand, basis_versie_id)` (ontwerp §5.5): de server wist alleen als de
   basis nog de huidige versie is. De client heeft de basis al bij de hand (zie stap 6); alleen de aanroep verandert.
-  Sluit het laatste gat van stap 6 (knownbugs 27). Vraagt een wijziging op de server. Tot dan blokkeert dit punt.
+  Sluit het laatste gat van stap 6 (knownbugs 27). Vraagt een wijziging op de server. Tot dan blijft de race tussen
+  opnieuw opvragen en verwijderen open; de hercontrole vlak vóór het verwijderen is de geaccepteerde tussenoplossing
+  (ontwerp §5.5).
 
 A werkt nu al, ook tegen de server van `main` (zonder vergelijk-en-schrijf schrijft de motor geen bestanden onderweg;
 zie hieronder). B of C maakt het afspelen ook voor conflictkopieën herhaalbaar.
