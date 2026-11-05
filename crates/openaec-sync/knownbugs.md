@@ -72,3 +72,18 @@ reproductie.
     volgende ronde van B maakt vijf conflictkopieën met dezelfde inhoud, log van 5 november). Een mogelijke richting:
     vóór zo'n upload de blokhashes van hier en van de server vergelijken (zoals `neem_regel_over` en `vastgelegd` al
     doen), of de toestand na elke overdracht bewaren. Niet gerepareerd: dit is de motor van 5b. — B
+62. **De veger nummert een achterstand in één keer, en zolang wacht elke lezing van de wijzigingenlijst op de hele
+    site** (eigen bevinding, lastproef d, 5 november 2026). `commitnummer.veeg()` nummert alle vastgelegde regels met
+    nummer 0 in één transactie, één `UPDATE` per regel, onder het slot op de teller. Elke andere lezing van
+    `wijzigingen()` op de site wacht op dat slot, ook voor een andere ruimte. Gemeten op de proefbench (4 workers),
+    in twee runs: een achterstand van ongeveer 10 000 regels kost 2,5 tot 2,7 s, 40 000 regels 9,0 s, 150 000 regels
+    31,6 tot 32,9 s (ongeveer 0,21 ms per regel). Twintig clients die intussen een stille ruimte lazen, wachtten even
+    lang (31,1 en 32,3 s bij 150 000). Afgeleid en niet gemeten: haalt de veger de time-out van de worker (120 s op de
+    proefbench, bij deze snelheid rond 550 000 regels; op een drukke machine eerder), dan draait zijn transactie
+    terug, en begint de volgende lezing weer bij nul; de lijst komt dan niet meer vrij. Zo'n achterstand ontstaat als
+    er veel wordt vastgelegd terwijl niemand leest, bijvoorbeeld een grote import. De gewone lezing is wel snel: de
+    eerste pagina 0,06 tot 0,07 s, een lege pagina 0,02 s, een stille ruimte vanaf 0 0,02 s, de hele lijst van
+    200 000 regels vanaf 0 in 7,1 tot 7,5 s (201 pagina's). Reproductie: `last.py --lijst 10000,50000,200000` (regels
+    met nummer 0 direct in de tabel, dan één lezing; log `2026-11-05-d-last-4werkers.log`). Een mogelijke richting: in
+    stukken nummeren (een vast aantal per transactie), of met één `UPDATE` in volgorde van `name`. Dit is servercode;
+    niet gerepareerd. — B

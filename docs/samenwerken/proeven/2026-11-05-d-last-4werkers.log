@@ -1,0 +1,530 @@
+draai.sh: d-last-4werkers, 2026-11-05 17:34:51, desktop c9e8052, server 197d55b (integratie-4-4b)
+draai.sh: last.py --aantallen 100,200,300 --duur 45 --lijst 10000,50000,200000
+zwaar.sh: beide plekken (alleen) voor: bash -c echo "draai.sh: start $(date +%T), desktop $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' rev-parse --short HEAD), $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' status --short | wc -l) bestanden niet gecommit" && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/last.py' --werk '/home/aia09/bench-proef/werk/d-last-4werkers' --aantallen 100,200,300 --duur 45 --lijst 10000,50000,200000
+draai.sh: start 17:42:05, desktop c9e8052, 2 bestanden niet gecommit
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+17:42:20 opzet: 300 gebruikers en ruimtes spt86u687a, spu1qao3gu in 10 s
+17:43:08 schrijvers 100: 20 geslaagd, 92.8 pogingen per opslag, 96 verhongerd, 0 fouten
+17:43:53 doorvoer 100: 205.8 verzoeken/s, 199.1 polls/s
+17:44:41 schrijvers 200: 11 geslaagd, 156.4 pogingen per opslag, 199 verhongerd, 0 fouten
+17:45:27 doorvoer 200: 202.7 verzoeken/s, 197.2 polls/s
+17:46:16 schrijvers 300: 7 geslaagd, 214.0 pogingen per opslag, 299 verhongerd, 0 fouten
+17:47:02 doorvoer 300: 198.9 verzoeken/s, 193.7 polls/s
+17:47:05 lijst: {'regels_in_ruimte': 10000, 'regels_op_site': 18487, 'achterstand_voor_veger': 9664, 'eerste_lezing_s': 2.7, 'status': 200, 'na_veger_nog_nul': 0, 'polls_van_anderen_intussen': {'n': 20, 'p50': 2.151, 'p95': 2.173, 'p99': 2.173, 'max': 2.173, 'status': {'200': 20}}}
+17:47:06 lijst: {"regels_in_ruimte": 10000, "regels_op_site": 18487, "achterstand_voor_veger": 9664, "eerste_lezing_s": 2.7, "status": 200, "na_veger_nog_nul": 0, "polls_van_anderen_intussen": {"n": 20, "p50": 2.151, "p95": 2.173, "p99": 2.173, "max": 2.173, "status": {"200": 20}}, "hele_lijst_vanaf_0_s": 0.4, "paginas": 11, "eerste_pagina": {"n": 10, "p50": 0.064, "p95": 0.072, "p99": 0.072, "max": 0.072}, "lege_pagina_aan_eind": {"n": 10, "p50": 0.014, "p95": 0.019, "p99": 0.019, "max": 0.019}, "stille_ruimte_vanaf_0": {"n": 10, "p50": 0.017, "p95": 0.019, "p99": 0.019, "max": 0.019}}
+17:47:16 lijst: {'regels_in_ruimte': 50000, 'regels_op_site': 58487, 'achterstand_voor_veger': 40000, 'eerste_lezing_s': 9.0, 'status': 200, 'na_veger_nog_nul': 0, 'polls_van_anderen_intussen': {'n': 20, 'p50': 8.447, 'p95': 8.473, 'p99': 8.473, 'max': 8.473, 'status': {'200': 20}}}
+17:47:19 lijst: {"regels_in_ruimte": 50000, "regels_op_site": 58487, "achterstand_voor_veger": 40000, "eerste_lezing_s": 9.0, "status": 200, "na_veger_nog_nul": 0, "polls_van_anderen_intussen": {"n": 20, "p50": 8.447, "p95": 8.473, "p99": 8.473, "max": 8.473, "status": {"200": 20}}, "hele_lijst_vanaf_0_s": 1.74, "paginas": 51, "eerste_pagina": {"n": 10, "p50": 0.068, "p95": 0.084, "p99": 0.084, "max": 0.084}, "lege_pagina_aan_eind": {"n": 10, "p50": 0.017, "p95": 0.019, "p99": 0.019, "max": 0.019}, "stille_ruimte_vanaf_0": {"n": 10, "p50": 0.018, "p95": 0.019, "p99": 0.019, "max": 0.019}}
+17:47:52 lijst: {'regels_in_ruimte': 200000, 'regels_op_site': 208487, 'achterstand_voor_veger': 150000, 'eerste_lezing_s': 31.62, 'status': 200, 'na_veger_nog_nul': 0, 'polls_van_anderen_intussen': {'n': 20, 'p50': 31.054, 'p95': 31.091, 'p99': 31.091, 'max': 31.091, 'status': {'200': 20}}}
+17:48:01 lijst: {"regels_in_ruimte": 200000, "regels_op_site": 208487, "achterstand_voor_veger": 150000, "eerste_lezing_s": 31.62, "status": 200, "na_veger_nog_nul": 0, "polls_van_anderen_intussen": {"n": 20, "p50": 31.054, "p95": 31.091, "p99": 31.091, "max": 31.091, "status": {"200": 20}}, "hele_lijst_vanaf_0_s": 7.47, "paginas": 201, "eerste_pagina": {"n": 10, "p50": 0.069, "p95": 0.075, "p99": 0.075, "max": 0.075}, "lege_pagina_aan_eind": {"n": 10, "p50": 0.018, "p95": 0.018, "p99": 0.018, "max": 0.018}, "stille_ruimte_vanaf_0": {"n": 10, "p50": 0.017, "p95": 0.02, "p99": 0.02, "max": 0.02}}
+{
+ "args": {
+  "aantallen": "100,200,300",
+  "duur": 45.0,
+  "denktijd": 1.0,
+  "lijst": "10000,50000,200000",
+  "zaad": 1,
+  "werk": "/home/aia09/bench-proef/werk/d-last-4werkers"
+ },
+ "werkers": 4,
+ "schrijvers": [
+  {
+   "clients": 100,
+   "looptijd_s": 46.1,
+   "geslaagd": 20,
+   "pogingen": 1855,
+   "geslaagd_per_s": 0.43,
+   "pogingen_per_geslaagde": 92.8,
+   "geweigerd_bij_start": 1535,
+   "geweigerd_bij_klaar": 300,
+   "fouten": 0,
+   "verhongerd": 96,
+   "opslagen_per_client": {
+    "min": 0,
+    "mediaan": 0.0,
+    "max": 7
+   },
+   "langste_reeks_weigeringen": 20,
+   "pogingen_per_opslag": {
+    "n": 20,
+    "p50": 1,
+    "p95": 16,
+    "p99": 16,
+    "max": 16
+   },
+   "aandeel_meer_dan_5_pogingen": 0.15,
+   "wachttijd_tot_opslag_s": {
+    "n": 20,
+    "p50": 1.642,
+    "p95": 36.755,
+    "p99": 36.755,
+    "max": 36.755
+   },
+   "cpu_lastgever_s": 36.2,
+   "verzoeken": {
+    "versies 200": 1935,
+    "download 200": 1935,
+    "upload_start 200": 320,
+    "upload_klaar 200": 20,
+    "upload_klaar 409": 300,
+    "upload_start 409": 1535
+   },
+   "duur_per_methode_s": {
+    "versies": {
+     "n": 1935,
+     "p50": 0.552,
+     "p95": 1.272,
+     "p99": 1.968,
+     "max": 2.223
+    },
+    "download": {
+     "n": 1935,
+     "p50": 0.58,
+     "p95": 0.819,
+     "p99": 1.081,
+     "max": 1.14
+    },
+    "upload_start": {
+     "n": 1855,
+     "p50": 0.554,
+     "p95": 1.014,
+     "p99": 1.17,
+     "max": 2.13
+    },
+    "s3_put": {
+     "n": 320,
+     "p50": 0.149,
+     "p95": 0.448,
+     "p99": 0.502,
+     "max": 0.518
+    },
+    "upload_klaar": {
+     "n": 320,
+     "p50": 1.078,
+     "p95": 2.258,
+     "p99": 2.371,
+     "max": 2.401
+    }
+   }
+  },
+  {
+   "clients": 200,
+   "looptijd_s": 47.9,
+   "geslaagd": 11,
+   "pogingen": 1720,
+   "geslaagd_per_s": 0.23,
+   "pogingen_per_geslaagde": 156.4,
+   "geweigerd_bij_start": 1355,
+   "geweigerd_bij_klaar": 354,
+   "fouten": 0,
+   "verhongerd": 199,
+   "opslagen_per_client": {
+    "min": 0,
+    "mediaan": 0.0,
+    "max": 11
+   },
+   "langste_reeks_weigeringen": 9,
+   "pogingen_per_opslag": {
+    "n": 11,
+    "p50": 1,
+    "p95": 1,
+    "p99": 1,
+    "max": 1
+   },
+   "aandeel_meer_dan_5_pogingen": 0.0,
+   "wachttijd_tot_opslag_s": {
+    "n": 11,
+    "p50": 3.239,
+    "p95": 6.088,
+    "p99": 6.088,
+    "max": 6.088
+   },
+   "cpu_lastgever_s": 38.1,
+   "verzoeken": {
+    "versies 200": 1909,
+    "download 200": 1909,
+    "upload_start 200": 365,
+    "upload_klaar 200": 11,
+    "upload_klaar 409": 354,
+    "upload_start 409": 1355
+   },
+   "duur_per_methode_s": {
+    "versies": {
+     "n": 1909,
+     "p50": 1.156,
+     "p95": 3.218,
+     "p99": 4.764,
+     "max": 5.099
+    },
+    "download": {
+     "n": 1909,
+     "p50": 1.192,
+     "p95": 1.688,
+     "p99": 1.844,
+     "max": 1.901
+    },
+    "upload_start": {
+     "n": 1720,
+     "p50": 1.201,
+     "p95": 1.828,
+     "p99": 2.441,
+     "max": 4.721
+    },
+    "s3_put": {
+     "n": 365,
+     "p50": 0.179,
+     "p95": 0.931,
+     "p99": 0.982,
+     "max": 0.986
+    },
+    "upload_klaar": {
+     "n": 365,
+     "p50": 2.848,
+     "p95": 4.986,
+     "p99": 5.158,
+     "max": 5.194
+    }
+   }
+  },
+  {
+   "clients": 300,
+   "looptijd_s": 49.2,
+   "geslaagd": 7,
+   "pogingen": 1498,
+   "geslaagd_per_s": 0.14,
+   "pogingen_per_geslaagde": 214.0,
+   "geweigerd_bij_start": 1085,
+   "geweigerd_bij_klaar": 406,
+   "fouten": 0,
+   "verhongerd": 299,
+   "opslagen_per_client": {
+    "min": 0,
+    "mediaan": 0.0,
+    "max": 7
+   },
+   "langste_reeks_weigeringen": 6,
+   "pogingen_per_opslag": {
+    "n": 7,
+    "p50": 1,
+    "p95": 1,
+    "p99": 1,
+    "max": 1
+   },
+   "aandeel_meer_dan_5_pogingen": 0.0,
+   "wachttijd_tot_opslag_s": {
+    "n": 7,
+    "p50": 4.804,
+    "p95": 9.356,
+    "p99": 9.356,
+    "max": 9.356
+   },
+   "cpu_lastgever_s": 37.4,
+   "verzoeken": {
+    "versies 200": 1791,
+    "download 200": 1791,
+    "upload_start 200": 413,
+    "upload_klaar 200": 7,
+    "upload_klaar 409": 406,
+    "upload_start 409": 1085
+   },
+   "duur_per_methode_s": {
+    "versies": {
+     "n": 1791,
+     "p50": 1.714,
+     "p95": 5.979,
+     "p99": 7.602,
+     "max": 7.872
+    },
+    "download": {
+     "n": 1791,
+     "p50": 1.824,
+     "p95": 2.341,
+     "p99": 2.438,
+     "max": 2.505
+    },
+    "upload_start": {
+     "n": 1498,
+     "p50": 1.667,
+     "p95": 3.534,
+     "p99": 4.202,
+     "max": 7.517
+    },
+    "s3_put": {
+     "n": 413,
+     "p50": 0.524,
+     "p95": 1.337,
+     "p99": 1.414,
+     "max": 1.519
+    },
+    "upload_klaar": {
+     "n": 413,
+     "p50": 5.676,
+     "p95": 7.902,
+     "p99": 8.012,
+     "max": 8.04
+    }
+   }
+  }
+ ],
+ "doorvoer": [
+  {
+   "clients": 100,
+   "looptijd_s": 45.4,
+   "verzoeken_per_s": 205.8,
+   "polls_per_s": 199.1,
+   "eigen_opslagen_ok": 152,
+   "eigen_opslagen_fout": 0,
+   "cpu_lastgever_s": 40.1,
+   "verzoeken": {
+    "wijzigingen 200": 9031,
+    "upload_start 200": 152,
+    "upload_klaar 200": 152
+   },
+   "duur_per_methode_s": {
+    "wijzigingen": {
+     "n": 9031,
+     "p50": 0.469,
+     "p95": 0.535,
+     "p99": 0.597,
+     "max": 0.652
+    },
+    "upload_start": {
+     "n": 152,
+     "p50": 0.498,
+     "p95": 0.583,
+     "p99": 0.677,
+     "max": 0.738
+    },
+    "s3_put": {
+     "n": 152,
+     "p50": 0.45,
+     "p95": 0.514,
+     "p99": 0.522,
+     "max": 0.537
+    },
+    "upload_klaar": {
+     "n": 152,
+     "p50": 0.525,
+     "p95": 0.596,
+     "p99": 0.626,
+     "max": 0.732
+    }
+   }
+  },
+  {
+   "clients": 200,
+   "looptijd_s": 45.7,
+   "verzoeken_per_s": 202.7,
+   "polls_per_s": 197.2,
+   "eigen_opslagen_ok": 79,
+   "eigen_opslagen_fout": 97,
+   "cpu_lastgever_s": 40.6,
+   "verzoeken": {
+    "wijzigingen 200": 9018,
+    "upload_start 200": 79,
+    "upload_klaar 200": 79,
+    "upload_start 409": 97
+   },
+   "duur_per_methode_s": {
+    "wijzigingen": {
+     "n": 9018,
+     "p50": 0.966,
+     "p95": 1.061,
+     "p99": 1.147,
+     "max": 1.381
+    },
+    "upload_start": {
+     "n": 176,
+     "p50": 0.966,
+     "p95": 1.09,
+     "p99": 1.184,
+     "max": 1.191
+    },
+    "s3_put": {
+     "n": 79,
+     "p50": 0.95,
+     "p95": 1.038,
+     "p99": 1.078,
+     "max": 1.078
+    },
+    "upload_klaar": {
+     "n": 79,
+     "p50": 1.002,
+     "p95": 1.124,
+     "p99": 1.218,
+     "max": 1.218
+    }
+   }
+  },
+  {
+   "clients": 300,
+   "looptijd_s": 46.0,
+   "verzoeken_per_s": 198.9,
+   "polls_per_s": 193.7,
+   "eigen_opslagen_ok": 66,
+   "eigen_opslagen_fout": 107,
+   "cpu_lastgever_s": 41.2,
+   "verzoeken": {
+    "wijzigingen 200": 8908,
+    "upload_start 200": 66,
+    "upload_klaar 200": 66,
+    "upload_start 409": 107
+   },
+   "duur_per_methode_s": {
+    "wijzigingen": {
+     "n": 8908,
+     "p50": 1.475,
+     "p95": 1.63,
+     "p99": 1.903,
+     "max": 2.21
+    },
+    "upload_start": {
+     "n": 173,
+     "p50": 1.485,
+     "p95": 1.725,
+     "p99": 1.971,
+     "max": 2.139
+    },
+    "s3_put": {
+     "n": 66,
+     "p50": 1.463,
+     "p95": 1.516,
+     "p99": 1.649,
+     "max": 1.649
+    },
+    "upload_klaar": {
+     "n": 66,
+     "p50": 1.508,
+     "p95": 1.762,
+     "p99": 2.019,
+     "max": 2.019
+    }
+   }
+  }
+ ],
+ "lijst": [
+  {
+   "regels_in_ruimte": 10000,
+   "regels_op_site": 18487,
+   "achterstand_voor_veger": 9664,
+   "eerste_lezing_s": 2.7,
+   "status": 200,
+   "na_veger_nog_nul": 0,
+   "polls_van_anderen_intussen": {
+    "n": 20,
+    "p50": 2.151,
+    "p95": 2.173,
+    "p99": 2.173,
+    "max": 2.173,
+    "status": {
+     "200": 20
+    }
+   },
+   "hele_lijst_vanaf_0_s": 0.4,
+   "paginas": 11,
+   "eerste_pagina": {
+    "n": 10,
+    "p50": 0.064,
+    "p95": 0.072,
+    "p99": 0.072,
+    "max": 0.072
+   },
+   "lege_pagina_aan_eind": {
+    "n": 10,
+    "p50": 0.014,
+    "p95": 0.019,
+    "p99": 0.019,
+    "max": 0.019
+   },
+   "stille_ruimte_vanaf_0": {
+    "n": 10,
+    "p50": 0.017,
+    "p95": 0.019,
+    "p99": 0.019,
+    "max": 0.019
+   }
+  },
+  {
+   "regels_in_ruimte": 50000,
+   "regels_op_site": 58487,
+   "achterstand_voor_veger": 40000,
+   "eerste_lezing_s": 9.0,
+   "status": 200,
+   "na_veger_nog_nul": 0,
+   "polls_van_anderen_intussen": {
+    "n": 20,
+    "p50": 8.447,
+    "p95": 8.473,
+    "p99": 8.473,
+    "max": 8.473,
+    "status": {
+     "200": 20
+    }
+   },
+   "hele_lijst_vanaf_0_s": 1.74,
+   "paginas": 51,
+   "eerste_pagina": {
+    "n": 10,
+    "p50": 0.068,
+    "p95": 0.084,
+    "p99": 0.084,
+    "max": 0.084
+   },
+   "lege_pagina_aan_eind": {
+    "n": 10,
+    "p50": 0.017,
+    "p95": 0.019,
+    "p99": 0.019,
+    "max": 0.019
+   },
+   "stille_ruimte_vanaf_0": {
+    "n": 10,
+    "p50": 0.018,
+    "p95": 0.019,
+    "p99": 0.019,
+    "max": 0.019
+   }
+  },
+  {
+   "regels_in_ruimte": 200000,
+   "regels_op_site": 208487,
+   "achterstand_voor_veger": 150000,
+   "eerste_lezing_s": 31.62,
+   "status": 200,
+   "na_veger_nog_nul": 0,
+   "polls_van_anderen_intussen": {
+    "n": 20,
+    "p50": 31.054,
+    "p95": 31.091,
+    "p99": 31.091,
+    "max": 31.091,
+    "status": {
+     "200": 20
+    }
+   },
+   "hele_lijst_vanaf_0_s": 7.47,
+   "paginas": 201,
+   "eerste_pagina": {
+    "n": 10,
+    "p50": 0.069,
+    "p95": 0.075,
+    "p99": 0.075,
+    "max": 0.075
+   },
+   "lege_pagina_aan_eind": {
+    "n": 10,
+    "p50": 0.018,
+    "p95": 0.018,
+    "p99": 0.018,
+    "max": 0.018
+   },
+   "stille_ruimte_vanaf_0": {
+    "n": 10,
+    "p50": 0.017,
+    "p95": 0.02,
+    "p99": 0.02,
+    "max": 0.02
+   }
+  }
+ ]
+}
+EXIT:0
