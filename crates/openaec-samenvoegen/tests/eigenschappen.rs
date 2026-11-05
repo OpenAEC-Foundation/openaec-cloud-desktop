@@ -1930,3 +1930,46 @@ fn nieuwe_set_volgt_de_tijdstempel_van_hun() {
         }
     }
 }
+
+// --- Hoe de gevallen eruitzien. ---
+
+/// Geen eigenschap: telt over gegenereerde gevallen hoe vaak een samenvoeging lukt, hoe vaak o;h ≡ h;o, en welke
+/// stappen voorkomen. Zo is te zien hoeveel de eigenschappen hierboven echt toetsen. Draaien met
+/// `cargo test --test eigenschappen verdeling -- --ignored --nocapture`.
+#[test]
+#[ignore = "meting, geen eigenschap"]
+fn verdeling_van_de_gevallen() {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+    let gevallen: usize = std::env::var("PROPTEST_CASES").ok().and_then(|x| x.parse().ok()).unwrap_or(128);
+    let mut runner = TestRunner::deterministic();
+    let strategie = (bron(), reeks(), reeks());
+    let mut tel: BTreeMap<String, usize> = BTreeMap::new();
+    let mut stappen: BTreeMap<String, usize> = BTreeMap::new();
+    for _ in 0..gevallen {
+        let (bron, so, sh) = strategie.new_tree(&mut runner).unwrap().current();
+        let b = tekst_van(bron);
+        let (o, h) = (versie(b, &so, 'O'), versie(b, &sh, 'H'));
+        for s in o.stappen.iter().chain(&h.stappen) {
+            *stappen.entry(format!("{s:?}").split([' ', '{']).next().unwrap().to_string()).or_default() += 1;
+        }
+        let u = samen(b, &o.tekst, &h.tekst).unwrap_or_else(|e| panic!("{e}"));
+        let soort = match (&u.r, o.stappen.is_empty() || h.stappen.is_empty()) {
+            (Some(_), true) => "gelukt, een kant deed niets".to_string(),
+            (Some(_), false) => "gelukt, beide kanten deden iets".to_string(),
+            (None, _) => format!("conflict: {:?}", u.conflicten.first().map(|c| c.soort)),
+        };
+        *tel.entry(format!("{bron:?}: {soort}")).or_default() += 1;
+        *tel.entry(soort).or_default() += 1;
+        let commuteert = orakel(b, &o.stappen, &h.stappen).unwrap().is_some();
+        *tel.entry(format!("o;h ≡ h;o: {commuteert}")).or_default() += 1;
+    }
+    println!("{gevallen} gevallen");
+    for (k, v) in &tel {
+        println!("  {v:>4}  {k}");
+    }
+    println!("stappen:");
+    for (k, v) in &stappen {
+        println!("  {v:>4}  {k}");
+    }
+}
