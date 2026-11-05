@@ -1,0 +1,450 @@
+//! Hulpmiddelen voor de tests: testbestanden lezen, kleine IFC-bestanden maken, tekst vervangen en opnieuw nummeren.
+#![allow(dead_code)]
+
+use std::collections::HashMap;
+use std::path::Path;
+
+/// Een testbestand uit `tests/bestanden`.
+pub fn bestand(naam: &str) -> String {
+    let pad = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/bestanden").join(naam);
+    std::fs::read_to_string(&pad).unwrap_or_else(|e| panic!("{}: {e}", pad.display()))
+}
+
+/// Alle testbestanden.
+pub fn alle_bestanden() -> Vec<(&'static str, String)> {
+    [
+        "showcase-groot-terrein-onderaannemer.ifc",
+        "13-supermarkt-albert-heijn.ifc",
+        "05-brugvervanging-n279.ifc",
+        "ifc2x3-building-architecture.ifc",
+        "ifc4-wall-with-opening-and-window.ifc",
+        "ifc4-tessellation-with-individual-colors.ifc",
+    ]
+    .into_iter()
+    .map(|n| (n, bestand(n)))
+    .collect()
+}
+
+/// Een klein IFC-bestand met deze DATA-regels.
+pub fn ifc(schema: &str, data: &str) -> String {
+    format!(
+        "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [CoordinationView]'),'2;1');\nFILE_NAME('test.ifc','2026-11-05T10:00:00',('Anne'),('Bouw BV'),'test','test','');\nFILE_SCHEMA(('{schema}'));\nENDSEC;\nDATA;\n{data}\nENDSEC;\nEND-ISO-10303-21;\n"
+    )
+}
+
+/// Vervangt `van` door `naar`; `van` moet precies één keer voorkomen.
+pub fn vervang(tekst: &str, van: &str, naar: &str) -> String {
+    let aantal = tekst.matches(van).count();
+    assert_eq!(aantal, 1, "'{van}' komt {aantal} keer voor");
+    tekst.replacen(van, naar, 1)
+}
+
+/// De regel die met `begin` begint (bijv. `#52=`), zonder regeleinde.
+pub fn regel<'t>(tekst: &'t str, begin: &str) -> &'t str {
+    tekst.lines().find(|r| r.starts_with(begin)).unwrap_or_else(|| panic!("geen regel {begin}"))
+}
+
+/// Het regeleinde van `tekst`: `\r\n` (Windows) of `\n`.
+pub fn regeleinde(tekst: &str) -> &'static str {
+    if tekst.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+/// Voegt regels toe vlak voor de ENDSEC van de DATA-sectie, met het regeleinde van `tekst`.
+pub fn voeg_toe(tekst: &str, regels: &str) -> String {
+    let nl = regeleinde(tekst);
+    let plek = tekst.rfind("ENDSEC;").unwrap();
+    let regels = regels.trim_end().replace("\r\n", "\n").replace('\n', nl);
+    format!("{}{regels}{nl}{}", &tekst[..plek], &tekst[plek..])
+}
+
+/// Verwijdert de regel die met `begin` begint, met zijn regeleinde.
+pub fn verwijder_regel(tekst: &str, begin: &str) -> String {
+    let r = regel(tekst, begin).to_string();
+    vervang(tekst, &format!("{r}{}", regeleinde(tekst)), "")
+}
+
+/// `tekst` met `\r\n` als regeleinde, zoals veel Windows-programma's schrijven.
+pub fn met_crlf(tekst: &str) -> String {
+    tekst.replace("\r\n", "\n").replace('\n', "\r\n")
+}
+
+/// Een kleine, voorspelbare toevalsgenerator (xorshift).
+pub struct Toeval(u64);
+
+impl Toeval {
+    pub fn nieuw(zaad: u64) -> Self {
+        Toeval(zaad.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    pub fn volgende(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    pub fn schud<T>(&mut self, lijst: &mut [T]) {
+        for i in (1..lijst.len()).rev() {
+            let j = (self.volgende() % (i as u64 + 1)) as usize;
+            lijst.swap(i, j);
+        }
+    }
+}
+
+/// Splitst de DATA-sectie in instanties (op `;` buiten teksten); commentaar valt weg.
+fn instanties(data: &str) -> Vec<String> {
+    let mut uit = Vec::new();
+    let mut huidig = String::new();
+    let mut in_tekst = false;
+    let mut tekens = data.chars().peekable();
+    while let Some(c) = tekens.next() {
+        huidig.push(c);
+        if in_tekst {
+            if c == '\'' {
+                if tekens.peek() == Some(&'\'') {
+                    huidig.push(tekens.next().unwrap());
+                } else {
+                    in_tekst = false;
+                }
+            }
+        } else if c == '\'' {
+            in_tekst = true;
+        } else if c == '/' && tekens.peek() == Some(&'*') {
+            // Commentaar valt weg.
+            huidig.pop();
+            tekens.next();
+            let mut vorige = ' ';
+            for d in tekens.by_ref() {
+                if vorige == '*' && d == '/' {
+                    break;
+                }
+                vorige = d;
+            }
+        } else if c == ';' {
+            huidig.pop();
+            let stuk = huidig.trim().to_string();
+            if !stuk.is_empty() {
+                uit.push(stuk);
+            }
+            huidig.clear();
+        }
+    }
+    uit
+}
+
+/// Vervangt elk `#n` buiten teksten via `tabel`.
+fn vervang_nummers(instantie: &str, tabel: &HashMap<u64, u64>) -> String {
+    let mut uit = String::with_capacity(instantie.len());
+    let mut in_tekst = false;
+    let tekens: Vec<char> = instantie.chars().collect();
+    let mut i = 0;
+    while i < tekens.len() {
+        let c = tekens[i];
+        if in_tekst {
+            uit.push(c);
+            if c == '\'' {
+                if tekens.get(i + 1) == Some(&'\'') {
+                    uit.push('\'');
+                    i += 1;
+                } else {
+                    in_tekst = false;
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            in_tekst = true;
+            uit.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '#' {
+            let mut j = i + 1;
+            while j < tekens.len() && tekens[j].is_ascii_digit() {
+                j += 1;
+            }
+            let nummer: u64 = tekens[i + 1..j].iter().collect::<String>().parse().unwrap();
+            uit.push_str(&format!("#{}", tabel[&nummer]));
+            i = j;
+            continue;
+        }
+        uit.push(c);
+        i += 1;
+    }
+    uit
+}
+
+/// Nummert alle instanties willekeurig opnieuw en zet ze in een willekeurige volgorde. De inhoud blijft gelijk.
+pub fn hernummer(tekst: &str, zaad: u64) -> String {
+    let begin = tekst.find("DATA;").unwrap() + "DATA;".len();
+    let eind = tekst.rfind("ENDSEC;").unwrap();
+    let mut lijst = instanties(&tekst[begin..eind]);
+    let mut toeval = Toeval::nieuw(zaad);
+    let mut nieuw: Vec<u64> = (1..=lijst.len() as u64).map(|n| n * 3 + 7).collect();
+    toeval.schud(&mut nieuw);
+    let mut tabel = HashMap::new();
+    for (inst, n) in lijst.iter().zip(&nieuw) {
+        let nummer: u64 = inst[1..inst.find('=').unwrap()].trim().parse().unwrap();
+        tabel.insert(nummer, *n);
+    }
+    let mut regels: Vec<String> = lijst.iter_mut().map(|i| format!("{};", vervang_nummers(i, &tabel))).collect();
+    toeval.schud(&mut regels);
+    format!("{}\n{}\n{}", &tekst[..begin], regels.join("\n"), &tekst[eind..])
+}
+
+/// De drie schema's die we kennen.
+pub const SCHEMAS: [&str; 3] = ["IFC2X3", "IFC4", "IFC4X3_ADD2"];
+
+/// Een GlobalId van 22 tekens uit een korte naam (aangevuld met nullen).
+pub fn gid(naam: &str) -> String {
+    assert!(naam.len() <= 21);
+    format!("0{naam:0<21}")
+}
+
+/// Een klein gebouw dat in IFC2X3, IFC4 en IFC4X3 geldig is: verdiepingen P en Q met elk een eigen plaatsing met
+/// dezelfde inhoud, wanden W en V (IfcBuildingElementProxy) die relatief aan de plaatsing van P staan en in P zitten,
+/// en een eigenschappenset met Brandwerendheid = 30 voor W en V.
+pub fn gebouw(schema: &str) -> String {
+    let data = format!(
+        "#1=IFCPERSON($,'Anne',$,$,$,$,$,$);
+#2=IFCORGANIZATION($,'Bouw BV',$,$,$);
+#3=IFCPERSONANDORGANIZATION(#1,#2,$);
+#4=IFCAPPLICATION(#2,'1.0','Test','Test');
+#5=IFCOWNERHISTORY(#3,#4,$,.NOCHANGE.,$,$,$,1700000000);
+#6=IFCPROJECT('{project}',#5,'Project',$,$,$,$,(#7),#8);
+#7=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#11,$);
+#8=IFCUNITASSIGNMENT((#9));
+#9=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);
+#10=IFCCARTESIANPOINT((0.,0.,0.));
+#11=IFCAXIS2PLACEMENT3D(#10,$,$);
+#20=IFCLOCALPLACEMENT($,#21);
+#21=IFCAXIS2PLACEMENT3D(#22,$,$);
+#22=IFCCARTESIANPOINT((0.,0.,0.));
+#23=IFCLOCALPLACEMENT($,#24);
+#24=IFCAXIS2PLACEMENT3D(#25,$,$);
+#25=IFCCARTESIANPOINT((0.,0.,0.));
+#30=IFCBUILDINGSTOREY('{p}',#5,'P',$,$,#20,$,$,.ELEMENT.,0.);
+#31=IFCBUILDINGSTOREY('{q}',#5,'Q',$,$,#23,$,$,.ELEMENT.,0.);
+#32=IFCRELAGGREGATES('{aggr}',#5,$,$,#6,(#30,#31));
+#40=IFCLOCALPLACEMENT(#20,#41);
+#41=IFCAXIS2PLACEMENT3D(#42,$,$);
+#42=IFCCARTESIANPOINT((1.,0.,0.));
+#43=IFCBUILDINGELEMENTPROXY('{w}',#5,'W',$,$,#40,$,$,$);
+#44=IFCBUILDINGELEMENTPROXY('{v}',#5,'V',$,$,#45,$,$,$);
+#45=IFCLOCALPLACEMENT(#20,#46);
+#46=IFCAXIS2PLACEMENT3D(#47,$,$);
+#47=IFCCARTESIANPOINT((2.,0.,0.));
+#50=IFCRELCONTAINEDINSPATIALSTRUCTURE('{bevat}',#5,$,$,(#43,#44),#30);
+#60=IFCPROPERTYSINGLEVALUE('Brandwerendheid',$,IFCINTEGER(30),$);
+#61=IFCPROPERTYSET('{pset}',#5,'Pset_Test',$,(#60));
+#62=IFCRELDEFINESBYPROPERTIES('{defs}',#5,$,$,(#43,#44),#61);",
+        project = gid("Project"),
+        p = gid("StoreyP"),
+        q = gid("StoreyQ"),
+        aggr = gid("Aggr"),
+        w = gid("WandW"),
+        v = gid("WandV"),
+        bevat = gid("BevatP"),
+        pset = gid("Pset"),
+        defs = gid("Defs"),
+    );
+    ifc(schema, &data)
+}
+
+/// Een tweede context met dezelfde inhoud als #7, en een die anders is.
+pub const GELIJK: &str = "#70=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05,#11,$);";
+pub const ANDERS: &str = "#70=IFCGEOMETRICREPRESENTATIONCONTEXT('Other','Model',3,1.E-05,#11,$);";
+
+/// Het gebouw met een vorm voor W en V, elk in een eigen subcontext (#74 en #75). Met `tweede` heeft het project
+/// twee contexten (#7,#70) en hangt V aan #70; zonder hangen W en V allebei aan #7.
+pub fn met_contexten(schema: &str, tweede: Option<&str>) -> String {
+    let t = vervang(&gebouw(schema), "'W',$,$,#40,$,", "'W',$,$,#40,#73,");
+    let t = vervang(&t, "'V',$,$,#45,$,", "'V',$,$,#45,#78,");
+    let t = match tweede {
+        Some(context) => voeg_toe(&vervang(&t, ",(#7),#8);", ",(#7,#70),#8);"), context),
+        None => t,
+    };
+    let ouder_v = if tweede.is_some() { "#70" } else { "#7" };
+    voeg_toe(
+        &t,
+        &format!(
+            "#71=IFCPOLYLINE((#10,#42));\n\
+             #72=IFCSHAPEREPRESENTATION(#74,'Axis','Curve3D',(#71));\n\
+             #73=IFCPRODUCTDEFINITIONSHAPE($,$,(#72));\n\
+             #74=IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*,#7,$,.MODEL_VIEW.,$);\n\
+             #75=IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Axis','Model',*,*,*,*,{ouder_v},$,.MODEL_VIEW.,$);\n\
+             #76=IFCPOLYLINE((#10,#47));\n\
+             #77=IFCSHAPEREPRESENTATION(#75,'Axis','Curve3D',(#76));\n\
+             #78=IFCPRODUCTDEFINITIONSHAPE($,$,(#77));"
+        ),
+    )
+}
+
+/// Los nagegaan: de context waar de vorm van object `naam` (via zijn subcontext) aan hangt.
+pub fn context_van(f: &Feiten, naam: &str) -> u64 {
+    let vorm = f.verwijzingen(f.verwijzing(f.met_globalid(&gid(naam)), 6), 2)[0];
+    f.verwijzing(f.verwijzing(vorm, 0), 6)
+}
+
+// --- Een losse lezer voor feiten in een resultaat. ---
+
+/// Een eenvoudige lezer voor de tests: per `#n` het type en de attributen als tekst. Hij deelt geen code met de
+/// bibliotheek. Zo gaat een test een feit na ("W is rood", "V heeft een eigen plaatsing") los van de vergelijker.
+/// Complexe instanties (`#n=(A()B());`) slaat hij over.
+pub struct Feiten {
+    instanties: HashMap<u64, (String, Vec<String>)>,
+}
+
+/// Splitst op komma's op het bovenste niveau, buiten teksten en haakjes.
+fn splits(tekst: &str) -> Vec<String> {
+    let mut uit = Vec::new();
+    let mut huidig = String::new();
+    let (mut diepte, mut in_tekst) = (0usize, false);
+    for c in tekst.chars() {
+        match c {
+            '\'' => in_tekst = !in_tekst,
+            '(' if !in_tekst => diepte += 1,
+            ')' if !in_tekst => diepte -= 1,
+            ',' if !in_tekst && diepte == 0 => {
+                uit.push(huidig.trim().to_string());
+                huidig.clear();
+                continue;
+            }
+            _ => {}
+        }
+        huidig.push(c);
+    }
+    if !huidig.trim().is_empty() || !uit.is_empty() {
+        uit.push(huidig.trim().to_string());
+    }
+    uit
+}
+
+/// De nummers `#n` in `tekst`, buiten teksten.
+fn nummers(tekst: &str) -> Vec<u64> {
+    let mut uit = Vec::new();
+    let mut in_tekst = false;
+    let tekens: Vec<char> = tekst.chars().collect();
+    let mut i = 0;
+    while i < tekens.len() {
+        match tekens[i] {
+            '\'' => in_tekst = !in_tekst,
+            '#' if !in_tekst => {
+                let j = (i + 1..tekens.len()).find(|&j| !tekens[j].is_ascii_digit()).unwrap_or(tekens.len());
+                uit.push(tekens[i + 1..j].iter().collect::<String>().parse().unwrap());
+                i = j;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    uit
+}
+
+impl Feiten {
+    pub fn lees(tekst: &str) -> Self {
+        let begin = tekst.find("DATA;").unwrap() + "DATA;".len();
+        let eind = tekst.rfind("ENDSEC;").unwrap();
+        let mut lijst = HashMap::new();
+        for inst in instanties(&tekst[begin..eind]) {
+            let (nummer, rest) = inst.split_once('=').unwrap();
+            let n: u64 = nummer.trim().trim_start_matches('#').parse().unwrap();
+            let rest = rest.trim();
+            let Some(haakje) = rest.find('(').filter(|&h| h > 0) else { continue };
+            let binnen = &rest[haakje + 1..rest.rfind(')').unwrap()];
+            lijst.insert(n, (rest[..haakje].trim().to_ascii_uppercase(), splits(binnen)));
+        }
+        Feiten { instanties: lijst }
+    }
+
+    /// Het type van `#n`, in hoofdletters.
+    pub fn type_van(&self, n: u64) -> &str {
+        &self.instanties[&n].0
+    }
+
+    /// Attribuut `j` van `#n`, als tekst.
+    pub fn attr(&self, n: u64, j: usize) -> &str {
+        &self.instanties[&n].1[j]
+    }
+
+    /// Attribuut `j` van `#n` is één verwijzing; dit is het nummer.
+    pub fn verwijzing(&self, n: u64, j: usize) -> u64 {
+        let w = self.attr(n, j);
+        w.strip_prefix('#').and_then(|x| x.parse().ok()).unwrap_or_else(|| panic!("#{n}.{j} = {w}"))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst; dit zijn de elementen.
+    pub fn lijst(&self, n: u64, j: usize) -> Vec<String> {
+        let w = self.attr(n, j);
+        splits(w.strip_prefix('(').and_then(|x| x.strip_suffix(')')).unwrap_or_else(|| panic!("#{n}.{j} = {w}")))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst van verwijzingen.
+    pub fn verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        self.lijst(n, j).iter().map(|e| e.trim_start_matches('#').parse().unwrap()).collect()
+    }
+
+    /// Het object met deze GlobalId (precies één).
+    pub fn met_globalid(&self, globalid: &str) -> u64 {
+        let tekst = format!("'{globalid}'");
+        let lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (_, a))| a.first() == Some(&tekst)).map(|(&n, _)| n).collect();
+        assert_eq!(lijst.len(), 1, "{globalid}: {lijst:?}");
+        lijst[0]
+    }
+
+    /// De instanties van dit type (in hoofdletters), op nummer.
+    pub fn van_type(&self, type_naam: &str) -> Vec<u64> {
+        let mut lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (t, _))| t == type_naam).map(|(&n, _)| n).collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De instanties van dit type die in attribuut `j` naar `#doel` verwijzen (ook in een lijst), op nummer.
+    pub fn naar(&self, type_naam: &str, j: usize, doel: u64) -> Vec<u64> {
+        self.van_type(type_naam).into_iter().filter(|&n| nummers(self.attr(n, j)).contains(&doel)).collect()
+    }
+
+    /// Alle nummers, oplopend.
+    pub fn nummers(&self) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self.instanties.keys().copied().collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// Het type en de attributen van `#n`, als die er is.
+    pub fn instantie(&self, n: u64) -> Option<&(String, Vec<String>)> {
+        self.instanties.get(&n)
+    }
+
+    /// Alle `#k` in attribuut `j` van `#n` (ook in een getypte waarde of een geneste lijst).
+    pub fn alle_verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        nummers(self.attr(n, j))
+    }
+
+    /// De instanties die in een attribuut naar `#doel` verwijzen, op nummer.
+    pub fn verwijzers(&self, doel: u64) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self
+            .instanties
+            .iter()
+            .filter(|(_, (_, a))| a.iter().any(|w| nummers(w).contains(&doel)))
+            .map(|(&n, _)| n)
+            .collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De GlobalId van `#n` als het een object is: het eerste attribuut is een tekst van 22 tekens.
+    pub fn globalid(&self, n: u64) -> Option<String> {
+        let eerste = self.instanties.get(&n)?.1.first()?;
+        let binnen = eerste.strip_prefix('\'')?.strip_suffix('\'')?;
+        (binnen.len() == 22).then(|| binnen.to_string())
+    }
+}
