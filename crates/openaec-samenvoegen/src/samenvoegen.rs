@@ -6,23 +6,27 @@
 //!   Anders: een SET (of BAG) van verwijzingen voegen we samen (wat erbij kwam en wat eraf ging, van beide kanten),
 //!   eigenschappen en hoeveelheden per naam; al het andere is een conflict.
 //! - De ene kant verwijderde, de andere wijzigde: conflict. Beide voegden hetzelfde object anders toe: conflict.
-//! - Na het samenvoegen controleren we: verwijzingen naar verwijderde objecten, INVERSE-bovengrenzen, de grenzen van
-//!   aggregaten, koppelingen met definities, de boom (geen kring, niets raakt los van het project) en of het
-//!   geschreven resultaat inhoudelijk is wat we bedoelden (zelfcontrole). Elk probleem is een conflict.
-//! - Een onbekend schema of een geval dat we niet kennen: conflict, geen samenvoeging.
+//!   Beide vervingen dezelfde relatie door een nieuwe met een andere GlobalId: conflict.
+//! - Vluchtige velden ([`crate::schema::VLUCHTIG`], de tijdstempel in FILE_NAME) geven nooit een conflict: wijzigde
+//!   alleen hun het veld, dan de waarde van hun, anders die van ons.
+//! - Na het samenvoegen controleren we: verwijzingen naar verwijderde objecten, INVERSE-bovengrenzen (ook bij
+//!   knopen, bijv. twee stijlen op één vorm), de grenzen van aggregaten, koppelingen met definities, de boom (geen
+//!   kring, niets raakt los van het project), geen kring in de plaatsingen, en of het geschreven resultaat
+//!   inhoudelijk is wat we bedoelden (zelfcontrole). Elk probleem is een conflict.
+//! - Een onbekend schema, een ander schema in FILE_SCHEMA of een geval dat we niet kennen: conflict, geen
+//!   samenvoeging.
 //!
-//! Met `bij_conflict` = `ons` of `hun` wint die kant per conflict; het rapport noemt de conflicten toch. Een conflict
-//! dat pas na het schrijven blijkt, lossen we op door de betrokken objecten in hun geheel van de winnende kant te
-//! nemen, en dan opnieuw te schrijven en te controleren (hoogstens [`MAX_RONDES`] keer).
+//! Bij een conflict is er geen resultaat, wel het rapport (K4). Er is geen modus "ons wint" of "hun wint": die
+//! verliest ook werk van de andere kant dat niet botst.
 
 use std::collections::{HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::koppelregel::koppelregel;
 use crate::model::{
-    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, op_sleutel, Hash, Model, Soort,
-    VersieStatistiek, HEADER_VELDEN,
+    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, ongeordend_hash, op_sleutel,
+    stem_ankers_af, Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::ontleden::{elementen, Token, Tokens};
 use crate::schema::Aggregaat;
@@ -34,36 +38,6 @@ use crate::Fout;
 pub(crate) const B: usize = 0;
 pub(crate) const O: usize = 1;
 pub(crate) const H: usize = 2;
-const KANTEN: [Kant; 3] = [Kant::Basis, Kant::Ons, Kant::Hun];
-
-/// Zo vaak schrijven en controleren we hoogstens als `bij_conflict` ons of hun is.
-pub const MAX_RONDES: usize = 8;
-
-/// Wat er gebeurt bij een conflict.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum BijConflict {
-    /// Geen resultaat, wel het rapport (standaard).
-    #[default]
-    Weiger,
-    /// Ons wint per conflict.
-    Ons,
-    /// Hun wint per conflict.
-    Hun,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Opties {
-    pub bij_conflict: BijConflict,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kant {
-    Basis,
-    Ons,
-    Hun,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,9 +48,11 @@ pub enum ConflictSoort {
     VerwijderdEnGewijzigd,
     /// Beide kanten voegden een object met dezelfde GlobalId toe, met een andere inhoud.
     BeideToegevoegd,
+    /// Beide kanten vervingen dezelfde relatie door een nieuwe, met een andere GlobalId.
+    RelatieVervangen,
     /// Na het samenvoegen wijst iets naar een object dat er niet meer is.
     VerwijzingNaarVerwijderd,
-    /// Na het samenvoegen heeft een object meer relaties dan een INVERSE-bovengrens toestaat.
+    /// Na het samenvoegen heeft een object of knoop meer relaties dan een INVERSE-bovengrens toestaat.
     TeVeelRelaties,
     /// Een aggregaat valt buiten de grenzen uit het schema (bijv. een lege `RelatedElements`).
     BuitenGrenzen,
@@ -84,13 +60,15 @@ pub enum ConflictSoort {
     KoppelingVerdwenen,
     /// Een kring in de boom, of een object dat los raakte van het project.
     Boom,
+    /// Een kring in de plaatsingen (`PlacementRelTo`).
+    PlaatsingKring,
     /// Een gedeelde ankerknoop is in het resultaat niet eenduidig.
     GedeeldAnker,
     /// Beide kanten wijzigden dezelfde losse knopen (bijv. een kleur) anders.
     LosseKnopen,
     /// Beide kanten wijzigden hetzelfde veld in de HEADER anders.
     Header,
-    /// Een schema of geval dat de bibliotheek niet kent.
+    /// Een schema of geval dat de bibliotheek niet kent, of versies met een ander schema.
     NietOndersteund,
     /// Het geschreven resultaat is inhoudelijk niet wat we bedoelden.
     Zelfcontrole,
@@ -115,9 +93,6 @@ pub struct Conflict {
     pub hun: Option<String>,
     /// Wat er aan de hand is, in gewone taal.
     pub melding: String,
-    /// Bij `bij_conflict` ons of hun: de kant die won.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gekozen: Option<Kant>,
 }
 
 impl Conflict {
@@ -132,7 +107,6 @@ impl Conflict {
             ons: None,
             hun: None,
             melding: melding.into(),
-            gekozen: None,
         }
     }
 
@@ -163,7 +137,7 @@ pub struct SamenvoegStatistiek {
     pub objecten_van_ons: usize,
     /// Objecten die we in hun geheel van hun nemen (gewijzigd of toegevoegd door hun).
     pub objecten_van_hun: usize,
-    /// Objecten die beide kanten wijzigden en die we per attribuut samenvoegden.
+    /// Objecten die beide kanten wijzigden en die we per attribuut samenvoegden (ook voor een vluchtig veld).
     pub objecten_samengevoegd: usize,
     /// Objecten die er na het samenvoegen niet meer zijn (verwijderd door een kant of door beide).
     pub objecten_verwijderd: usize,
@@ -173,14 +147,12 @@ pub struct SamenvoegStatistiek {
     pub instanties_herschreven: usize,
     /// Regels van ons die we weghaalden.
     pub instanties_verwijderd: usize,
-    /// Hoe vaak we schreven en controleerden.
-    pub rondes: usize,
 }
 
 /// De uitkomst van [`voeg_samen`].
 #[derive(Debug, Clone, Serialize)]
 pub struct Samenvoeging {
-    /// Het samengevoegde bestand; None als er een conflict is dat niet opgelost mocht of kon worden.
+    /// Het samengevoegde bestand; None als er een conflict is.
     #[serde(skip)]
     pub inhoud: Option<Vec<u8>>,
     /// Is er een resultaat?
@@ -189,9 +161,8 @@ pub struct Samenvoeging {
     pub statistiek: SamenvoegStatistiek,
 }
 
-/// Conflicten met de sleutels (in het plan) van de objecten die erbij horen. Met `bij_conflict` = ons of hun nemen
-/// we die objecten in hun geheel van de winnende kant.
-pub(crate) type Gevonden = Vec<(Conflict, Vec<usize>)>;
+/// Conflicten die een controle of het schrijven vond.
+pub(crate) type Gevonden = Vec<Conflict>;
 
 /// Wat er met een object gebeurt.
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +199,11 @@ pub(crate) struct Plan {
     pub groepen: Vec<(Hash, usize)>,
     /// Per HEADER-parameter (regel, index) die van een andere kant dan ons komt: die kant.
     pub header: HashMap<(&'static str, usize), usize>,
+    /// Vluchtige velden van knopen (bijv. IfcOwnerHistory) die van hun komen: de knoop van ons, die van hun, en
+    /// de attributen.
+    pub knoop_vluchtig: Vec<(u32, u32, Vec<usize>)>,
+    /// Wat elk vluchtig veld in het resultaat moet zijn (voor de zelfcontrole).
+    pub vluchtig_verwacht: HashMap<Vluchtig, Hash>,
 }
 
 impl Plan {
@@ -236,16 +212,61 @@ impl Plan {
     }
 }
 
-fn winnaar(opties: &Opties) -> Option<usize> {
-    match opties.bij_conflict {
-        BijConflict::Weiger => None,
-        BijConflict::Ons => Some(O),
-        BijConflict::Hun => Some(H),
+/// Een vluchtig veld: van een object (sleutel, attribuut), van een ankerknoop (identiteit, attribuut) of van de
+/// HEADER.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Vluchtig {
+    Object(String, usize),
+    Knoop(Hash, usize),
+    Header(&'static str, usize),
+}
+
+/// De vluchtige velden van een versie met de hash van hun waarde, en bij een knoop de instantie.
+fn vluchtige_velden(m: &Model) -> HashMap<Vluchtig, (Hash, Option<u32>)> {
+    let mut uit = HashMap::new();
+    for object in &m.objecten {
+        let i = object.inst as usize;
+        let Some(e) = m.entiteit(i) else { continue };
+        for (j, a) in e.attributen.iter().enumerate() {
+            if a.vluchtig {
+                let h = m.waarde_hash(attribuut_tekst(m, i, j), true);
+                uit.insert(Vluchtig::Object(object.sleutel.clone(), j), (h, None));
+            }
+        }
+    }
+    for (k, anker) in m.anker_id.iter().enumerate() {
+        let (Some(a), Some(e)) = (anker, m.entiteit(k)) else { continue };
+        for (j, attr) in e.attributen.iter().enumerate() {
+            if attr.vluchtig {
+                let h = m.waarde_hash(attribuut_tekst(m, k, j), false);
+                uit.insert(Vluchtig::Knoop(*a, j), (h, Some(k as u32)));
+            }
+        }
+    }
+    for &(regel, velden) in HEADER_VELDEN {
+        for j in 0..velden.len() {
+            if header_vluchtig(regel, j) {
+                if let Some((h, _)) = m.header_parameter(regel, j) {
+                    uit.insert(Vluchtig::Header(regel, j), (h, None));
+                }
+            }
+        }
+    }
+    uit
+}
+
+/// De regel voor een vluchtig veld: wijzigde alleen hun het, dan hun; anders ons.
+fn vluchtige_kant(b: Option<Hash>, o: Hash, h: Hash) -> usize {
+    if b == Some(o) && h != o {
+        H
+    } else {
+        O
     }
 }
 
-/// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen.
-pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8], opties: &Opties) -> Result<Samenvoeging, Fout> {
+/// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen. Bij een conflict is er geen resultaat,
+/// wel een rapport.
+pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, Fout> {
     let (mb, mo, mh) = std::thread::scope(|s| {
         let b = s.spawn(|| Model::lees(basis));
         let h = s.spawn(|| Model::lees(hun));
@@ -255,6 +276,15 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8], opties: &Opties) -> Resu
     });
     let (mut mb, mut mo, mut mh) = (mb?, mo?, mh?);
     let gekoppeld = koppel_relaties(&mb, &mut mo) + koppel_relaties(&mb, &mut mh);
+    markeer_gemeen(&mut [&mut mb, &mut mo, &mut mh]);
+    std::thread::scope(|s| {
+        s.spawn(|| mb.bereken_puur());
+        s.spawn(|| mh.bereken_puur());
+        mo.bereken_puur();
+    });
+    // Een anker in een SET dat aan één kant een andere inhoud kreeg, houdt de positie van de basis.
+    stem_ankers_af(&mb, &mut mo);
+    stem_ankers_af(&mb, &mut mh);
     std::thread::scope(|s| {
         s.spawn(|| mb.bereken());
         s.spawn(|| mh.bereken());
@@ -274,129 +304,80 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8], opties: &Opties) -> Resu
     if !conflicten.is_empty() {
         return mislukt(conflicten, statistiek);
     }
-    let mut conflicten = Vec::new();
-    let mut plan = besluit(&m, opties, &mut conflicten);
-    // Wijzigde een kant niets, dan is het resultaat de andere kant, byte voor byte. Eerst op bytes, zodat
-    // (b, b, hun) = hun en (b, ons, b) = ons ook gelden als alle drie inhoudelijk gelijk zijn.
+    let vluchtig = [vluchtige_velden(&m[B]), vluchtige_velden(&m[O]), vluchtige_velden(&m[H])];
+    // Wijzigde een kant niets (ook geen vluchtig veld), dan is het resultaat de andere kant, byte voor byte. Eerst op
+    // bytes, zodat (b, b, hun) = hun en (b, ons, b) = ons ook gelden als alle drie inhoudelijk gelijk zijn.
+    let zelfde = |a: usize, b: usize| gelijk(&m[a], &m[b]) && zelfde_vluchtig(&vluchtig[a], &vluchtig[b]);
     let ongewijzigd = if hun == basis {
         Some(ons)
     } else if ons == basis {
         Some(hun)
-    } else if gelijk(&m[B], &m[H]) || gelijk(&m[O], &m[H]) {
+    } else if zelfde(B, H) || zelfde(O, H) {
         Some(ons)
-    } else if gelijk(&m[B], &m[O]) {
+    } else if zelfde(B, O) {
         Some(hun)
     } else {
         None
     };
+    let mut conflicten = Vec::new();
+    let plan = besluit(&m, &vluchtig, &mut conflicten);
     if let Some(inhoud) = ongewijzigd {
         tel_besluiten(&plan, &mut statistiek);
         return Ok(Samenvoeging { inhoud: Some(inhoud.to_vec()), gelukt: true, conflicten, statistiek });
     }
-    let win = winnaar(opties);
-    let koppel = koppelregel(&m, &plan);
-    match win {
-        None => conflicten.extend(koppel.into_iter().map(|(c, _)| c)),
-        Some(w) => {
-            los_op(&mut plan, koppel, w, &mut conflicten);
-        }
-    }
-    if win.is_none() && !conflicten.is_empty() {
-        tel_besluiten(&plan, &mut statistiek);
-        return mislukt(conflicten, statistiek);
-    }
-    for ronde in 1..=MAX_RONDES {
-        statistiek.rondes = ronde;
-        let mut gevonden: Gevonden = controleer_verwijzingen(&m, &plan);
-        let mut geschreven = None;
-        if gevonden.is_empty() {
-            match schrijven::schrijf(&m, &plan) {
-                Ok(g) => geschreven = Some(g),
-                Err(c) => gevonden = c,
-            }
-        }
-        if let Some(g) = &geschreven {
-            match Model::lees(&g.inhoud) {
-                Ok(mut r) => {
-                    for object in &mut r.objecten {
-                        match g.alias.get(&object.globalid) {
-                            Some(sleutel) => object.sleutel = sleutel.clone(),
-                            None => gevonden.push((
-                                Conflict::nieuw(
-                                    ConflictSoort::Zelfcontrole,
-                                    format!("het resultaat bevat een onbekend object {}", object.globalid),
-                                ),
-                                Vec::new(),
-                            )),
-                        }
-                    }
-                    r.bereken();
-                    controleer_resultaat(&m, &plan, &r, &mut gevonden);
-                }
-                Err(fout) => gevonden.push((
-                    Conflict::nieuw(
-                        ConflictSoort::Zelfcontrole,
-                        format!("het resultaat is geen geldig bestand: {fout}"),
-                    ),
-                    Vec::new(),
-                )),
-            }
-        }
-        if gevonden.is_empty() {
-            let g = geschreven.expect("geschreven als er geen conflict is");
-            statistiek.instanties_nieuw = g.nieuw;
-            statistiek.instanties_herschreven = g.herschreven;
-            statistiek.instanties_verwijderd = g.verwijderd;
-            tel_besluiten(&plan, &mut statistiek);
-            return Ok(Samenvoeging { inhoud: Some(g.inhoud), gelukt: true, conflicten, statistiek });
-        }
-        let Some(w) = win else {
-            conflicten.extend(gevonden.into_iter().map(|(c, _)| c));
-            tel_besluiten(&plan, &mut statistiek);
-            return mislukt(conflicten, statistiek);
-        };
-        let (veranderd, onoplosbaar) = los_op(&mut plan, gevonden, w, &mut conflicten);
-        if onoplosbaar || !veranderd {
-            tel_besluiten(&plan, &mut statistiek);
-            return mislukt(conflicten, statistiek);
-        }
+    conflicten.extend(koppelregel(&m, &plan));
+    conflicten.extend(relaties_vervangen(&m, &plan));
+    if conflicten.is_empty() {
+        conflicten = controleer_verwijzingen(&m, &plan);
     }
     tel_besluiten(&plan, &mut statistiek);
-    conflicten.push(Conflict::nieuw(
-        ConflictSoort::Zelfcontrole,
-        format!("na {MAX_RONDES} rondes waren er nog steeds conflicten"),
-    ));
-    mislukt(conflicten, statistiek)
+    if !conflicten.is_empty() {
+        return mislukt(conflicten, statistiek);
+    }
+    let g = match schrijven::schrijf(&m, &plan) {
+        Ok(g) => g,
+        Err(c) => return mislukt(c, statistiek),
+    };
+    let mut gevonden = Vec::new();
+    match Model::lees(&g.inhoud) {
+        Ok(mut r) => {
+            let gemeen: HashSet<&str> = m[B].objecten.iter().filter(|o| o.gemeen).map(|o| o.sleutel.as_str()).collect();
+            for object in &mut r.objecten {
+                match g.alias.get(&object.globalid) {
+                    Some(sleutel) => object.sleutel = sleutel.clone(),
+                    None => gevonden.push(Conflict::nieuw(
+                        ConflictSoort::Zelfcontrole,
+                        format!("het resultaat bevat een onbekend object {}", object.globalid),
+                    )),
+                }
+                object.gemeen = gemeen.contains(object.sleutel.as_str());
+            }
+            r.bereken_puur();
+            stem_ankers_af(&m[B], &mut r);
+            r.bereken();
+            controleer_resultaat(&m, &plan, &r, &mut gevonden);
+        }
+        Err(fout) => gevonden.push(Conflict::nieuw(
+            ConflictSoort::Zelfcontrole,
+            format!("het resultaat is geen geldig bestand: {fout}"),
+        )),
+    }
+    if !gevonden.is_empty() {
+        return mislukt(gevonden, statistiek);
+    }
+    statistiek.instanties_nieuw = g.nieuw;
+    statistiek.instanties_herschreven = g.herschreven;
+    statistiek.instanties_verwijderd = g.verwijderd;
+    Ok(Samenvoeging { inhoud: Some(g.inhoud), gelukt: true, conflicten, statistiek })
 }
 
-/// Lost conflicten op met de winnende kant: de betrokken objecten in hun geheel van die kant (of weg, als die kant
-/// ze niet heeft). Geeft (er veranderde een besluit, er was een conflict zonder betrokken objecten).
-fn los_op(plan: &mut Plan, gevonden: Gevonden, w: usize, conflicten: &mut Vec<Conflict>) -> (bool, bool) {
-    let mut veranderd = false;
-    let mut onoplosbaar = false;
-    for (mut c, betrokken) in gevonden {
-        if betrokken.is_empty() {
-            onoplosbaar = true;
-        }
-        for s in betrokken {
-            let nieuw = match plan.sleutels[s].obj[w] {
-                Some(_) => Besluit::Heel(w),
-                None => Besluit::Weg,
-            };
-            if plan.sleutels[s].besluit != nieuw {
-                plan.sleutels[s].besluit = nieuw;
-                veranderd = true;
-            }
-        }
-        c.gekozen = Some(KANTEN[w]);
-        if !conflicten.contains(&c) {
-            conflicten.push(c);
-        }
-    }
-    (veranderd, onoplosbaar)
+/// Hebben twee versies dezelfde waarden in hun vluchtige velden?
+fn zelfde_vluchtig(a: &HashMap<Vluchtig, (Hash, Option<u32>)>, b: &HashMap<Vluchtig, (Hash, Option<u32>)>) -> bool {
+    a.len() == b.len() && a.iter().all(|(k, (h, _))| b.get(k).is_some_and(|(x, _)| x == h))
 }
 
 /// Zijn twee versies inhoudelijk gelijk (dezelfde objecten met dezelfde inhoud, dezelfde losse knopen en HEADER)?
+/// Vluchtige velden tellen niet mee.
 fn gelijk(a: &Model, b: &Model) -> bool {
     if a.objecten.len() != b.objecten.len() || a.wortels.len() != b.wortels.len() {
         return false;
@@ -442,7 +423,7 @@ fn tel_besluiten(plan: &Plan, s: &mut SamenvoegStatistiek) {
     }
 }
 
-/// Gevallen die we niet kennen: een onbekend schema, verschillende schema's, onbekende types, cycli...
+/// Gevallen die we niet kennen: een onbekend schema, een ander schema in FILE_SCHEMA, onbekende types, cycli...
 fn niet_ondersteund(m: &[Model; 3]) -> Vec<Conflict> {
     let mut uit = Vec::new();
     for (k, model) in m.iter().enumerate() {
@@ -469,23 +450,36 @@ fn niet_ondersteund(m: &[Model; 3]) -> Vec<Conflict> {
             meld(format!("{kant}: knopen die via andere knopen naar zichzelf verwijzen"));
         }
     }
+    // Een ander FILE_SCHEMA is een wijziging die we niet samenvoegen (ook IFC4X3 tegenover IFC4X3_ADD2).
+    let schema = m.each_ref().map(|x| x.header_parameter("FILE_SCHEMA", 0));
     if uit.is_empty()
-        && (m[B].statistiek.schema_tabel != m[O].statistiek.schema_tabel
-            || m[B].statistiek.schema_tabel != m[H].statistiek.schema_tabel)
+        && (schema[B].map(|x| x.0) != schema[O].map(|x| x.0) || schema[B].map(|x| x.0) != schema[H].map(|x| x.0))
     {
-        uit.push(Conflict::nieuw(
+        let toon = |k: usize| schema[k].map(|(_, t)| m[k].toon(t, false, MAX_TEKST));
+        let [b, o, h] = [toon(B), toon(O), toon(H)];
+        let tekst = |x: &Option<String>| x.clone().unwrap_or_else(|| "geen".into());
+        let mut c = Conflict::nieuw(
             ConflictSoort::NietOndersteund,
             format!(
-                "de versies hebben een ander schema ({}, {}, {})",
-                m[B].statistiek.schema, m[O].statistiek.schema, m[H].statistiek.schema
+                "de versies hebben een ander FILE_SCHEMA (basis {}, ons {}, hun {})",
+                tekst(&b),
+                tekst(&o),
+                tekst(&h)
             ),
-        ));
+        );
+        c.attribuut = Some("FILE_SCHEMA".into());
+        [c.basis, c.ons, c.hun] = [b, o, h];
+        uit.push(c);
     }
     uit
 }
 
-/// De besluiten per object, per groep losse knopen en per HEADER-veld.
-fn besluit(m: &[Model; 3], opties: &Opties, conflicten: &mut Vec<Conflict>) -> Plan {
+/// De besluiten per object, per groep losse knopen, per HEADER-veld en per vluchtig veld.
+fn besluit(
+    m: &[Model; 3],
+    vluchtig: &[HashMap<Vluchtig, (Hash, Option<u32>)>; 3],
+    conflicten: &mut Vec<Conflict>,
+) -> Plan {
     let mut sleutels: Vec<Sleutel> = Vec::new();
     let mut op_sleutel: HashMap<String, usize> = HashMap::new();
     for k in [O, H, B] {
@@ -497,19 +491,72 @@ fn besluit(m: &[Model; 3], opties: &Opties, conflicten: &mut Vec<Conflict>) -> P
             sleutels[s].obj[k] = Some(o);
         }
     }
-    let win = winnaar(opties);
     for s in &mut sleutels {
-        s.besluit = besluit_object(m, s, win, conflicten);
+        s.besluit = besluit_object(m, s, conflicten);
     }
-    let groepen = besluit_groepen(m, win, conflicten);
-    let header = besluit_header(m, win, conflicten);
-    Plan { sleutels, op_sleutel, groepen, header }
+    // Vluchtige velden: per veld de kant volgens de regel; wat het resultaat moet worden, onthouden we.
+    let mut vluchtig_verwacht = HashMap::new();
+    let mut knoop_vluchtig: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    let mut header = besluit_header(m, conflicten);
+    for (veld, &(ho, ko)) in &vluchtig[O] {
+        let Some(&(hh, kh)) = vluchtig[H].get(veld) else { continue };
+        let hb = vluchtig[B].get(veld).map(|x| x.0);
+        let kant = vluchtige_kant(hb, ho, hh);
+        vluchtig_verwacht.insert(veld.clone(), if kant == H { hh } else { ho });
+        if kant != H {
+            continue;
+        }
+        match veld {
+            Vluchtig::Object(sleutel, j) => {
+                let s = op_sleutel[sleutel];
+                neem_vluchtig_van_hun(m, &mut sleutels[s], *j);
+            }
+            Vluchtig::Knoop(_, j) => {
+                if let (Some(ko), Some(kh)) = (ko, kh) {
+                    knoop_vluchtig.entry((ko, kh)).or_default().push(*j);
+                }
+            }
+            Vluchtig::Header(regel, j) => {
+                header.insert((regel, *j), H);
+            }
+        }
+    }
+    let mut knoop_vluchtig: Vec<(u32, u32, Vec<usize>)> = knoop_vluchtig
+        .into_iter()
+        .map(|((o, h), mut j)| {
+            (o, h, {
+                j.sort_unstable();
+                j
+            })
+        })
+        .collect();
+    knoop_vluchtig.sort_unstable();
+    let groepen = besluit_groepen(m, conflicten);
+    Plan { sleutels, op_sleutel, groepen, header, knoop_vluchtig, vluchtig_verwacht }
 }
 
-fn besluit_object(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: &mut Vec<Conflict>) -> Besluit {
+/// Een vluchtig attribuut `j` komt van hun: het besluit van het object zo aanpassen dat alleen dat attribuut van hun
+/// komt (de rest blijft zoals besloten).
+fn neem_vluchtig_van_hun(m: &[Model; 3], s: &mut Sleutel, j: usize) {
+    let (Some(o), Some(h)) = (s.obj[O], s.obj[H]) else { return };
+    let (io, ih) = (m[O].objecten[o].inst as usize, m[H].objecten[h].inst as usize);
+    let n = m[O].bestand.attributen(io).len();
+    if m[O].bestand.type_naam(io) != m[H].bestand.type_naam(ih) || m[H].bestand.attributen(ih).len() != n {
+        return;
+    }
+    let mut delen = match &s.besluit {
+        Besluit::Heel(k) => vec![Deel::Van(*k); n],
+        Besluit::Samen(delen) => delen.clone(),
+        Besluit::Weg => return,
+    };
+    delen[0] = Deel::Van(O);
+    delen[j] = Deel::Van(H);
+    s.besluit = Besluit::Samen(delen);
+}
+
+fn besluit_object(m: &[Model; 3], s: &Sleutel, conflicten: &mut Vec<Conflict>) -> Besluit {
     let hash = |k: usize| s.obj[k].map(|o| m[k].objecten[o].hash);
     let (hb, ho, hh) = (hash(B), hash(O), hash(H));
-    let gekozen = win.map(|w| KANTEN[w]);
     match (hb, ho, hh) {
         (Some(b), Some(o), Some(h)) => {
             if o == h || h == b {
@@ -517,58 +564,43 @@ fn besluit_object(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: &
             } else if o == b {
                 Besluit::Heel(H)
             } else {
-                beide_gewijzigd(m, s, win, conflicten)
+                beide_gewijzigd(m, s, conflicten)
             }
         }
         (Some(b), Some(o), None) => {
-            if o == b {
-                Besluit::Weg
-            } else {
-                let mut c = Conflict::nieuw(
-                    ConflictSoort::VerwijderdEnGewijzigd,
-                    "ons wijzigde dit object, hun verwijderde het",
-                )
-                .over(m, s);
-                c.gekozen = gekozen;
-                conflicten.push(c);
-                if win == Some(H) {
-                    Besluit::Weg
-                } else {
-                    Besluit::Heel(O)
-                }
+            if o != b {
+                conflicten.push(
+                    Conflict::nieuw(
+                        ConflictSoort::VerwijderdEnGewijzigd,
+                        "ons wijzigde dit object, hun verwijderde het",
+                    )
+                    .over(m, s),
+                );
             }
+            Besluit::Weg
         }
         (Some(b), None, Some(h)) => {
-            if h == b {
-                Besluit::Weg
-            } else {
-                let mut c = Conflict::nieuw(
-                    ConflictSoort::VerwijderdEnGewijzigd,
-                    "hun wijzigde dit object, ons verwijderde het",
-                )
-                .over(m, s);
-                c.gekozen = gekozen;
-                conflicten.push(c);
-                if win == Some(H) {
-                    Besluit::Heel(H)
-                } else {
-                    Besluit::Weg
-                }
+            if h != b {
+                conflicten.push(
+                    Conflict::nieuw(
+                        ConflictSoort::VerwijderdEnGewijzigd,
+                        "hun wijzigde dit object, ons verwijderde het",
+                    )
+                    .over(m, s),
+                );
             }
+            Besluit::Weg
         }
         (Some(_), None, None) | (None, None, None) => Besluit::Weg,
         (None, Some(o), Some(h)) => {
             if o != h {
-                let mut c = Conflict::nieuw(
-                    ConflictSoort::BeideToegevoegd,
-                    "ons en hun voegden allebei dit object toe, met een andere inhoud",
-                )
-                .over(m, s);
-                c.gekozen = gekozen;
-                conflicten.push(c);
-                if win == Some(H) {
-                    return Besluit::Heel(H);
-                }
+                conflicten.push(
+                    Conflict::nieuw(
+                        ConflictSoort::BeideToegevoegd,
+                        "ons en hun voegden allebei dit object toe, met een andere inhoud",
+                    )
+                    .over(m, s),
+                );
             }
             Besluit::Heel(O)
         }
@@ -577,11 +609,83 @@ fn besluit_object(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: &
     }
 }
 
+/// De objecten (sleutels) waar een relatie naar verwijst, behalve via OwnerHistory.
+fn relatie_objecten(m: &Model, o: usize) -> HashSet<String> {
+    let i = m.objecten[o].inst as usize;
+    let mut uit = HashSet::new();
+    for (j, _) in m.bestand.attributen(i).iter().enumerate().skip(2) {
+        for (_, token) in Tokens::nieuw(attribuut_tekst(m, i, j)) {
+            let Token::Verwijzing(n) = token else { continue };
+            if let Some(&d) = m.bestand.index.get(&n) {
+                if let Soort::Object(x) = m.soort[d as usize] {
+                    uit.insert(m.objecten[x as usize].sleutel.clone());
+                }
+            }
+        }
+    }
+    uit
+}
+
+/// Beide kanten vervingen dezelfde relatie door een nieuwe met een andere GlobalId (bijv. elk een eigen
+/// IfcRelAssociatesMaterial voor W en V): een relatie uit de basis die ons en hun allebei weghaalden, terwijl ons en
+/// hun elk een nieuwe relatie van hetzelfde type toevoegden die naar een van dezelfde objecten wijst. Dan weten we
+/// niet welke vervanging geldt, en zouden we er twee schrijven.
+fn relaties_vervangen(m: &[Model; 3], plan: &Plan) -> Vec<Conflict> {
+    let mut nieuw: [Vec<(usize, HashSet<String>)>; 3] = Default::default();
+    for (si, s) in plan.sleutels.iter().enumerate() {
+        for k in [O, H] {
+            if let (None, Some(o)) = (s.obj[B], s.obj[k]) {
+                if s.obj[O].is_some() != s.obj[H].is_some() && m[k].is_relatie(m[k].objecten[o].inst as usize) {
+                    nieuw[k].push((si, relatie_objecten(&m[k], o)));
+                }
+            }
+        }
+    }
+    let mut uit = Vec::new();
+    if nieuw[O].is_empty() || nieuw[H].is_empty() {
+        return uit;
+    }
+    for s in &plan.sleutels {
+        let (Some(ob), None, None) = (s.obj[B], s.obj[O], s.obj[H]) else { continue };
+        let ib = m[B].objecten[ob].inst as usize;
+        if !m[B].is_relatie(ib) {
+            continue;
+        }
+        let type_naam = m[B].bestand.type_naam(ib);
+        let objecten = relatie_objecten(&m[B], ob);
+        let vervangers = |k: usize| -> Vec<String> {
+            nieuw[k]
+                .iter()
+                .filter(|(si, doelen)| {
+                    let o = plan.sleutels[*si].obj[k].expect("nieuw aan deze kant");
+                    m[k].bestand.type_naam(m[k].objecten[o].inst as usize) == type_naam
+                        && !doelen.is_disjoint(&objecten)
+                })
+                .map(|(si, _)| plan.sleutels[*si].sleutel.clone())
+                .collect()
+        };
+        let (vo, vh) = (vervangers(O), vervangers(H));
+        if vo.is_empty() || vh.is_empty() {
+            continue;
+        }
+        let mut c = Conflict::nieuw(
+            ConflictSoort::RelatieVervangen,
+            "ons en hun vervingen deze relatie allebei door een nieuwe, met een andere GlobalId; welke geldt, is niet \
+             zeker",
+        )
+        .over(m, s);
+        c.basis = Some(m[B].object_weergave(ob));
+        c.ons = Some(vo.join(", "));
+        c.hun = Some(vh.join(", "));
+        uit.push(c);
+    }
+    uit
+}
+
 /// Beide kanten wijzigden het object: per attribuut.
-fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: &mut Vec<Conflict>) -> Besluit {
+fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, conflicten: &mut Vec<Conflict>) -> Besluit {
     let inst = |k: usize| m[k].objecten[s.obj[k].unwrap()].inst as usize;
     let i = [inst(B), inst(O), inst(H)];
-    let gekozen = win.map(|w| KANTEN[w]);
     let n = m[O].bestand.attributen(i[O]).len();
     let zelfde_vorm = (0..3).all(|k| {
         m[k].bestand.type_naam(i[k]) == m[O].bestand.type_naam(i[O]) && m[k].bestand.attributen(i[k]).len() == n
@@ -594,9 +698,8 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: 
         c.basis = Some(m[B].type_weergave(i[B]));
         c.ons = Some(m[O].type_weergave(i[O]));
         c.hun = Some(m[H].type_weergave(i[H]));
-        c.gekozen = gekozen;
         conflicten.push(c);
-        return Besluit::Heel(win.unwrap_or(O));
+        return Besluit::Heel(O);
     }
     let entiteit = m[O].entiteit(i[O]).expect("gecontroleerd");
     let mut delen = vec![Deel::Van(O)];
@@ -614,7 +717,7 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: 
         let toon = |k: usize| m[k].toon(attribuut_tekst(&m[k], i[k], j), true, MAX_TEKST);
         if matches!(attribuut.aggregaat, Some(Aggregaat::Set) | Some(Aggregaat::Bag)) {
             let tas = attribuut.aggregaat == Some(Aggregaat::Bag);
-            if let Some((lijst, botsingen)) = verzameling(m, i, j, tas, win) {
+            if let Some((lijst, botsingen)) = verzameling(m, i, j, tas) {
                 for (groep, teksten) in botsingen {
                     let mut c = Conflict::nieuw(
                         ConflictSoort::BeideGewijzigd,
@@ -623,7 +726,6 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: 
                     .over(m, s);
                     c.attribuut = Some(format!("{}[{groep}]", attribuut.naam));
                     [c.basis, c.ons, c.hun] = teksten;
-                    c.gekozen = gekozen;
                     conflicten.push(c);
                 }
                 delen.push(Deel::Lijst(lijst));
@@ -637,9 +739,8 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, win: Option<usize>, conflicten: 
         c.basis = Some(toon(B));
         c.ons = Some(toon(O));
         c.hun = Some(toon(H));
-        c.gekozen = gekozen;
         conflicten.push(c);
-        delen.push(Deel::Van(win.unwrap_or(O)));
+        delen.push(Deel::Van(O));
     }
     Besluit::Samen(delen)
 }
@@ -661,14 +762,8 @@ type LijstDelen = Vec<(usize, (usize, usize))>;
 
 /// Three-way samenvoegen van een SET of BAG van verwijzingen. None als niet alle drie de waarden een lijst van
 /// verwijzingen zijn. Anders de lijst (kant, bereik) en de groepen die botsten (eigenschappen met twee nieuwe
-/// waarden); bij een botsing staat in de lijst de groep van de winnende kant (of van ons, als niemand wint).
-fn verzameling(
-    m: &[Model; 3],
-    i: [usize; 3],
-    j: usize,
-    tas: bool,
-    win: Option<usize>,
-) -> Option<(LijstDelen, Vec<Botsing>)> {
+/// waarden); bij een botsing staat in de lijst de groep van ons (er komt dan geen resultaat).
+fn verzameling(m: &[Model; 3], i: [usize; 3], j: usize, tas: bool) -> Option<(LijstDelen, Vec<Botsing>)> {
     let mut lijsten: [Vec<Element>; 3] = Default::default();
     for k in 0..3 {
         let tekst = attribuut_tekst(&m[k], i[k], j);
@@ -726,7 +821,7 @@ fn verzameling(
             };
             let naam = lijsten.iter().flatten().find(|e| e.groep.as_slice() == *groep).and_then(|e| e.naam.clone());
             botsingen.push((naam.unwrap_or_default(), [tekst(B), tekst(O), tekst(H)]));
-            (win.unwrap_or(O), None)
+            (O, None)
         };
         keuze.insert(groep, besluit);
     }
@@ -762,8 +857,9 @@ fn benoemd(m: &Model, k: usize) -> Option<String> {
     }
 }
 
-/// Groepen losse knopen: per sleutel de groep van ons, van hun of (bij een conflict) van de winnaar.
-fn besluit_groepen(m: &[Model; 3], win: Option<usize>, conflicten: &mut Vec<Conflict>) -> Vec<(Hash, usize)> {
+/// Groepen losse knopen: per sleutel de groep van ons of van hun (bij een conflict van ons; er komt dan geen
+/// resultaat).
+fn besluit_groepen(m: &[Model; 3], conflicten: &mut Vec<Conflict>) -> Vec<(Hash, usize)> {
     let g = [losse_groepen(&m[B]), losse_groepen(&m[O]), losse_groepen(&m[H])];
     let mut sleutels: Vec<Hash> = Vec::new();
     let mut gezien = HashSet::new();
@@ -803,25 +899,21 @@ fn besluit_groepen(m: &[Model; 3], win: Option<usize>, conflicten: &mut Vec<Conf
                 c.type_naam = Some(m[k].type_weergave(i as usize));
             }
             [c.basis, c.ons, c.hun] = [toon(B), toon(O), toon(H)];
-            c.gekozen = win.map(|w| KANTEN[w]);
             conflicten.push(c);
-            win.unwrap_or(O)
+            O
         };
         uit.push((s, kant));
     }
     uit
 }
 
-/// De HEADER: per veld three-way; de tijdstempel blijft van ons.
-fn besluit_header(
-    m: &[Model; 3],
-    win: Option<usize>,
-    conflicten: &mut Vec<Conflict>,
-) -> HashMap<(&'static str, usize), usize> {
+/// De HEADER: per veld three-way. De tijdstempel is vluchtig ([`besluit`]); FILE_SCHEMA is al gelijk
+/// ([`niet_ondersteund`]).
+fn besluit_header(m: &[Model; 3], conflicten: &mut Vec<Conflict>) -> HashMap<(&'static str, usize), usize> {
     let mut uit = HashMap::new();
     for &(regel, velden) in HEADER_VELDEN {
         for (j, veld) in velden.iter().enumerate() {
-            if header_vluchtig(regel, j) {
+            if header_vluchtig(regel, j) || regel == "FILE_SCHEMA" {
                 continue;
             }
             let w: [Option<(Hash, &[u8])>; 3] = [0, 1, 2].map(|k| m[k].header_parameter(regel, j));
@@ -842,11 +934,7 @@ fn besluit_header(
             let mut c = Conflict::nieuw(ConflictSoort::Header, format!("beide kanten wijzigden {regel}.{veld} anders"));
             c.attribuut = Some(format!("{regel}.{veld}"));
             [c.basis, c.ons, c.hun] = [toon(B), toon(O), toon(H)];
-            c.gekozen = win.map(|w| KANTEN[w]);
             conflicten.push(c);
-            if win == Some(H) && h[H].is_some() {
-                uit.insert((regel, j), H);
-            }
         }
     }
     uit
@@ -892,7 +980,7 @@ fn controleer_verwijzingen(m: &[Model; 3], plan: &Plan) -> Gevonden {
     let ontbreekt = |k: usize, tekst: &[u8], memo: &mut [HashMap<u32, Option<String>>; 3], direct: bool| {
         zoek_ontbrekend(&m[k], tekst, plan, &mut memo[k], direct)
     };
-    for (si, s) in plan.sleutels.iter().enumerate() {
+    for s in &plan.sleutels {
         if s.besluit == Besluit::Weg {
             continue;
         }
@@ -904,8 +992,7 @@ fn controleer_verwijzingen(m: &[Model; 3], plan: &Plan) -> Gevonden {
                 )
                 .over(m, s);
                 c.attribuut = None;
-                let betrokken = vec![si, plan.op_sleutel[&weg]];
-                uit.push((c, betrokken));
+                uit.push(c);
                 break;
             }
         }
@@ -920,7 +1007,7 @@ fn controleer_verwijzingen(m: &[Model; 3], plan: &Plan) -> Gevonden {
                     format!("een losse knoop verwijst naar {weg}, dat na het samenvoegen niet meer bestaat"),
                 );
                 c.type_naam = Some(m[k].type_weergave(i as usize));
-                uit.push((c, vec![plan.op_sleutel[&weg]]));
+                uit.push(c);
             }
         }
     }
@@ -1020,6 +1107,7 @@ fn controleer_resultaat(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevond
     inverse_grenzen(m, plan, r, uit);
     aggregaat_grenzen(m, plan, r, uit);
     boom(m, plan, r, uit);
+    plaatsingskring(m, plan, r, uit);
 }
 
 /// De verwachte hash van een object in het resultaat.
@@ -1034,13 +1122,16 @@ pub(crate) fn verwachte_hash(m: &[Model; 3], s: &Sleutel) -> Option<Hash> {
                 hashes.push(match deel {
                     Deel::Van(k) => m[*k].attribuut_hash(m[*k].objecten[s.obj[*k].unwrap()].inst as usize, j),
                     Deel::Lijst(elementen) => {
-                        let mut buffer = vec![b'('];
-                        for &(k, (b, e)) in elementen {
-                            let i = m[k].objecten[s.obj[k].unwrap()].inst as usize;
-                            m[k].canoniek(&attribuut_tekst(&m[k], i, j)[b..e], true, &mut buffer);
-                        }
-                        buffer.push(b')');
-                        *blake3::hash(&buffer).as_bytes()
+                        let stukken = elementen
+                            .iter()
+                            .map(|&(k, (b, e))| {
+                                let i = m[k].objecten[s.obj[k].unwrap()].inst as usize;
+                                let mut stuk = Vec::new();
+                                m[k].canoniek(&attribuut_tekst(&m[k], i, j)[b..e], true, &mut stuk);
+                                stuk
+                            })
+                            .collect();
+                        ongeordend_hash(stukken)
                     }
                 });
             }
@@ -1052,7 +1143,7 @@ pub(crate) fn verwachte_hash(m: &[Model; 3], s: &Sleutel) -> Option<Hash> {
 /// Is het geschreven resultaat inhoudelijk wat we bedoelden?
 fn zelfcontrole(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
     let in_r = op_sleutel(r);
-    for (si, s) in plan.sleutels.iter().enumerate() {
+    for s in &plan.sleutels {
         let verwacht = verwachte_hash(m, s);
         let gevonden = in_r.get(s.sleutel.as_str()).map(|&o| r.objecten[o].hash);
         if verwacht != gevonden {
@@ -1063,17 +1154,14 @@ fn zelfcontrole(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
                       ankerknoop die niet eenduidig over te nemen is)"
                     .to_string(),
             };
-            uit.push((Conflict::nieuw(ConflictSoort::Zelfcontrole, melding).over(m, s), vec![si]));
+            uit.push(Conflict::nieuw(ConflictSoort::Zelfcontrole, melding).over(m, s));
         }
     }
     for object in &r.objecten {
         if !plan.op_sleutel.contains_key(&object.sleutel) {
-            uit.push((
-                Conflict::nieuw(
-                    ConflictSoort::Zelfcontrole,
-                    format!("onbekend object {} in het resultaat", object.globalid),
-                ),
-                Vec::new(),
+            uit.push(Conflict::nieuw(
+                ConflictSoort::Zelfcontrole,
+                format!("onbekend object {} in het resultaat", object.globalid),
             ));
         }
     }
@@ -1090,12 +1178,10 @@ fn zelfcontrole(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
     let gevonden: HashMap<Hash, Vec<Hash>> =
         gr.into_iter().map(|(s, v)| (s, v.into_iter().map(|x| x.0).collect())).collect();
     if verwacht != gevonden {
-        uit.push((
-            Conflict::nieuw(
-                ConflictSoort::Zelfcontrole,
-                "de losse knopen in het resultaat kloppen niet na het schrijven",
-            ),
-            Vec::new(),
+        uit.push(Conflict::nieuw(
+            ConflictSoort::Zelfcontrole,
+            "de losse knopen in het resultaat kloppen niet na het schrijven (bijv. een stijl op de geometrie van een \
+             ander object)",
         ));
     }
     // HEADER.
@@ -1107,99 +1193,130 @@ fn zelfcontrole(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
             let k = plan.header.get(&(regel, j)).copied().unwrap_or(O);
             let verwacht = m[k].header_parameter(regel, j).map(|x| x.0);
             if r.header_parameter(regel, j).map(|x| x.0) != verwacht {
-                uit.push((
-                    Conflict::nieuw(ConflictSoort::Zelfcontrole, format!("{regel} klopt niet na het schrijven")),
-                    Vec::new(),
-                ));
+                uit.push(Conflict::nieuw(ConflictSoort::Zelfcontrole, format!("{regel} klopt niet na het schrijven")));
             }
         }
     }
+    // Vluchtige velden: de waarde volgens de regel ([`vluchtige_kant`]).
+    let in_r = vluchtige_velden(r);
+    let mut fout: Vec<String> = plan
+        .vluchtig_verwacht
+        .iter()
+        .filter(|(veld, h)| in_r.get(*veld).is_some_and(|(x, _)| x != *h))
+        .map(|(veld, _)| match veld {
+            Vluchtig::Object(sleutel, j) => format!("{sleutel} attribuut {}", j + 1),
+            Vluchtig::Knoop(_, j) => format!("een knoop, attribuut {}", j + 1),
+            Vluchtig::Header(regel, j) => format!("{regel} parameter {}", j + 1),
+        })
+        .collect();
+    fout.sort();
+    if let Some(eerste) = fout.first() {
+        uit.push(Conflict::nieuw(
+            ConflictSoort::Zelfcontrole,
+            format!("een vluchtig veld klopt niet na het schrijven ({eerste})"),
+        ));
+    }
 }
 
-/// Per object en INVERSE met een bovengrens: hoeveel instanties verwijzen er via het FOR-attribuut naar.
-fn inverse_tellingen(m: &Model) -> HashMap<(String, &'static str), (usize, u32)> {
-    let mut tel: HashMap<(String, &'static str), (usize, u32)> = HashMap::new();
-    // Per type: de attributen die een FOR-attribuut van een begrensde inverse zijn.
+/// Tellingen voor de INVERSE-bovengrenzen: per object (sleutel) en inverse het aantal en de grens, en per type en
+/// inverse het aantal knopen dat over de grens gaat (bijv. twee IfcStyledItem op één vorm: `StyledByItem`).
+#[derive(Default)]
+struct InverseTellingen {
+    objecten: HashMap<(String, &'static str), (usize, u32)>,
+    knopen_over: HashMap<(&'static str, &'static str), (usize, u32)>,
+}
+
+fn inverse_tellingen(m: &Model) -> InverseTellingen {
+    // Per type: de attributen die het FOR-attribuut van een begrensde inverse kunnen zijn.
     let mut per_type: HashMap<u32, Vec<(usize, &'static str)>> = HashMap::new();
-    for object in &m.objecten {
-        let i = object.inst as usize;
+    let mut knopen: HashMap<(u32, &'static str), (usize, u32)> = HashMap::new();
+    let mut uit = InverseTellingen::default();
+    for i in 0..m.bestand.instanties.len() {
         let Some(e) = m.entiteit(i) else { continue };
         let type_id = m.bestand.instanties[i].type_id;
         let velden = per_type.entry(type_id).or_insert_with(|| {
-            let mut v = Vec::new();
-            for (j, a) in e.attributen.iter().enumerate() {
-                v.push((j, a.naam.as_str()));
-            }
-            v
+            e.attributen
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| m.schema().is_some_and(|s| s.is_inverse_voor(e, &a.naam)))
+                .map(|(j, a)| (j, a.naam.as_str()))
+                .collect()
         });
         for &(j, veld) in velden.iter() {
             for (_, token) in Tokens::nieuw(attribuut_tekst(m, i, j)) {
                 let Token::Verwijzing(n) = token else { continue };
                 let Some(&d) = m.bestand.index.get(&n) else { continue };
-                let Soort::Object(od) = m.soort[d as usize] else { continue };
                 let Some(doel) = m.entiteit(d as usize) else { continue };
                 for inv in &doel.inverses {
-                    if let Some(max) = inv.max {
-                        if inv.voor == veld && e.is_een(&inv.bron) {
-                            let ingang = tel
-                                .entry((m.objecten[od as usize].sleutel.clone(), inv.naam.as_str()))
-                                .or_insert((0, max));
-                            ingang.0 += 1;
+                    let Some(max) = inv.max else { continue };
+                    if inv.voor != veld || !e.is_een(&inv.bron) {
+                        continue;
+                    }
+                    match m.soort[d as usize] {
+                        Soort::Object(od) => {
+                            let sleutel = m.objecten[od as usize].sleutel.clone();
+                            uit.objecten.entry((sleutel, inv.naam.as_str())).or_insert((0, max)).0 += 1;
                         }
+                        Soort::Knoop => knopen.entry((d, inv.naam.as_str())).or_insert((0, max)).0 += 1,
                     }
                 }
             }
         }
     }
-    tel
+    for ((d, inverse), (n, max)) in knopen {
+        if n > max as usize {
+            let type_naam = m.entiteit(d as usize).map_or("", |e| e.naam.as_str());
+            uit.knopen_over.entry((type_naam, inverse)).or_insert((0, max)).0 += 1;
+        }
+    }
+    uit
 }
 
-/// Meer relaties dan een INVERSE-bovengrens toestaat, terwijl dat in ons en in hun elk klopte.
+/// Meer relaties dan een INVERSE-bovengrens toestaat, terwijl dat in ons en in hun elk klopte. Bij knopen (die
+/// geen vaste identiteit hebben): meer knopen over de grens dan in ons en in hun.
 fn inverse_grenzen(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
     let tr = inverse_tellingen(r);
     let to = inverse_tellingen(&m[O]);
     let th = inverse_tellingen(&m[H]);
-    let mut lijst: Vec<_> = tr.iter().filter(|(_, &(n, max))| n > max as usize).collect();
+    let mut lijst: Vec<_> = tr.objecten.iter().filter(|(_, &(n, max))| n > max as usize).collect();
     lijst.sort_by(|a, b| a.0.cmp(b.0));
     for ((sleutel, inverse), &(n, max)) in lijst {
         let k = (sleutel.clone(), *inverse);
-        let binnen = |t: &HashMap<(String, &str), (usize, u32)>| t.get(&k).map_or(0, |x| x.0) <= max as usize;
+        let binnen = |t: &InverseTellingen| t.objecten.get(&k).map_or(0, |x| x.0) <= max as usize;
         if !(binnen(&to) && binnen(&th)) {
             continue;
         }
         let Some(&si) = plan.op_sleutel.get(sleutel) else { continue };
         let mut c = Conflict::nieuw(
             ConflictSoort::TeVeelRelaties,
-            format!("na het samenvoegen heeft dit object {n} relaties voor {inverse}, terwijl het schema hoogstens {max} toestaat"),
+            format!(
+                "na het samenvoegen heeft dit object {n} relaties voor {inverse}, terwijl het schema hoogstens {max} \
+                 toestaat"
+            ),
         )
         .over(m, &plan.sleutels[si]);
         c.attribuut = Some(inverse.to_string());
-        // Betrokken: het object en de relaties die ernaar verwijzen.
-        let mut betrokken = vec![si];
-        betrokken.extend(relaties_naar(r, plan, sleutel));
-        uit.push((c, betrokken));
+        uit.push(c);
     }
-}
-
-/// De sleutels (in het plan) van de relaties in `r` die naar dit object verwijzen.
-fn relaties_naar(r: &Model, plan: &Plan, sleutel: &str) -> Vec<usize> {
-    let mut uit = Vec::new();
-    for object in &r.objecten {
-        let i = object.inst as usize;
-        if !r.is_relatie(i) {
+    let mut knopen: Vec<_> = tr.knopen_over.iter().collect();
+    knopen.sort();
+    for (&(type_naam, inverse), &(n, max)) in knopen {
+        let aantal = |t: &InverseTellingen| t.knopen_over.get(&(type_naam, inverse)).map_or(0, |x| x.0);
+        let (o, h) = (aantal(&to), aantal(&th));
+        if n <= o.max(h) {
             continue;
         }
-        let noemt = r.bestand.verwijzingen(i).iter().any(|&d| match r.soort[d as usize] {
-            Soort::Object(o) => r.objecten[o as usize].sleutel == sleutel,
-            Soort::Knoop => false,
-        });
-        if noemt {
-            if let Some(&s) = plan.op_sleutel.get(&object.sleutel) {
-                uit.push(s);
-            }
-        }
+        let mut c = Conflict::nieuw(
+            ConflictSoort::TeVeelRelaties,
+            format!(
+                "na het samenvoegen hebben {n} knopen van type {type_naam} meer dan {max} relaties voor {inverse} \
+                 (ons: {o}, hun: {h}); bijv. twee stijlen op dezelfde vorm"
+            ),
+        );
+        c.type_naam = Some(type_naam.to_string());
+        c.attribuut = Some(inverse.to_string());
+        uit.push(c);
     }
-    uit
 }
 
 /// Het aantal elementen als een aggregaat buiten zijn grenzen valt.
@@ -1242,7 +1359,7 @@ fn aggregaat_grenzen(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden)
             )
             .over(m, s);
             c.attribuut = Some(naam);
-            uit.push((c, vec![si]));
+            uit.push(c);
         }
     }
 }
@@ -1307,10 +1424,8 @@ fn bereikbaar_vanaf_project(m: &Model, randen: &[(String, String, String)]) -> H
     uit
 }
 
-/// De boomregel: geen kring in IfcRelAggregates, IfcRelNests en IfcRelContainedInSpatialStructure, en wat in ons én
-/// in hun vanaf het project bereikbaar was, is dat in het resultaat ook.
-/// De kringen in de boomrelaties: per kring het eerste lid en de sleutels van de leden en de relaties.
-fn kringen(randen: &[(String, String, String)]) -> Vec<(String, Vec<String>)> {
+/// De kringen in de boomrelaties: per kring het lid waar we hem vonden.
+fn kringen(randen: &[(String, String, String)]) -> Vec<String> {
     let mut kinderen: HashMap<&str, Vec<&str>> = HashMap::new();
     for (ouder, kind, _) in randen {
         kinderen.entry(ouder).or_default().push(kind);
@@ -1319,7 +1434,7 @@ fn kringen(randen: &[(String, String, String)]) -> Vec<(String, Vec<String>)> {
     let mut status: HashMap<&str, u8> = HashMap::new();
     let mut knopen: Vec<&str> = kinderen.keys().copied().collect();
     knopen.sort();
-    let mut uit: Vec<(String, Vec<String>)> = Vec::new();
+    let mut uit = Vec::new();
     for start in knopen {
         if status.contains_key(start) {
             continue;
@@ -1336,16 +1451,7 @@ fn kringen(randen: &[(String, String, String)]) -> Vec<(String, Vec<String>)> {
                         status.insert(kind, 1);
                         stapel.push((kind, 0));
                     }
-                    Some(1) => {
-                        let begin = stapel.iter().position(|(y, _)| *y == kind).unwrap_or(0);
-                        let leden: Vec<String> = stapel[begin..].iter().map(|(y, _)| y.to_string()).collect();
-                        let relaties: Vec<String> = randen
-                            .iter()
-                            .filter(|(o, k, _)| leden.contains(o) && leden.contains(k))
-                            .map(|(_, _, rel)| rel.clone())
-                            .collect();
-                        uit.push((kind.to_string(), [leden, relaties].concat()));
-                    }
+                    Some(1) => uit.push(kind.to_string()),
                     _ => {}
                 }
                 continue;
@@ -1365,7 +1471,7 @@ fn boom(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
     let ro = boomranden(&m[O]);
     let rh = boomranden(&m[H]);
     let in_kring = if kringen(&ro).is_empty() && kringen(&rh).is_empty() { kringen(&rr) } else { Vec::new() };
-    for (eerste, betrokken) in in_kring {
+    for eerste in in_kring {
         let Some(&si) = plan.op_sleutel.get(&eerste) else { continue };
         let c = Conflict::nieuw(
             ConflictSoort::Boom,
@@ -1373,8 +1479,7 @@ fn boom(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
              IfcRelContainedInSpatialStructure)",
         )
         .over(m, &plan.sleutels[si]);
-        let betrokken = betrokken.iter().filter_map(|s| plan.op_sleutel.get(s).copied()).collect();
-        uit.push((c, betrokken));
+        uit.push(c);
     }
     // Los geraakt van het project.
     let bo = bereikbaar_vanaf_project(&m[O], &ro);
@@ -1390,14 +1495,87 @@ fn boom(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
             "dit object hing in ons en in hun aan het project, maar na het samenvoegen niet meer",
         )
         .over(m, &plan.sleutels[si]);
-        let mut betrokken = vec![si];
-        betrokken.extend(relaties_naar(r, plan, s));
-        for k in [O, H] {
-            let i = plan.sleutels[si].obj[k];
-            if i.is_some() {
-                betrokken.extend(relaties_naar(&m[k], plan, s));
+        uit.push(c);
+    }
+}
+
+/// De plaatsingen (`PlacementRelTo`): per instantie de plaatsing waar hij relatief aan staat.
+fn plaatsing_ouders(m: &Model) -> HashMap<u32, u32> {
+    let mut uit = HashMap::new();
+    let mut per_type: HashMap<u32, Option<usize>> = HashMap::new();
+    for i in 0..m.bestand.instanties.len() {
+        let type_id = m.bestand.instanties[i].type_id;
+        let j = *per_type.entry(type_id).or_insert_with(|| {
+            m.entiteit(i).and_then(|e| e.attributen.iter().position(|a| a.naam == "PlacementRelTo"))
+        });
+        let Some(j) = j else { continue };
+        if let Some(&d) = enkele_verwijzing(attribuut_tekst(m, i, j)).and_then(|n| m.bestand.index.get(&n)) {
+            uit.insert(i as u32, d);
+        }
+    }
+    uit
+}
+
+/// Een plaatsing in een kring van `PlacementRelTo`, als die er is.
+fn plaatsing_in_kring(ouders: &HashMap<u32, u32>) -> Option<u32> {
+    // 1 = op het huidige pad, 2 = klaar.
+    let mut status: HashMap<u32, u8> = HashMap::new();
+    let mut starts: Vec<u32> = ouders.keys().copied().collect();
+    starts.sort_unstable();
+    for start in starts {
+        let mut pad = Vec::new();
+        let mut x = start;
+        loop {
+            match status.get(&x) {
+                Some(1) => return Some(x),
+                Some(_) => break,
+                None => {}
+            }
+            status.insert(x, 1);
+            pad.push(x);
+            match ouders.get(&x) {
+                Some(&y) => x = y,
+                None => break,
             }
         }
-        uit.push((c, betrokken));
+        for p in pad {
+            status.insert(p, 2);
+        }
     }
+    None
+}
+
+/// Geen kring in de plaatsingen: ons zet P relatief aan Q, hun Q relatief aan P. Een kring die ons of hun zelf al
+/// had, melden we niet.
+fn plaatsingskring(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
+    if plaatsing_in_kring(&plaatsing_ouders(&m[O])).is_some() || plaatsing_in_kring(&plaatsing_ouders(&m[H])).is_some()
+    {
+        return;
+    }
+    let ouders = plaatsing_ouders(r);
+    let Some(eerste) = plaatsing_in_kring(&ouders) else { return };
+    let mut leden = vec![eerste];
+    let mut x = ouders[&eerste];
+    while x != eerste && leden.len() <= ouders.len() {
+        leden.push(x);
+        x = ouders[&x];
+    }
+    // De objecten waarvan de plaatsingen in de kring zitten.
+    let mut namen: Vec<String> =
+        leden.iter().flat_map(|&k| r.ankers(k as usize).iter().map(|a| r.object_weergave(a.object as usize))).collect();
+    namen.sort();
+    namen.dedup();
+    let mut c = Conflict::nieuw(
+        ConflictSoort::PlaatsingKring,
+        format!(
+            "na het samenvoegen staan plaatsingen in een kring relatief aan elkaar (PlacementRelTo): {}",
+            namen.join(", ")
+        ),
+    );
+    let eerste_object = leden.iter().find_map(|&k| r.ankers(k as usize).first().map(|a| a.object as usize));
+    if let Some(&si) = eerste_object.and_then(|o| plan.op_sleutel.get(r.objecten[o].sleutel.as_str())) {
+        c = c.over(m, &plan.sleutels[si]);
+    }
+    c.attribuut = Some("ObjectPlacement.PlacementRelTo".into());
+    uit.push(c);
 }

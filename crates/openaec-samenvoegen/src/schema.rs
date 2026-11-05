@@ -3,7 +3,7 @@
 //! De tabellen in `src/schema/*.txt` komen uit de EXPRESS-schema's van buildingSMART, gemaakt met
 //! `scripts/genereer_schema.py` (zie daar voor de bron en de opmaak). We lezen een tabel één keer per proces.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 /// Soort aggregaat van een attribuut.
@@ -63,7 +63,7 @@ impl Entiteit {
 }
 
 /// Velden die een programma bij elk opslaan opnieuw invult, per entiteit (met haar subtypes). Ze tellen niet mee
-/// bij het vergelijken; bij samenvoegen blijft de waarde van ons staan.
+/// bij het vergelijken. Bij samenvoegen komt de waarde van hun als alleen hun het veld wijzigde, anders die van ons.
 /// - IfcOwnerHistory: de tijdstempels en wie het laatst wijzigde. OwningUser en OwningApplication tellen wel mee.
 /// - IfcWorkControl (IfcWorkPlan, IfcWorkSchedule): Open Planner Studio schrijft bij elk opslaan het huidige
 ///   tijdstip in CreationDate (`creationDate: now` in `ifcWriter.ts`).
@@ -78,12 +78,27 @@ pub(crate) const VLUCHTIG: &[(&str, &[&str])] = &[
 pub(crate) struct Schema {
     pub naam: &'static str,
     entiteiten: HashMap<String, Entiteit>,
+    /// De INVERSE-attributen met een bovengrens: (bron in hoofdletters, FOR-attribuut).
+    begrensd: Vec<(String, String)>,
+    /// De TYPE's die een SET of BAG zijn, in hoofdletters (bijv. IFCPROPERTYSETDEFINITIONSET).
+    ongeordende_typen: HashSet<String>,
 }
 
 impl Schema {
     /// De entiteit bij een type-naam in hoofdletters (zoals in een IFC-bestand).
     pub fn entiteit(&self, type_naam: &str) -> Option<&Entiteit> {
         self.entiteiten.get(type_naam)
+    }
+
+    /// Kan attribuut `naam` van entiteit `e` het FOR-attribuut van een INVERSE met een bovengrens zijn?
+    pub fn is_inverse_voor(&self, e: &Entiteit, naam: &str) -> bool {
+        self.begrensd.iter().any(|(bron, voor)| voor == naam && e.is_een(bron))
+    }
+
+    /// Is dit TYPE (in hoofdletters) een SET of BAG? Dan telt in een getypte waarde, bijv.
+    /// `IFCPROPERTYSETDEFINITIONSET((#1,#2))`, de volgorde niet.
+    pub fn is_ongeordend_type(&self, type_naam: &str) -> bool {
+        self.ongeordende_typen.contains(type_naam)
     }
 }
 
@@ -113,7 +128,12 @@ fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
         naam: &'t str,
     }
     let mut ruw: HashMap<String, Ruw> = HashMap::new();
+    let mut ongeordende_typen = HashSet::new();
     for regel in tekst.lines() {
+        if let Some(typen) = regel.strip_prefix('~') {
+            ongeordende_typen.extend(typen.split(',').filter(|t| !t.is_empty()).map(|t| t.to_ascii_uppercase()));
+            continue;
+        }
         if regel.starts_with('!') || regel.is_empty() {
             continue;
         }
@@ -193,7 +213,13 @@ fn lees_tabel(naam: &'static str, tekst: &str) -> Schema {
             },
         );
     }
-    Schema { naam, entiteiten }
+    let mut begrensd: Vec<(String, String)> = entiteiten
+        .values()
+        .flat_map(|e| e.inverses.iter().filter(|i| i.max.is_some()).map(|i| (i.bron.clone(), i.voor.clone())))
+        .collect();
+    begrensd.sort();
+    begrensd.dedup();
+    Schema { naam, entiteiten, begrensd, ongeordende_typen }
 }
 
 /// `Naam=Type.ForAttribuut[min:max]`.
@@ -259,6 +285,17 @@ mod tests {
         let taaktijd = kies("IFC4X3_ADD2").unwrap().entiteit("IFCTASKTIME").unwrap();
         assert_eq!(taaktijd.attributen.len(), 20);
         assert_eq!(kies("IFC4").unwrap().entiteit("IFCSIUNIT").unwrap().attributen.len(), 4);
+    }
+
+    /// Een TYPE dat een SET is, staat in de tabel (IFC4 en IFC4X3); een LIST-type niet. IFC2X3 heeft er geen.
+    #[test]
+    fn ongeordende_typen() {
+        for naam in ["IFC4", "IFC4X3_ADD2"] {
+            let s = kies(naam).unwrap();
+            assert!(s.is_ongeordend_type("IFCPROPERTYSETDEFINITIONSET"), "{naam}");
+            assert!(!s.is_ongeordend_type("IFCCOMPOUNDPLANEANGLEMEASURE"), "{naam}");
+        }
+        assert!(!kies("IFC2X3").unwrap().is_ongeordend_type("IFCPROPERTYSETDEFINITIONSET"));
     }
 
     #[test]

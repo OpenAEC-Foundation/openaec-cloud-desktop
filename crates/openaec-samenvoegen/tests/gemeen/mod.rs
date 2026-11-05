@@ -44,16 +44,32 @@ pub fn regel<'t>(tekst: &'t str, begin: &str) -> &'t str {
     tekst.lines().find(|r| r.starts_with(begin)).unwrap_or_else(|| panic!("geen regel {begin}"))
 }
 
-/// Voegt regels toe vlak voor de ENDSEC van de DATA-sectie.
-pub fn voeg_toe(tekst: &str, regels: &str) -> String {
-    let plek = tekst.rfind("ENDSEC;").unwrap();
-    format!("{}{}\n{}", &tekst[..plek], regels.trim_end(), &tekst[plek..])
+/// Het regeleinde van `tekst`: `\r\n` (Windows) of `\n`.
+pub fn regeleinde(tekst: &str) -> &'static str {
+    if tekst.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 
-/// Verwijdert de regel die met `begin` begint.
+/// Voegt regels toe vlak voor de ENDSEC van de DATA-sectie, met het regeleinde van `tekst`.
+pub fn voeg_toe(tekst: &str, regels: &str) -> String {
+    let nl = regeleinde(tekst);
+    let plek = tekst.rfind("ENDSEC;").unwrap();
+    let regels = regels.trim_end().replace("\r\n", "\n").replace('\n', nl);
+    format!("{}{regels}{nl}{}", &tekst[..plek], &tekst[plek..])
+}
+
+/// Verwijdert de regel die met `begin` begint, met zijn regeleinde.
 pub fn verwijder_regel(tekst: &str, begin: &str) -> String {
     let r = regel(tekst, begin).to_string();
-    vervang(tekst, &format!("{r}\n"), "")
+    vervang(tekst, &format!("{r}{}", regeleinde(tekst)), "")
+}
+
+/// `tekst` met `\r\n` als regeleinde, zoals veel Windows-programma's schrijven.
+pub fn met_crlf(tekst: &str) -> String {
+    tekst.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
 /// Een kleine, voorspelbare toevalsgenerator (xorshift).
@@ -238,4 +254,162 @@ pub fn gebouw(schema: &str) -> String {
         defs = gid("Defs"),
     );
     ifc(schema, &data)
+}
+
+// --- Een losse lezer voor feiten in een resultaat. ---
+
+/// Een eenvoudige lezer voor de tests: per `#n` het type en de attributen als tekst. Hij deelt geen code met de
+/// bibliotheek. Zo gaat een test een feit na ("W is rood", "V heeft een eigen plaatsing") los van de vergelijker.
+/// Complexe instanties (`#n=(A()B());`) slaat hij over.
+pub struct Feiten {
+    instanties: HashMap<u64, (String, Vec<String>)>,
+}
+
+/// Splitst op komma's op het bovenste niveau, buiten teksten en haakjes.
+fn splits(tekst: &str) -> Vec<String> {
+    let mut uit = Vec::new();
+    let mut huidig = String::new();
+    let (mut diepte, mut in_tekst) = (0usize, false);
+    for c in tekst.chars() {
+        match c {
+            '\'' => in_tekst = !in_tekst,
+            '(' if !in_tekst => diepte += 1,
+            ')' if !in_tekst => diepte -= 1,
+            ',' if !in_tekst && diepte == 0 => {
+                uit.push(huidig.trim().to_string());
+                huidig.clear();
+                continue;
+            }
+            _ => {}
+        }
+        huidig.push(c);
+    }
+    if !huidig.trim().is_empty() || !uit.is_empty() {
+        uit.push(huidig.trim().to_string());
+    }
+    uit
+}
+
+/// De nummers `#n` in `tekst`, buiten teksten.
+fn nummers(tekst: &str) -> Vec<u64> {
+    let mut uit = Vec::new();
+    let mut in_tekst = false;
+    let tekens: Vec<char> = tekst.chars().collect();
+    let mut i = 0;
+    while i < tekens.len() {
+        match tekens[i] {
+            '\'' => in_tekst = !in_tekst,
+            '#' if !in_tekst => {
+                let j = (i + 1..tekens.len()).find(|&j| !tekens[j].is_ascii_digit()).unwrap_or(tekens.len());
+                uit.push(tekens[i + 1..j].iter().collect::<String>().parse().unwrap());
+                i = j;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    uit
+}
+
+impl Feiten {
+    pub fn lees(tekst: &str) -> Self {
+        let begin = tekst.find("DATA;").unwrap() + "DATA;".len();
+        let eind = tekst.rfind("ENDSEC;").unwrap();
+        let mut lijst = HashMap::new();
+        for inst in instanties(&tekst[begin..eind]) {
+            let (nummer, rest) = inst.split_once('=').unwrap();
+            let n: u64 = nummer.trim().trim_start_matches('#').parse().unwrap();
+            let rest = rest.trim();
+            let Some(haakje) = rest.find('(').filter(|&h| h > 0) else { continue };
+            let binnen = &rest[haakje + 1..rest.rfind(')').unwrap()];
+            lijst.insert(n, (rest[..haakje].trim().to_ascii_uppercase(), splits(binnen)));
+        }
+        Feiten { instanties: lijst }
+    }
+
+    /// Het type van `#n`, in hoofdletters.
+    pub fn type_van(&self, n: u64) -> &str {
+        &self.instanties[&n].0
+    }
+
+    /// Attribuut `j` van `#n`, als tekst.
+    pub fn attr(&self, n: u64, j: usize) -> &str {
+        &self.instanties[&n].1[j]
+    }
+
+    /// Attribuut `j` van `#n` is één verwijzing; dit is het nummer.
+    pub fn verwijzing(&self, n: u64, j: usize) -> u64 {
+        let w = self.attr(n, j);
+        w.strip_prefix('#').and_then(|x| x.parse().ok()).unwrap_or_else(|| panic!("#{n}.{j} = {w}"))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst; dit zijn de elementen.
+    pub fn lijst(&self, n: u64, j: usize) -> Vec<String> {
+        let w = self.attr(n, j);
+        splits(w.strip_prefix('(').and_then(|x| x.strip_suffix(')')).unwrap_or_else(|| panic!("#{n}.{j} = {w}")))
+    }
+
+    /// Attribuut `j` van `#n` is een lijst van verwijzingen.
+    pub fn verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        self.lijst(n, j).iter().map(|e| e.trim_start_matches('#').parse().unwrap()).collect()
+    }
+
+    /// Het object met deze GlobalId (precies één).
+    pub fn met_globalid(&self, globalid: &str) -> u64 {
+        let tekst = format!("'{globalid}'");
+        let lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (_, a))| a.first() == Some(&tekst)).map(|(&n, _)| n).collect();
+        assert_eq!(lijst.len(), 1, "{globalid}: {lijst:?}");
+        lijst[0]
+    }
+
+    /// De instanties van dit type (in hoofdletters), op nummer.
+    pub fn van_type(&self, type_naam: &str) -> Vec<u64> {
+        let mut lijst: Vec<u64> =
+            self.instanties.iter().filter(|(_, (t, _))| t == type_naam).map(|(&n, _)| n).collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De instanties van dit type die in attribuut `j` naar `#doel` verwijzen (ook in een lijst), op nummer.
+    pub fn naar(&self, type_naam: &str, j: usize, doel: u64) -> Vec<u64> {
+        self.van_type(type_naam).into_iter().filter(|&n| nummers(self.attr(n, j)).contains(&doel)).collect()
+    }
+
+    /// Alle nummers, oplopend.
+    pub fn nummers(&self) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self.instanties.keys().copied().collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// Het type en de attributen van `#n`, als die er is.
+    pub fn instantie(&self, n: u64) -> Option<&(String, Vec<String>)> {
+        self.instanties.get(&n)
+    }
+
+    /// Alle `#k` in attribuut `j` van `#n` (ook in een getypte waarde of een geneste lijst).
+    pub fn alle_verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        nummers(self.attr(n, j))
+    }
+
+    /// De instanties die in een attribuut naar `#doel` verwijzen, op nummer.
+    pub fn verwijzers(&self, doel: u64) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self
+            .instanties
+            .iter()
+            .filter(|(_, (_, a))| a.iter().any(|w| nummers(w).contains(&doel)))
+            .map(|(&n, _)| n)
+            .collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De GlobalId van `#n` als het een object is: het eerste attribuut is een tekst van 22 tekens.
+    pub fn globalid(&self, n: u64) -> Option<String> {
+        let eerste = self.instanties.get(&n)?.1.first()?;
+        let binnen = eerste.strip_prefix('\'')?.strip_suffix('\'')?;
+        (binnen.len() == 22).then(|| binnen.to_string())
+    }
 }

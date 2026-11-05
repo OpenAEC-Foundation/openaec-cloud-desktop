@@ -17,7 +17,7 @@
 //! - een knoop dieper in een definitie die zelf aan een koppelrelatie hangt (bijv. de IfcClassification achter een
 //!   IfcClassificationReference): `A` + de identiteit van het anker (alle ankers samen).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::model::{attribuut_tekst, op_sleutel, Hash, Model, Soort};
 use crate::ontleden::{Token, Tokens};
@@ -40,8 +40,6 @@ struct Definities<'m, 'a> {
     relating: HashSet<&'m str>,
     /// Per knoopdefinitie: de instantie.
     instantie: HashMap<DefId, usize>,
-    /// Per definitie: de sleutels van de objecten waar hij bij hoort (het object zelf, of de relatie).
-    eigenaar: HashMap<DefId, Vec<&'m str>>,
     /// Per definitie: de definities waar hij naar verwijst of die aan hem hangen (onthouden).
     kinderen: HashMap<DefId, Vec<DefId>>,
     /// Ankeridentiteit -> knoop (alleen gevuld als het nodig is).
@@ -56,7 +54,6 @@ impl<'m, 'a> Definities<'m, 'a> {
             aan: HashMap::new(),
             relating: HashSet::new(),
             instantie: HashMap::new(),
-            eigenaar: HashMap::new(),
             kinderen: HashMap::new(),
             op_anker: None,
         };
@@ -86,9 +83,7 @@ impl<'m, 'a> Definities<'m, 'a> {
                         (Soort::Object(o), false) => {
                             let sleutel = m.objecten[o as usize].sleutel.as_str();
                             d.relating.insert(sleutel);
-                            let id = object_id(sleutel);
-                            d.eigenaar.entry(id.clone()).or_insert_with(|| vec![sleutel]);
-                            definities.push(id);
+                            definities.push(object_id(sleutel));
                         }
                         (Soort::Knoop, false) => {
                             let mut id = vec![b'R'];
@@ -97,7 +92,6 @@ impl<'m, 'a> Definities<'m, 'a> {
                             id.extend_from_slice(&(j as u32).to_le_bytes());
                             id.extend_from_slice(&positie.to_le_bytes());
                             d.instantie.insert(id.clone(), x);
-                            d.eigenaar.insert(id.clone(), vec![rel]);
                             definities.push(id);
                         }
                         (Soort::Knoop, true) => {}
@@ -198,14 +192,6 @@ impl<'m, 'a> Definities<'m, 'a> {
                                 if self.is_definitie_knoop(c) {
                                     let mut d = vec![b'A'];
                                     d.extend_from_slice(&a);
-                                    if !self.eigenaar.contains_key(&d) {
-                                        let eigenaars = m
-                                            .ankers(c)
-                                            .iter()
-                                            .map(|a| m.objecten[a.object as usize].sleutel.as_str())
-                                            .collect();
-                                        self.eigenaar.insert(d.clone(), eigenaars);
-                                    }
                                     uit.push(d);
                                 }
                             }
@@ -269,25 +255,9 @@ fn object_id(sleutel: &str) -> DefId {
     [b"G".as_slice(), sleutel.as_bytes()].concat()
 }
 
-/// De definities waarlangs D voor X geldt (D zelf en alles tussen X en D), in één versie.
-fn keten(voor: &HashMap<DefId, Vec<Option<DefId>>>, d: &[u8]) -> BTreeSet<DefId> {
-    let mut uit = BTreeSet::new();
-    let mut stapel = vec![d.to_vec()];
-    while let Some(x) = stapel.pop() {
-        if !uit.insert(x.clone()) {
-            continue;
-        }
-        for ouder in voor.get(&x).into_iter().flatten().flatten() {
-            stapel.push(ouder.clone());
-        }
-    }
-    uit
-}
-
 const KANT: [&str; 3] = ["basis", "ons", "hun"];
 
-/// Past de koppelregel toe. Geeft per conflict de sleutels (in het plan) die erbij horen: het object, de definities
-/// waarlangs D voor X gold, en de koppelrelaties daartussen.
+/// Past de koppelregel toe.
 pub(crate) fn koppelregel(m: &[Model; 3], plan: &Plan) -> Gevonden {
     let mut d = [Definities::nieuw(&m[B]), Definities::nieuw(&m[O]), Definities::nieuw(&m[H])];
     let mut uit = Vec::new();
@@ -359,33 +329,7 @@ pub(crate) fn koppelregel(m: &[Model; 3], plan: &Plan) -> Gevonden {
             };
             c.ons = Some(status(O));
             c.hun = Some(status(H));
-            // Betrokken: X, de definities waarlangs D gold, hun eigenaars, en de koppelrelaties ertussen.
-            let mut betrokken: BTreeSet<usize> = BTreeSet::from([si]);
-            for k in [B, O, H] {
-                let ketting = keten(voor[k], &def);
-                let mut leden: Vec<&str> = vec![x];
-                for e in &ketting {
-                    if let Some(eigenaars) = d[k].eigenaar.get(e) {
-                        leden.extend(eigenaars.iter().copied());
-                    }
-                    if let Some(s) = e.strip_prefix(b"G").and_then(|s| std::str::from_utf8(s).ok()) {
-                        leden.push(s);
-                    }
-                }
-                for lid in &leden {
-                    if let Some(&s) = plan.op_sleutel.get(*lid) {
-                        betrokken.insert(s);
-                    }
-                    for (e, rel) in d[k].aan.get(lid).into_iter().flatten() {
-                        if ketting.contains(e) {
-                            if let Some(&s) = plan.op_sleutel.get(*rel) {
-                                betrokken.insert(s);
-                            }
-                        }
-                    }
-                }
-            }
-            uit.push((c, betrokken.into_iter().collect()));
+            uit.push(c);
         }
     }
     uit
