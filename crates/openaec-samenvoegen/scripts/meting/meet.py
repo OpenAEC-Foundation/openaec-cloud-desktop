@@ -18,7 +18,7 @@ de CSV staat, slaat het over: zo kun je een reeks hervatten.
 
 Met MEET_IN_EEN_PLEK=1 draai je de hele reeks onder één `zwaar.sh` (`zwaar.sh env MEET_IN_EEN_PLEK=1 python3 ...`): dan
 wacht niet elke meting apart in de rij. Metingen die `--alleen` vragen, slaat het dan over; draai die daarna met een
-gewone run zonder MEET_IN_EEN_PLEK. Elke regel in de CSV: bron, schema, k, MB, opdracht,
+gewone run zonder MEET_IN_EEN_PLEK, of alles onder `zwaar.sh --alleen` met MEET_IN_EEN_PLEK=alleen. Elke regel in de CSV: bron, schema, k, MB, opdracht,
 soort, seconden, piek in MB, exitcode.
 """
 
@@ -35,7 +35,8 @@ GRENS = ["systemd-run", "--user", "--scope", "-q", "-p", "MemoryMax=2G", "-p", "
 DOEL_MB = [1, 2, 5, 10, 20, 40, 80, 150]
 STOP_MB = 1800
 ALLEEN_MB = 900
-IN_EEN_PLEK = os.environ.get("MEET_IN_EEN_PLEK") == "1"
+IN_EEN_PLEK = os.environ.get("MEET_IN_EEN_PLEK") in ("1", "alleen")
+HEEFT_ALLEEN = os.environ.get("MEET_IN_EEN_PLEK") == "alleen"
 # (opdracht, soort van de invoer)
 METINGEN = [
     ("verschil", "weinig"),
@@ -93,7 +94,7 @@ def main():
                         vorige[(opdracht, soort)] = (float(r["mb"]), float(r["piek_mb"]) if ok else None)
                         continue
                     alleen = verwacht is not None and verwacht >= ALLEEN_MB
-                    if alleen and IN_EEN_PLEK:
+                    if alleen and IN_EEN_PLEK and not HEEFT_ALLEEN:
                         print(f"{bron.name} k={k} {opdracht} {soort}: overgeslagen, vraagt --alleen", flush=True)
                         vorige[(opdracht, soort)] = (0, None)
                         continue
