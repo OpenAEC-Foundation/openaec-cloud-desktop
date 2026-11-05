@@ -42,4 +42,5 @@ for i in 1 2 3; do
   /usr/bin/time -f "landscaping-k34 voeg-samen: %e s, %M kB" "${G[@]}" bin/openaec-samenvoegen-0655eda voeg-samen \
     $w/basis.ifc $w/ons.ifc $w/hun.ifc -o $w/uit.ifc > /dev/null
 done
-rm -f werk/*/uit.ifc
+# Alleen de uitvoer die stap 5 zelf maakte (stap 1 en 4 ruimen hun eigen uit.ifc al op).
+rm -f werk/ifc4-infra-bridge-k86-weinig/uit.ifc werk/ifc2x3-infra-landscaping-k34-weinig/uit.ifc
