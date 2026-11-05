@@ -5,8 +5,9 @@
 //!
 //! **Ankers.** Een knoop waar een object rechtstreeks naar verwijst (bijv. IfcProduct.ObjectPlacement), is een
 //! *ankerknoop* van dat object, met als anker `(sleutel van het object, attribuut, positie)`. In een LIST of een
-//! enkel attribuut is de positie het hoeveelste `#n`; in een SET of BAG hangt de positie af van de inhoud van het
-//! element (zie [`Anker::positie`]), zodat de volgorde in de tekst niet meetelt. De identiteit van een ankerknoop is
+//! enkel attribuut is de positie het hoeveelste `#n`. Een SET of BAG heeft geen volgorde: daar koppelen we de leden
+//! tussen twee versies alleen als dat eenduidig kan ([`stem_ankers_af`], ontwerp §5.6), en een lid zonder koppeling
+//! krijgt een eigen positie (zie [`Anker::positie`]). De identiteit van een ankerknoop is
 //! de gesorteerde verzameling van zijn ankers. Een *gedeelde knoop* (waar meer objecten rechtstreeks naar verwijzen,
 //! bijv. IfcOwnerHistory of een gedeelde plaatsing) heeft dus meer ankers; er is geen gekozen vertegenwoordiger.
 //!
@@ -73,7 +74,8 @@ pub(crate) struct Anker {
     pub object: u32,
     pub attribuut: u32,
     /// In een LIST of een enkel attribuut: het hoeveelste `#n`. In een SET of BAG: [`ONGEORDEND`] plus een hash van
-    /// de inhoud van het element (zonder ankers), het hoeveelste gelijke element en het hoeveelste `#n` erin.
+    /// het lid (zijn plek in de basis als het gekoppeld is, anders zijn inhoud en plek in deze versie) en het
+    /// hoeveelste `#n` erin ([`set_positie`]).
     pub positie: u64,
 }
 
@@ -112,6 +114,10 @@ pub struct VersieStatistiek {
     pub cycli: usize,
 }
 
+/// Een lid van een SET of BAG ([`Model::set_elementen`]): per `#n` de knoop (None voor een object) en de plek van
+/// `#n` in de tekst van het attribuut, en de inhoudshash zonder ankers.
+type Lid = (Vec<(Option<u32>, usize)>, Hash);
+
 /// Per instantie de instanties die naar haar verwijzen ([`Model::verwijzers`]).
 pub(crate) struct Verwijzers {
     begin: Vec<u32>,
@@ -126,7 +132,7 @@ impl Verwijzers {
 
 pub(crate) struct Model<'a> {
     pub bestand: Bestand<'a>,
-    schema: Option<&'static schema::Schema>,
+    pub schema: Option<&'static schema::Schema>,
     type_entiteit: Vec<Option<&'static Entiteit>>,
     pub soort: Vec<Soort>,
     pub objecten: Vec<Object>,
@@ -149,9 +155,9 @@ pub(crate) struct Model<'a> {
     /// Inhoudshashes zonder ankers, voor de elementen van een SET of BAG van een object en wat eronder hangt
     /// ([`Model::bereken_puur`]).
     puur: Option<HashMap<u32, Hash>>,
-    /// Vaste posities voor ankers in een SET of BAG waarvan de inhoud veranderde: (object, attribuut, positie op
-    /// inhoud) -> positie in de basis ([`stem_ankers_af`]).
-    herpositie: HashMap<(u32, u32, u64), u64>,
+    /// De koppeling van de leden van elke SET of BAG met die van de basis: (object, attribuut, lid) -> lid in de
+    /// basis ([`stem_ankers_af`]). None: deze versie is zelf de basis.
+    koppeling: Option<HashMap<(u32, u32, u32), u32>>,
     /// Per instantie het object (index in `objecten`) waar een knoop bij hoort, of [`GEEN_EIGENAAR`] of
     /// [`MEER_EIGENAARS`] (na [`Model::bereken`]). Vanaf een object tellen zijn knopen rechtstreeks, en daaronder
     /// de knopen zonder anker; een ankerknoop van een ander object hoort bij dat object.
@@ -258,16 +264,11 @@ impl<'a> Model<'a> {
             wortels,
             wortel_sleutel: Vec::new(),
             puur: None,
-            herpositie: HashMap::new(),
+            koppeling: None,
             eigenaar: Vec::new(),
             kring: None,
             statistiek,
         })
-    }
-
-    /// Het schema uit FILE_SCHEMA, als we het kennen.
-    pub fn schema(&self) -> Option<&'static schema::Schema> {
-        self.schema
     }
 
     /// De schema-entiteit van een instantie, als het type bekend is en het aantal attributen klopt.
@@ -283,7 +284,7 @@ impl<'a> Model<'a> {
 
     /// Is dit trefwoord een TYPE dat een SET of BAG is (bijv. IFCPROPERTYSETDEFINITIONSET)?
     fn is_ongeordend_type(&self, trefwoord: &[u8]) -> bool {
-        self.schema().is_some_and(|s| {
+        self.schema.is_some_and(|s| {
             std::str::from_utf8(trefwoord).is_ok_and(|w| s.is_ongeordend_type(&w.to_ascii_uppercase()))
         })
     }
@@ -300,7 +301,8 @@ impl<'a> Model<'a> {
         self.gedeeld[k] && self.bestand.type_naam(k) != "IFCOWNERHISTORY"
     }
 
-    /// Rekent de inhoudshashes zonder ankers uit, voor de posities in een SET of BAG. Vóór [`stem_ankers_af`];
+    /// Rekent de inhoudshashes zonder ankers uit, voor het koppelen van de leden van een SET of BAG. Vóór
+    /// [`stem_ankers_af`];
     /// [`Model::bereken`] doet het zelf als het nog niet gebeurd is.
     pub fn bereken_puur(&mut self) {
         self.puur = Some(self.pure_hashes());
@@ -492,23 +494,25 @@ impl<'a> Model<'a> {
             Soort::Object(o) => o,
             Soort::Knoop => u32::MAX,
         };
-        for (doelen, inhoud, keer) in self.set_elementen(tekst, delen) {
+        for (e, (doelen, inhoud)) in self.set_elementen(tekst, delen).into_iter().enumerate() {
+            let e = e as u32;
+            let lid = match &self.koppeling {
+                None => Some(e),
+                Some(koppeling) => koppeling.get(&(o, j as u32, e)).copied(),
+            };
             for (r, (doel, begin)) in doelen.into_iter().enumerate() {
-                let Some(k) = doel else { continue };
-                let p = set_positie(&inhoud, keer, r as u32);
-                f(k, self.herpositie.get(&(o, j as u32, p)).copied().unwrap_or(p), begin);
+                if let Some(k) = doel {
+                    f(k, set_positie(lid, &inhoud, e, r as u32), begin);
+                }
             }
         }
     }
 
-    /// De elementen `delen` van een SET of BAG met minstens één verwijzing naar een knoop: per element de knopen
-    /// (per `#n`: de knoop of None voor een object, en de plek van `#n` in `tekst`), de inhoudshash zonder ankers en
-    /// het hoeveelste gelijke element.
-    #[allow(clippy::type_complexity)]
-    fn set_elementen(&self, tekst: &[u8], delen: Vec<(usize, usize)>) -> Vec<(Vec<(Option<u32>, usize)>, Hash, u32)> {
+    /// De leden `delen` van een SET of BAG met minstens één verwijzing naar een knoop: per lid de knopen (per `#n`:
+    /// de knoop of None voor een object, en de plek van `#n` in `tekst`) en de inhoudshash zonder ankers.
+    fn set_elementen(&self, tekst: &[u8], delen: Vec<(usize, usize)>) -> Vec<Lid> {
         debug_assert!(self.puur.is_some(), "eerst bereken_puur");
         let knoop = |n: u64| self.bestand.index.get(&n).copied().filter(|&k| self.soort[k as usize] == Soort::Knoop);
-        let mut gezien: HashMap<Hash, u32> = HashMap::new();
         let mut buffer = Vec::new();
         let mut uit = Vec::new();
         for (b, e) in delen {
@@ -524,31 +528,54 @@ impl<'a> Model<'a> {
             }
             buffer.clear();
             Canon { model: self, hashes: &[], puur: self.puur.as_ref() }.waarde(stuk, false, &mut buffer);
-            let inhoud = *blake3::hash(&buffer).as_bytes();
-            let keer = gezien.entry(inhoud).or_default();
-            uit.push((doelen, inhoud, *keer));
-            *keer += 1;
+            uit.push((doelen, *blake3::hash(&buffer).as_bytes()));
         }
         uit
     }
 
-    /// De elementen van SET- of BAG-attribuut `j` van object-instantie `i` die precies één verwijzing hebben, naar
-    /// een knoop: hun positie op inhoud en het type van de knoop. None als het attribuut geen SET of BAG is.
-    fn enkele_set_ankers(&self, i: usize, j: usize) -> Option<Vec<(u64, &str)>> {
+    /// De leden van SET- of BAG-attribuut `j` van object-instantie `i` ([`Model::set_elementen`]); None als het
+    /// attribuut geen SET of BAG is.
+    fn set_leden(&self, i: usize, j: usize) -> Option<Vec<Lid>> {
         if !self.is_ongeordend(i, j) {
             return None;
         }
         let tekst = attribuut_tekst(self, i, j);
-        let delen = elementen(tekst)?;
-        Some(
-            self.set_elementen(tekst, delen)
-                .into_iter()
-                .filter_map(|(doelen, inhoud, keer)| match doelen[..] {
-                    [(Some(k), _)] => Some((set_positie(&inhoud, keer, 0), self.bestand.type_naam(k as usize))),
-                    _ => None,
-                })
-                .collect(),
-        )
+        Some(self.set_elementen(tekst, elementen(tekst)?))
+    }
+
+    /// De attributen van knoop `k` als hashes zonder ankers (na [`Model::bereken_puur`]).
+    fn pure_attributen(&self, k: usize) -> Vec<Hash> {
+        let canon = Canon { model: self, hashes: &[], puur: self.puur.as_ref() };
+        (0..self.bestand.attributen(k).len())
+            .map(|j| {
+                let mut buffer = Vec::new();
+                canon.attribuut(k, j, false, &mut buffer);
+                *blake3::hash(&buffer).as_bytes()
+            })
+            .collect()
+    }
+
+    /// De objecten die (rechtstreeks of via knopen) naar knoop `k` verwijzen en in alle versies staan, als
+    /// gesorteerde sleutels.
+    fn verwijzende_objecten(&self, k: usize, terug: &Verwijzers) -> Vec<&str> {
+        let mut objecten = Vec::new();
+        let mut gezien: HashSet<u32> = HashSet::from([k as u32]);
+        let mut stapel = vec![k as u32];
+        while let Some(x) = stapel.pop() {
+            for &r in terug.van(x as usize) {
+                match self.soort[r as usize] {
+                    Soort::Object(o) if self.objecten[o as usize].gemeen => {
+                        objecten.push(self.objecten[o as usize].sleutel.as_str())
+                    }
+                    Soort::Object(_) => {}
+                    Soort::Knoop if gezien.insert(r) => stapel.push(r),
+                    Soort::Knoop => {}
+                }
+            }
+        }
+        objecten.sort_unstable();
+        objecten.dedup();
+        objecten
     }
 
     /// De knoop op positie `positie` in attribuut `j` van object-instantie `i` (zie [`Anker::positie`]), met de plek
@@ -1308,26 +1335,35 @@ fn getal(g: &[u8], uit: &mut Vec<u8>) {
     }
 }
 
-/// De positie van verwijzing `r` in een element van een SET of BAG: [`ONGEORDEND`] plus een hash van de inhoud van
-/// het element (zonder ankers), het hoeveelste gelijke element en `r`.
-fn set_positie(inhoud: &Hash, keer: u32, r: u32) -> u64 {
+/// De positie van verwijzing `r` in lid `e` van een SET of BAG: [`ONGEORDEND`] plus een hash van `lid` (het lid in de
+/// basis waarmee het gekoppeld is) of, zonder koppeling, van de inhoud en `e`. Zo valt een lid zonder koppeling
+/// nooit samen met een lid van de basis.
+fn set_positie(lid: Option<u32>, inhoud: &Hash, e: u32, r: u32) -> u64 {
     let mut h = blake3::Hasher::new();
-    h.update(inhoud);
-    h.update(&keer.to_le_bytes());
+    match lid {
+        Some(b) => h.update(b"B").update(&b.to_le_bytes()),
+        None => h.update(b"N").update(inhoud).update(&e.to_le_bytes()),
+    };
     h.update(&r.to_le_bytes());
     let p = u64::from_le_bytes(h.finalize().as_bytes()[..8].try_into().unwrap_or_default());
     ONGEORDEND | (p >> 1)
 }
 
-/// Houdt de identiteit van een ankerknoop in een SET of BAG vast als zijn inhoud verandert. De positie van zo'n
-/// anker hangt af van zijn inhoud (de volgorde telt niet); verandert de inhoud, dan zou ook elk object dat dieper
-/// naar het anker verwijst, veranderen (bijv. de Precision van de context van het project: elke vorm). Daarom krijgt
-/// een element van `x` dat niet ongewijzigd in de basis staat, de positie van het element in de basis dat niet
-/// ongewijzigd in `x` staat: per object, attribuut en type van de knoop, als dat er aan beide kanten precies één
-/// is. Na [`Model::bereken_puur`] van beide, vóór [`Model::bereken`] van `x`.
+/// Koppelt de leden van elke SET of BAG van `x` aan die van de basis (ontwerp §5.6, "Ankers in een SET"), alleen
+/// als dat eenduidig kan:
+/// 1. op gelijke inhoud, als die inhoud aan beide kanten precies één keer voorkomt;
+/// 2. daarna per type, voor de leden die over zijn (met één verwijzing naar een knoop): het paar met dezelfde
+///    objecten die ernaar verwijzen en de meeste gelijke attributen, alleen als elk van beide de enige beste keuze
+///    van de ander is.
+///
+/// Een gekoppeld lid krijgt de positie van zijn lid in de basis. Een lid zonder koppeling is aan de ene kant nieuw en
+/// aan de andere weg; elk object dat dieper naar zo'n lid verwijst, telt als gewijzigd. Een andere volgorde verbergt
+/// zo nooit een wijziging. Na [`Model::bereken_puur`] van beide en [`markeer_gemeen`], vóór [`Model::bereken`] van
+/// `x`.
 pub(crate) fn stem_ankers_af(basis: &Model, x: &mut Model) {
     let sb = op_sleutel(basis);
-    let mut herpositie = HashMap::new();
+    let mut koppeling = HashMap::new();
+    let mut terug: [Option<Verwijzers>; 2] = [None, None];
     for (o, object) in x.objecten.iter().enumerate() {
         let Some(&ob) = sb.get(object.sleutel.as_str()) else { continue };
         let (i, ib) = (object.inst as usize, basis.objecten[ob].inst as usize);
@@ -1336,24 +1372,80 @@ pub(crate) fn stem_ankers_af(basis: &Model, x: &mut Model) {
             continue;
         }
         for j in 1..n {
-            let (Some(ex), Some(eb)) = (x.enkele_set_ankers(i, j), basis.enkele_set_ankers(ib, j)) else { continue };
-            let in_x: HashSet<u64> = ex.iter().map(|e| e.0).collect();
-            let in_b: HashSet<u64> = eb.iter().map(|e| e.0).collect();
-            let mut rest: HashMap<&str, (Vec<u64>, Vec<u64>)> = HashMap::new();
-            for &(p, t) in eb.iter().filter(|e| !in_x.contains(&e.0)) {
-                rest.entry(t).or_default().0.push(p);
+            let (Some(lb), Some(lx)) = (basis.set_leden(ib, j), x.set_leden(i, j)) else { continue };
+            for (e, b) in koppel_leden([basis, x], [&lb, &lx], &mut terug) {
+                koppeling.insert((o as u32, j as u32, e), b);
             }
-            for &(p, t) in ex.iter().filter(|e| !in_b.contains(&e.0)) {
-                rest.entry(t).or_default().1.push(p);
-            }
-            for (b, xs) in rest.into_values() {
-                if let ([b], [p]) = (b.as_slice(), xs.as_slice()) {
-                    herpositie.insert((o as u32, j as u32, *p), *b);
+        }
+    }
+    x.koppeling = Some(koppeling);
+}
+
+/// De koppeling van de leden van één SET: (lid in x, lid in de basis). Zie [`stem_ankers_af`].
+fn koppel_leden(m: [&Model; 2], leden: [&[Lid]; 2], terug: &mut [Option<Verwijzers>; 2]) -> Vec<(u32, u32)> {
+    let mut uit = Vec::new();
+    // 1. Gelijke inhoud die aan beide kanten precies één keer voorkomt.
+    let mut op_inhoud: HashMap<Hash, [Vec<u32>; 2]> = HashMap::new();
+    for (kant, lijst) in leden.iter().enumerate() {
+        for (e, (_, inhoud)) in lijst.iter().enumerate() {
+            op_inhoud.entry(*inhoud).or_default()[kant].push(e as u32);
+        }
+    }
+    // 2. De rest per type, alleen leden met één verwijzing naar een knoop.
+    let mut per_type: BTreeMap<&str, [Vec<(u32, usize)>; 2]> = BTreeMap::new();
+    for [b, x] in op_inhoud.into_values() {
+        if let ([b], [x]) = (&b[..], &x[..]) {
+            uit.push((*x, *b));
+            continue;
+        }
+        for (kant, lijst) in [b, x].into_iter().enumerate() {
+            for e in lijst {
+                if let [(Some(k), _)] = leden[kant][e as usize].0[..] {
+                    per_type.entry(m[kant].bestand.type_naam(k as usize)).or_default()[kant].push((e, k as usize));
                 }
             }
         }
     }
-    x.herpositie = herpositie;
+    for [b, x] in per_type.into_values().filter(|[b, x]| !b.is_empty() && !x.is_empty()) {
+        let [ib, ix] = [(0, &b), (1, &x)].map(|(kant, lijst)| {
+            let t = terug[kant].get_or_insert_with(|| m[kant].verwijzers());
+            lijst
+                .iter()
+                .map(|&(_, k)| (m[kant].verwijzende_objecten(k, t), m[kant].pure_attributen(k)))
+                .collect::<Vec<_>>()
+        });
+        // Per paar: None als de verwijzende objecten verschillen, anders het aantal gelijke attributen.
+        let score: Vec<Vec<Option<usize>>> = (ib.iter())
+            .map(|(ob, ab)| {
+                (ix.iter())
+                    .map(|(ox, ax)| {
+                        (ob == ox && ab.len() == ax.len()).then(|| ab.iter().zip(ax).filter(|(u, v)| u == v).count())
+                    })
+                    .collect()
+            })
+            .collect();
+        for (p, rij) in score.iter().enumerate() {
+            let Some(q) = enige_beste(rij.iter().copied()) else { continue };
+            if enige_beste(score.iter().map(|r| r[q])) == Some(p) {
+                uit.push((x[q].0, b[p].0));
+            }
+        }
+    }
+    uit
+}
+
+/// De plek van de enige hoogste score, als die er is.
+fn enige_beste(scores: impl Iterator<Item = Option<usize>>) -> Option<usize> {
+    let mut beste: Option<(usize, usize, bool)> = None;
+    for (q, s) in scores.enumerate() {
+        beste = match (s, beste) {
+            (None, _) => beste,
+            (Some(s), Some((b, p, _))) if s == b => Some((b, p, false)),
+            (Some(s), Some((b, _, _))) if s < b => beste,
+            (Some(s), _) => Some((s, q, true)),
+        };
+    }
+    beste.and_then(|(_, p, enig)| enig.then_some(p))
 }
 
 /// Markeert per object of zijn sleutel in alle `modellen` staat ([`Object::gemeen`]). Vóór [`Model::bereken`].
@@ -1516,5 +1608,26 @@ mod tests {
         let tijd = m.toon(attribuut_tekst(&m, 0, 11), true, 200);
         assert!(tijd.starts_with("IfcTaskTime($, $, $, $, 'P5D', '2027-01-04T07:00:00'"), "{tijd}");
         assert_eq!(m.toon(attribuut_tekst(&m, 2, 5), true, 200), "(Fundering [3ScNjsTf6weF542amHNyMB])");
+    }
+
+    /// §5.6: een lid wordt alleen gekoppeld als elk van beide de enige beste keuze van de ander is. Eigenschap a
+    /// verandert en b valt weg: de enige overgebleven eigenschap is de beste keuze van a én van b, maar alleen a is
+    /// haar beste keuze (de naam is gelijk).
+    #[test]
+    fn koppeling_alleen_bij_een_wederzijdse_beste_keuze() {
+        let set = "#3=IFCPROPERTYSET('0Pset000000000000000000',$,'P',$,";
+        let a = ifc(
+            "IFC4",
+            &format!("#1=IFCPROPERTYSINGLEVALUE('a',$,IFCINTEGER(1),$);\n#2=IFCPROPERTYSINGLEVALUE('b',$,IFCINTEGER(2),$);\n{set}(#1,#2));"),
+        );
+        let b = ifc("IFC4", &format!("#1=IFCPROPERTYSINGLEVALUE('a',$,IFCINTEGER(3),$);\n{set}(#1));"));
+        let (mut ma, mut mb) = (Model::lees(a.as_bytes()).unwrap(), Model::lees(b.as_bytes()).unwrap());
+        markeer_gemeen(&mut [&mut ma, &mut mb]);
+        ma.bereken_puur();
+        mb.bereken_puur();
+        let leden = [&ma, &mb].map(|m| m.set_leden(m.objecten[0].inst as usize, 4).unwrap());
+        assert_eq!(koppel_leden([&ma, &mb], [&leden[0], &leden[1]], &mut [None, None]), [(0, 0)]);
+        stem_ankers_af(&ma, &mut mb);
+        assert_eq!(mb.koppeling, Some(HashMap::from([((0, 4, 0), 0)])));
     }
 }
