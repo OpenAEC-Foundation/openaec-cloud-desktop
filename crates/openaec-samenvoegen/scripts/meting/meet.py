@@ -99,7 +99,9 @@ def main():
                         vorige[(opdracht, soort)] = (0, None)
                         continue
                     map_ = werk / f"{bron.stem}-k{k}-{soort}"
-                    if not (map_ / "hun.ifc").exists():
+                    if map_.exists() and not (map_ / "klaar").exists():
+                        sys.exit(f"{map_}: onvolledige invoer (geen 'klaar'); verwijder de map en start opnieuw")
+                    if not (map_ / "klaar").exists():
                         subprocess.run(
                             [*([] if IN_EEN_PLEK else [ZWAAR]), sys.executable, "-I", str(HIER / "maak_invoer.py"), str(bron), str(k), soort,
                              str(map_)],

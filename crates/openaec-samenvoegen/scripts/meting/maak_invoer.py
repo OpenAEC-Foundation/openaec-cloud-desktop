@@ -14,7 +14,9 @@ De soort bepaalt wat ons en hun wijzigen (de Name van een object, het derde attr
 - groot:    ons als bij weinig; hun voegt een hele extra kopie van de bron toe (één grote wijziging).
 - conflict: ons en hun wijzigen dezelfde 0,1 % elk anders. Elk daarvan is een conflict.
 
-Schrijft <uitmap>/basis.ifc, ons.ifc en hun.ifc, regel voor regel (weinig geheugen).
+Schrijft <uitmap>/basis.ifc, ons.ifc en hun.ifc, regel voor regel (weinig geheugen), en als laatste het lege bestand
+<uitmap>/klaar. <uitmap> moet nieuw zijn, of een lege map die geen link is. Het script maakt alleen nieuwe bestanden
+(modus "x"): het overschrijft niets en volgt geen bestaande link. Zo kan het nooit zijn bron of iets anders vervangen.
 """
 
 import hashlib
@@ -112,8 +114,13 @@ def main():
     per = 10 if soort == "veel" else 1000
     # Kies elke `per`-de object; ons de eerste rest, hun de tweede (bij conflict dezelfde).
     stap = max(1, min(per, objecten // 2))
-    uitmap.mkdir(parents=True, exist_ok=True)
-    bestanden = {z: open(uitmap / f"{z}.ifc", "w", encoding="latin-1", newline="\n") for z in ("basis", "ons", "hun")}
+    uitmap.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        uitmap.mkdir()
+    except FileExistsError:
+        if uitmap.is_symlink() or not uitmap.is_dir() or any(uitmap.iterdir()):
+            sys.exit(f"{uitmap} bestaat al en is geen lege map; kies een nieuwe map")
+    bestanden = {z: open(uitmap / f"{z}.ifc", "x", encoding="latin-1", newline="\n") for z in ("basis", "ons", "hun")}
     for f in bestanden.values():
         f.write(kop + "\n")
     j = 0
@@ -141,6 +148,7 @@ def main():
     for f in bestanden.values():
         f.write(staart)
         f.close()
+    open(uitmap / "klaar", "x").close()
     groot = (uitmap / "basis.ifc").stat().st_size
     print(f"{bron.name} k={k} {soort}: {groot / 1e6:.1f} MB, {j} objecten, ons {gewijzigd['ons']}, hun {gewijzigd['hun']}")
 
