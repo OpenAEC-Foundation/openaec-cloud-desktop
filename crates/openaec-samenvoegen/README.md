@@ -196,7 +196,11 @@ Gemeten op aia09-mp50 (Linux Mint 22.3, 8 kernen), release-modus. Het grote best
 Gemeten op 5 november 2026, na fixronde 1 (commit `6a27723`). Na de review daarvan (vluchtige velden per object,
 eigenaars per object) opnieuw vergeleken met de vorige versie (`422f9cb`), om en om onder dezelfde belasting:
 `voeg-samen` 9,99 s tegen 9,86 s, beide 1,9 GB, met hetzelfde resultaat. Wijzigt hun ook de gedeelde
-IfcOwnerHistory van alle elementen (een vluchtige waarde op 200 000 ankers): 11,5 s tegen 11,1 s. De tijd is de middelste van drie runs, met de
+IfcOwnerHistory van alle elementen (een vluchtige waarde op 200 000 ankers): 11,5 s tegen 11,1 s. Na fixronde 3
+van #6 (de koppeling van SET-leden, `4010e80`) om en om vergeleken met `0655eda`: `voeg-samen` 10,4 s (10,4 tot
+10,8) tegen 10,7 s (10,5 tot 11,1), beide 1,9 GB; `verschil` 4,1 s (3,8 tot 4,1) tegen 3,9 s (3,7 tot 4,2), beide
+0,9 GB. Het resultaat en het verschil zijn byte voor byte gelijk. Die run draaide met `nice` naast andere processen,
+dus alle tijden liggen iets hoger dan in de tabel. De tijd is de middelste van drie runs, met de
 spreiding erbij; het piekgeheugen is de "Maximum resident set size" van `/usr/bin/time -v`. Vóór fixronde 1 was
 het 2,8 s en 870 MB voor `verschil`, en 9,5 s en 1,9 GB voor `voeg-samen`. Het geheugen is ongeveer 20 keer de
 bestandsgrootte: vier modellen (basis, ons, hun en het resultaat voor de zelfcontrole). Zelf meten:
