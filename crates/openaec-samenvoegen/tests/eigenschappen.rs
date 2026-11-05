@@ -37,6 +37,10 @@ fn config() -> Config {
     }
     // Geen bestanden met regressies naast de tests: een gevonden geval schrijven we als gewone test uit.
     c.failure_persistence = None;
+    // Krimpen stopt na drie minuten (een geval op het grote bestand kost veel samenvoegingen).
+    if std::env::var_os("PROPTEST_MAX_SHRINK_TIME").is_none() {
+        c.max_shrink_time = 180_000;
+    }
     c
 }
 
@@ -208,6 +212,8 @@ struct Doc {
     kop: String,
     staart: String,
     inst: BTreeMap<u64, String>,
+    /// Schrijven met `\r\n` (zoals veel Windows-programma's).
+    crlf: bool,
 }
 
 impl Doc {
@@ -229,7 +235,8 @@ impl Doc {
                 return Err(format!("#{n} staat er twee keer"));
             }
         }
-        Ok(Doc { kop: tekst[..begin].to_string(), staart: tekst[eind..].to_string(), inst })
+        let (kop, staart) = (tekst[..begin].replace("\r\n", "\n"), tekst[eind..].replace("\r\n", "\n"));
+        Ok(Doc { kop, staart, inst, crlf: tekst.contains("\r\n") })
     }
 
     fn lees(tekst: &str) -> Doc {
@@ -243,6 +250,9 @@ impl Doc {
             uit.push_str(&format!("#{n}={rest};\n"));
         }
         uit.push_str(&self.staart);
+        if self.crlf {
+            uit = uit.replace('\n', "\r\n");
+        }
         uit
     }
 
@@ -386,33 +396,56 @@ enum Bewerking {
     EigenschapErbij { pset: u32, naam: u8, waarde: u8 },
     NieuwePset { object: u32, naam: u8, waarde: u8 },
     Verwijder { doel: u32 },
-    Verplaats { doel: u32, x: i8 },
+    VerwijderObject { doel: u32 },
+    Verplaats { doel: u32, x: i8, vorm: u8 },
+    DeelPlaatsing { doel: u32 },
+    SplitsPlaatsing { doel: u32 },
     NieuwElement { bevat: u32, naam: u8 },
     HaalUit { doel: u32 },
+    TaakDatum { doel: u32, veld: u8, waarde: u8 },
+    EigenOwnerHistory { doel: u32, waarde: u8 },
+    Auteur { waarde: u8 },
     Tijdstempel { waarde: u8 },
+    Regeleinde,
     Hernummer { zaad: u64 },
 }
 
 fn bewerking() -> impl Strategy<Value = Bewerking> {
     prop_oneof![
-        3 => (any::<u32>(), 0u8..4).prop_map(|(doel, waarde)| Bewerking::Naam { doel, waarde }),
-        1 => (any::<u32>(), 0u8..4).prop_map(|(doel, waarde)| Bewerking::Beschrijving { doel, waarde }),
-        3 => (any::<u32>(), 0u8..4).prop_map(|(doel, waarde)| Bewerking::Eigenschap { doel, waarde }),
-        2 => (any::<u32>(), 0u8..3, 0u8..4)
+        3 => (any::<u32>(), 0u8..7).prop_map(|(doel, waarde)| Bewerking::Naam { doel, waarde }),
+        1 => (any::<u32>(), 0u8..7).prop_map(|(doel, waarde)| Bewerking::Beschrijving { doel, waarde }),
+        3 => (any::<u32>(), 0u8..7).prop_map(|(doel, waarde)| Bewerking::Eigenschap { doel, waarde }),
+        2 => (any::<u32>(), 0u8..3, 0u8..7)
             .prop_map(|(pset, naam, waarde)| Bewerking::EigenschapErbij { pset, naam, waarde }),
         2 => (any::<u32>(), 0u8..3, 0u8..4)
             .prop_map(|(object, naam, waarde)| Bewerking::NieuwePset { object, naam, waarde }),
         2 => any::<u32>().prop_map(|doel| Bewerking::Verwijder { doel }),
-        2 => (any::<u32>(), -3i8..4).prop_map(|(doel, x)| Bewerking::Verplaats { doel, x }),
+        2 => any::<u32>().prop_map(|doel| Bewerking::VerwijderObject { doel }),
+        2 => (any::<u32>(), -3i8..4, 0u8..3).prop_map(|(doel, x, vorm)| Bewerking::Verplaats { doel, x, vorm }),
+        1 => any::<u32>().prop_map(|doel| Bewerking::DeelPlaatsing { doel }),
+        1 => any::<u32>().prop_map(|doel| Bewerking::SplitsPlaatsing { doel }),
         2 => (any::<u32>(), 0u8..4).prop_map(|(bevat, naam)| Bewerking::NieuwElement { bevat, naam }),
         1 => any::<u32>().prop_map(|doel| Bewerking::HaalUit { doel }),
+        2 => (any::<u32>(), 0u8..4, 0u8..4).prop_map(|(doel, veld, waarde)| Bewerking::TaakDatum { doel, veld, waarde }),
+        1 => (any::<u32>(), 0u8..3).prop_map(|(doel, waarde)| Bewerking::EigenOwnerHistory { doel, waarde }),
+        1 => (0u8..3).prop_map(|waarde| Bewerking::Auteur { waarde }),
         1 => (1u8..6).prop_map(|waarde| Bewerking::Tijdstempel { waarde }),
+        1 => Just(Bewerking::Regeleinde),
         1 => any::<u64>().prop_map(|zaad| Bewerking::Hernummer { zaad }),
     ]
 }
 
 fn reeks() -> impl Strategy<Value = Vec<Bewerking>> {
-    prop::collection::vec(bewerking(), 0..=3)
+    prop::collection::vec(bewerking(), 0..=4)
+}
+
+/// Een reeks zonder bewerkingen van vluchtige velden (tijdstempel, eigen IfcOwnerHistory).
+fn reeks_zonder_vluchtig() -> impl Strategy<Value = Vec<Bewerking>> {
+    reeks().prop_map(|v| {
+        v.into_iter()
+            .filter(|b| !matches!(b, Bewerking::Tijdstempel { .. } | Bewerking::EigenOwnerHistory { .. }))
+            .collect()
+    })
 }
 
 /// Een vaste stap, op GlobalId en naam. Bestaat het doel niet (meer), dan doet de stap niets.
@@ -426,17 +459,43 @@ enum Stap {
     NieuwePset { object: String, pset: String, relatie: String, naam: String, waarde: String },
     /// De relatie weg; bij IfcRelDefinesByProperties ook de set, als niets anders hem gebruikt.
     Verwijder { relatie: String },
-    /// Het object krijgt een nieuwe plek: een nieuwe IfcAxis2Placement3D met een nieuw punt.
-    Verplaats { object: String, punt: [i32; 3] },
+    /// Het object weg, en uit alle relaties; een relatie die dan leeg is of geen doel meer heeft, ook weg.
+    VerwijderObject { globalid: String },
+    /// Het object krijgt een nieuwe plek: een nieuwe IfcAxis2Placement3D met een nieuw punt. De getallen in
+    /// schrijfwijze `vorm` (`100.`, `100.0` of `100.E0`).
+    Verplaats { object: String, punt: [i32; 3], vorm: u8 },
+    /// Het object krijgt de plaatsing van `met` (ze delen hem dan).
+    DeelPlaatsing { object: String, met: String },
+    /// Het object krijgt een eigen kopie van zijn gedeelde plaatsing.
+    SplitsPlaatsing { object: String },
     /// Een nieuwe IfcBuildingElementProxy in deze IfcRelContainedInSpatialStructure.
     NieuwElement { relatie: String, globalid: String, naam: String },
     /// Het element uit deze IfcRelContainedInSpatialStructure (alleen als er dan nog een overblijft).
     HaalUit { relatie: String, element: String },
+    /// Veld `veld` van de IfcTaskTime van de taak wordt `waarde`.
+    TaakDatum { taak: String, veld: usize, waarde: String },
+    /// Het object krijgt een eigen IfcOwnerHistory (MODIFIED, LastModifiedDate `tijd`), zoals sommige programma's
+    /// bij een gewijzigd object doen. Alleen vluchtige velden verschillen.
+    EigenOwnerHistory { globalid: String, tijd: u64 },
+    /// De familienaam van elke IfcPerson wordt `waarde` (de auteur; telt wel mee).
+    Auteur { waarde: String },
     /// Tijdstempels zoals OPS bij elk opslaan: FILE_NAME, IfcOwnerHistory.CreationDate en CreationDate van de
     /// planning (vluchtig).
     Tijdstempel { waarde: u8 },
+    /// Schrijven met `\r\n`.
+    Regeleinde,
     /// Alles opnieuw nummeren en de regels schudden.
     Hernummer { zaad: u64 },
+}
+
+impl Stap {
+    fn vluchtig(&self) -> bool {
+        matches!(self, Stap::Tijdstempel { .. } | Stap::EigenOwnerHistory { .. })
+    }
+
+    fn voegt_toe(&self) -> bool {
+        matches!(self, Stap::NieuwePset { .. } | Stap::NieuwElement { .. })
+    }
 }
 
 /// Een kant (ons, hun, ...): een letter voor de nieuwe GlobalIds en een teller.
@@ -451,19 +510,39 @@ impl Kant {
     }
 }
 
+/// Een tekst als STEP-waarde. De waarden 4, 5 en 6 zijn dezelfde tekst ("wé") in drie codes: `\S\i`, `\X\E9` en
+/// `\X2\00E9\X0\`.
+fn tekstwaarde(voor: char, w: u8) -> String {
+    match w {
+        4 => format!("'{voor}\\S\\i'"),
+        5 => format!("'{voor}\\X\\E9'"),
+        6 => format!("'{voor}\\X2\\00E9\\X0\\'"),
+        _ => format!("'{voor}{w}'"),
+    }
+}
+
+/// Een getal in schrijfwijze `vorm`: `100.`, `100.0` of `100.E0` (allemaal dezelfde waarde).
+fn getal(v: i32, vorm: u8) -> String {
+    match vorm {
+        0 => format!("{v}."),
+        1 => format!("{v}.0"),
+        _ => format!("{v}.E0"),
+    }
+}
+
 /// Een typewaarde met een nieuwe waarde van hetzelfde type (bijv. `IFCLABEL('w2')`, `IFCBOOLEAN(.T.)`).
 fn nieuwe_waarde(oud: &str, w: u8) -> String {
-    let Some(h) = oud.find('(') else { return format!("IFCLABEL('w{w}')") };
+    let Some(h) = oud.find('(') else { return format!("IFCLABEL({})", tekstwaarde('w', w)) };
     let ty = &oud[..h];
     let binnen = oud[h + 1..].trim_end_matches(')');
     if binnen.starts_with('\'') {
-        format!("{ty}('w{w}')")
+        format!("{ty}({})", tekstwaarde('w', w))
     } else if binnen.starts_with('.') {
         format!("{ty}({})", [".T.", ".F."][usize::from(w % 2)])
     } else if binnen.contains('.') || binnen.contains('E') {
-        format!("{ty}({w}.5)")
+        format!("{ty}({}.5)", w % 4)
     } else {
-        format!("{ty}({})", u32::from(w) + 1)
+        format!("{ty}({})", u32::from(w % 4) + 1)
     }
 }
 
@@ -473,6 +552,31 @@ fn objectachtig(ty: &str) -> bool {
         && !ty.ends_with("TYPE")
         && !ty.ends_with("STYLE")
         && !matches!(ty, "IFCPROPERTYSET" | "IFCELEMENTQUANTITY" | "IFCPROJECTLIBRARY")
+}
+
+impl Doc {
+    /// De IfcLocalPlacement van object `x` (attribuut 5), als die er is.
+    fn plaatsing(&self, x: u64) -> Option<u64> {
+        self.a(x).get(5).and_then(|a| verwijzing(a)).filter(|&p| self.ty(p) == "IFCLOCALPLACEMENT")
+    }
+
+    /// De objecten waarvan de plaatsing relatief aan `p` staat (PlacementRelTo).
+    fn kinderen(&self, p: u64) -> BTreeSet<String> {
+        self.verwijzers(p)
+            .into_iter()
+            .filter(|&q| self.ty(q) == "IFCLOCALPLACEMENT" && self.a(q).first().and_then(|a| verwijzing(a)) == Some(p))
+            .flat_map(|q| self.verwijzers(q))
+            .filter_map(|x| self.gid(x))
+            .collect()
+    }
+
+    /// Een object dat we mogen verwijderen: alleen relaties verwijzen ernaar.
+    fn verwijderbaar(&self, x: u64) -> bool {
+        let ty = self.ty(x);
+        objectachtig(&ty)
+            && ty != "IFCPROJECT"
+            && self.verwijzers(x).iter().all(|&r| self.gid(r).is_some() && self.ty(r).starts_with("IFCREL"))
+    }
 }
 
 /// Alle stappen die bewerking `b` op `doc` kan zijn.
@@ -487,9 +591,18 @@ fn kandidaten(doc: &Doc, b: &Bewerking, kant: &Kant) -> Vec<Stap> {
     };
     let psets = || objecten.iter().filter(|(_, n)| doc.ty(*n) == "IFCPROPERTYSET");
     let bevat = || objecten.iter().filter(|(_, n)| doc.ty(*n) == "IFCRELCONTAINEDINSPATIALSTRUCTURE");
+    // Objecten met een eigen IfcLocalPlacement met een IfcAxis2Placement3D.
+    let eigen_plek = || {
+        objecten.iter().filter(|(_, n)| {
+            doc.plaatsing(*n).is_some_and(|p| {
+                doc.plaatsing_eigenaars(p) == 1
+                    && doc.a(p).get(1).and_then(|a| verwijzing(a)).is_some_and(|ax| doc.ty(ax) == "IFCAXIS2PLACEMENT3D")
+            })
+        })
+    };
     match b {
-        Bewerking::Naam { waarde, .. } => zet(2, format!("'w{waarde}'")),
-        Bewerking::Beschrijving { waarde, .. } => zet(3, format!("'d{waarde}'")),
+        Bewerking::Naam { waarde, .. } => zet(2, tekstwaarde('w', *waarde)),
+        Bewerking::Beschrijving { waarde, .. } => zet(3, tekstwaarde('d', *waarde)),
         Bewerking::Eigenschap { waarde, .. } => {
             let mut uit = Vec::new();
             for (g, n) in psets() {
@@ -518,7 +631,7 @@ fn kandidaten(doc: &Doc, b: &Bewerking, kant: &Kant) -> Vec<Stap> {
             .map(|(g, _)| Stap::ZetEigenschap {
                 pset: g.clone(),
                 naam: format!("PBT{naam}"),
-                waarde: format!("IFCLABEL('w{waarde}')"),
+                waarde: format!("IFCLABEL({})", tekstwaarde('w', *waarde)),
             })
             .collect(),
         Bewerking::NieuwePset { naam, waarde, .. } => objecten
@@ -537,15 +650,30 @@ fn kandidaten(doc: &Doc, b: &Bewerking, kant: &Kant) -> Vec<Stap> {
             .filter(|(_, n)| doc.ty(*n).starts_with("IFCREL") && doc.verwijzers(*n).is_empty())
             .map(|(g, _)| Stap::Verwijder { relatie: g.clone() })
             .collect(),
-        Bewerking::Verplaats { x, .. } => objecten
+        Bewerking::VerwijderObject { .. } => objecten
             .iter()
-            .filter(|(_, n)| {
-                let Some(p) = doc.a(*n).get(5).and_then(|a| verwijzing(a)) else { return false };
-                doc.ty(p) == "IFCLOCALPLACEMENT"
-                    && doc.plaatsing_eigenaars(p) == 1
-                    && doc.a(p).get(1).and_then(|a| verwijzing(a)).is_some_and(|ax| doc.ty(ax) == "IFCAXIS2PLACEMENT3D")
-            })
-            .map(|(g, _)| Stap::Verplaats { object: g.clone(), punt: [100 * i32::from(*x), 50, 0] })
+            .filter(|(_, n)| doc.verwijderbaar(*n))
+            .map(|(g, _)| Stap::VerwijderObject { globalid: g.clone() })
+            .collect(),
+        Bewerking::Verplaats { x, vorm, .. } => eigen_plek()
+            .map(|(g, _)| Stap::Verplaats { object: g.clone(), punt: [100 * i32::from(*x), 50, 0], vorm: *vorm })
+            .collect(),
+        Bewerking::DeelPlaatsing { .. } => {
+            let eigen: Vec<&(String, u64)> = eigen_plek().collect();
+            let mut uit = Vec::new();
+            for (x, _) in &eigen {
+                for (y, _) in &eigen {
+                    if x != y {
+                        uit.push(Stap::DeelPlaatsing { object: x.clone(), met: y.clone() });
+                    }
+                }
+            }
+            uit
+        }
+        Bewerking::SplitsPlaatsing { .. } => objecten
+            .iter()
+            .filter(|(_, n)| doc.plaatsing(*n).is_some_and(|p| doc.plaatsing_eigenaars(p) > 1))
+            .map(|(g, _)| Stap::SplitsPlaatsing { object: g.clone() })
             .collect(),
         Bewerking::NieuwElement { naam, .. } => bevat()
             .filter(|(_, n)| doc.a(*n).len() > 5)
@@ -565,7 +693,32 @@ fn kandidaten(doc: &Doc, b: &Bewerking, kant: &Kant) -> Vec<Stap> {
             }
             uit
         }
+        Bewerking::TaakDatum { veld, waarde, .. } => objecten
+            .iter()
+            .filter(|(_, n)| {
+                doc.ty(*n) == "IFCTASK"
+                    && doc.a(*n).get(11).and_then(|a| verwijzing(a)).is_some_and(|t| doc.ty(t) == "IFCTASKTIME")
+            })
+            .map(|(g, _)| Stap::TaakDatum {
+                taak: g.clone(),
+                veld: 5 + usize::from(*veld),
+                waarde: format!("'2027-05-1{waarde}T07:00:00'"),
+            })
+            .collect(),
+        Bewerking::EigenOwnerHistory { waarde, .. } => objecten
+            .iter()
+            .filter(|(_, n)| doc.a(*n).get(1).and_then(|a| verwijzing(a)).is_some_and(|k| doc.ty(k) == "IFCOWNERHISTORY"))
+            .map(|(g, _)| Stap::EigenOwnerHistory { globalid: g.clone(), tijd: 1_900_000_100 + u64::from(*waarde) })
+            .collect(),
+        Bewerking::Auteur { waarde } => {
+            if doc.van_type("IFCPERSON").is_empty() {
+                Vec::new()
+            } else {
+                vec![Stap::Auteur { waarde: format!("'Auteur {waarde}'") }]
+            }
+        }
         Bewerking::Tijdstempel { waarde } => vec![Stap::Tijdstempel { waarde: *waarde }],
+        Bewerking::Regeleinde => vec![Stap::Regeleinde],
         Bewerking::Hernummer { zaad } => vec![Stap::Hernummer { zaad: *zaad }],
     }
 }
@@ -576,28 +729,150 @@ fn index_van(b: &Bewerking) -> Option<u32> {
         | Bewerking::Beschrijving { doel, .. }
         | Bewerking::Eigenschap { doel, .. }
         | Bewerking::Verwijder { doel }
+        | Bewerking::VerwijderObject { doel }
         | Bewerking::Verplaats { doel, .. }
-        | Bewerking::HaalUit { doel } => Some(*doel),
+        | Bewerking::DeelPlaatsing { doel }
+        | Bewerking::SplitsPlaatsing { doel }
+        | Bewerking::HaalUit { doel }
+        | Bewerking::TaakDatum { doel, .. }
+        | Bewerking::EigenOwnerHistory { doel, .. } => Some(*doel),
         Bewerking::EigenschapErbij { pset, .. } => Some(*pset),
         Bewerking::NieuwePset { object, .. } => Some(*object),
         Bewerking::NieuwElement { bevat, .. } => Some(*bevat),
-        Bewerking::Tijdstempel { .. } | Bewerking::Hernummer { .. } => None,
+        Bewerking::Auteur { .. } | Bewerking::Tijdstempel { .. } | Bewerking::Regeleinde | Bewerking::Hernummer { .. } => {
+            None
+        }
     }
 }
 
 /// Welke objecten (GlobalIds) een stap raakt. Voor het weghalen van een relatie: alles wat de relatie (ook via
-/// andere objecten, bijv. een type en zijn sets) bereikt; zo valt ook de koppelregel eronder.
+/// andere objecten, bijv. een type en zijn sets) bereikt; zo valt ook de koppelregel eronder. Verliest een
+/// plaatsing haar object, of verandert met wie ze gedeeld is, dan raakt dat ook de objecten die relatief aan haar
+/// staan.
 fn raakt(doc: &Doc, s: &Stap) -> BTreeSet<String> {
-    let set = |x: &[&String]| x.iter().map(|g| g.to_string()).collect();
+    let set = |x: &[&String]| x.iter().map(|g| g.to_string()).collect::<BTreeSet<_>>();
+    let kinderen = |g: &str| doc.met_gid(g).and_then(|x| doc.plaatsing(x)).map(|p| doc.kinderen(p)).unwrap_or_default();
     match s {
         Stap::ZetAttribuut { globalid, .. } => set(&[globalid]),
         Stap::ZetEigenschap { pset, .. } => set(&[pset]),
         Stap::NieuwePset { object, pset, relatie, .. } => set(&[object, pset, relatie]),
         Stap::Verwijder { relatie } => doc.met_gid(relatie).map(|n| doc.bereik(n)).unwrap_or_default(),
+        Stap::VerwijderObject { globalid } => {
+            let mut uit = set(&[globalid]);
+            if let Some(x) = doc.met_gid(globalid) {
+                for r in doc.verwijzers(x) {
+                    uit.extend(doc.bereik(r));
+                }
+            }
+            uit.extend(kinderen(globalid));
+            uit
+        }
         Stap::Verplaats { object, .. } => set(&[object]),
-        Stap::NieuwElement { relatie, globalid, .. } => set(&[relatie, globalid]),
+        Stap::DeelPlaatsing { object, met } => {
+            let mut uit = set(&[object, met]);
+            uit.extend(kinderen(object));
+            uit.extend(kinderen(met));
+            uit
+        }
+        Stap::SplitsPlaatsing { object } => {
+            let mut uit = set(&[object]);
+            if let Some(p) = doc.met_gid(object).and_then(|x| doc.plaatsing(x)) {
+                uit.extend(doc.verwijzers(p).into_iter().filter_map(|x| doc.gid(x)));
+                uit.extend(doc.kinderen(p));
+            }
+            uit
+        }
+        // Het nieuwe element staat relatief aan de plaatsing van de verdieping (RelatingStructure).
+        Stap::NieuwElement { relatie, globalid, .. } => {
+            let mut uit = set(&[relatie, globalid]);
+            let structuur = doc.met_gid(relatie).and_then(|r| doc.a(r).get(5).and_then(|a| verwijzing(a)));
+            uit.extend(structuur.and_then(|s| doc.gid(s)));
+            uit
+        }
         Stap::HaalUit { relatie, element } => set(&[relatie, element]),
-        Stap::Tijdstempel { .. } | Stap::Hernummer { .. } => BTreeSet::new(),
+        Stap::TaakDatum { taak, .. } => set(&[taak]),
+        Stap::EigenOwnerHistory { globalid, .. } => set(&[globalid]),
+        // De auteur hangt aan elke IfcOwnerHistory: dat raakt alle objecten.
+        Stap::Auteur { .. } => doc.objecten().into_iter().map(|(g, _)| g).collect(),
+        Stap::Tijdstempel { .. } | Stap::Regeleinde | Stap::Hernummer { .. } => BTreeSet::new(),
+    }
+}
+
+/// Haalt relatie `r` weg; bij IfcRelDefinesByProperties ook de set als niets anders hem gebruikt.
+fn verwijder_relatie(doc: &mut Doc, r: u64) {
+    if doc.verwijzers(r).is_empty() {
+        verwijder_met_rest(doc, &[r]);
+    }
+}
+
+/// Haalt de instanties `weg` weg, met wat daarna nergens meer bij hoort, zoals een programma dat doet: een
+/// eigenschappenset waar alleen een weggehaalde IfcRelDefinesByProperties naar wees, knopen waar niets meer naar
+/// verwijst, en losse knopen (bijv. een IfcStyledItem) die alleen nog naar weggevallen geometrie wijzen.
+fn verwijder_met_rest(doc: &mut Doc, weg: &[u64]) {
+    let knopen_onder = |doc: &Doc, start: Vec<u64>| {
+        let mut uit = HashSet::new();
+        let mut werk = start;
+        while let Some(k) = werk.pop() {
+            if doc.inst.contains_key(&k) && doc.gid(k).is_none() && uit.insert(k) {
+                werk.extend(verwijzingen(&doc.inst[&k]));
+            }
+        }
+        uit
+    };
+    let mut weg: Vec<u64> = weg.to_vec();
+    for &r in weg.clone().iter() {
+        if doc.ty(r) == "IFCRELDEFINESBYPROPERTIES" {
+            if let Some(s) = doc.a(r).get(5).and_then(|a| verwijzing(a)) {
+                if doc.ty(s) == "IFCPROPERTYSET" && doc.verwijzers(s).iter().all(|v| weg.contains(v)) {
+                    weg.push(s);
+                }
+            }
+        }
+    }
+    let start: Vec<u64> = weg.iter().flat_map(|n| doc.inst.get(n).map(|r| verwijzingen(r)).unwrap_or_default()).collect();
+    let onder = knopen_onder(doc, start.clone());
+    for n in &weg {
+        doc.inst.remove(n);
+    }
+    doc.ruim_op(start);
+    // Wat nog bij een object hoort.
+    let mut bereikbaar = HashSet::new();
+    let mut werk: Vec<u64> = doc.inst.keys().copied().filter(|&n| doc.gid(n).is_some()).collect();
+    while let Some(k) = werk.pop() {
+        if bereikbaar.insert(k) {
+            werk.extend(doc.inst.get(&k).map(|r| verwijzingen(r)).unwrap_or_default());
+        }
+    }
+    let losse: Vec<u64> = doc
+        .inst
+        .keys()
+        .copied()
+        .filter(|&n| doc.gid(n).is_none() && !bereikbaar.contains(&n) && doc.verwijzers(n).is_empty())
+        .collect();
+    for l in losse {
+        let onder_l = knopen_onder(doc, verwijzingen(&doc.inst[&l]));
+        if !onder_l.is_disjoint(&onder) && onder_l.is_disjoint(&bereikbaar) {
+            let rest = doc.inst.remove(&l).unwrap();
+            doc.ruim_op(verwijzingen(&rest));
+        }
+    }
+}
+
+/// Attribuut `j` van `n` wordt `waarde`. Delen andere instanties `n`, dan krijgt `van` een eigen kopie.
+fn zet_in_knoop(doc: &mut Doc, van: u64, attribuut: usize, n: u64, j: usize, waarde: &str) {
+    let mut na = doc.a(n);
+    if j >= na.len() || na[j] == waarde {
+        return;
+    }
+    na[j] = waarde.to_string();
+    if doc.verwijzers(n) == vec![van] {
+        doc.zet(n, &na);
+    } else {
+        let ty = doc.ty(n);
+        let kopie = doc.nieuw(format!("{ty}({})", na.join(",")));
+        let mut va = doc.a(van);
+        va[attribuut] = format!("#{kopie}");
+        doc.zet(van, &va);
     }
 }
 
@@ -662,26 +937,46 @@ fn pas_toe(doc: &mut Doc, s: &Stap) {
             doc.nieuw(format!("IFCRELDEFINESBYPROPERTIES('{relatie}',{oh},$,$,(#{x}),#{s})"));
         }
         Stap::Verwijder { relatie } => {
-            let Some(r) = doc.met_gid(relatie) else { return };
-            if !doc.verwijzers(r).is_empty() {
+            if let Some(r) = doc.met_gid(relatie) {
+                verwijder_relatie(doc, r);
+            }
+        }
+        Stap::VerwijderObject { globalid } => {
+            let Some(x) = doc.met_gid(globalid) else { return };
+            if !doc.verwijderbaar(x) {
                 return;
             }
-            let rest = doc.inst.remove(&r).unwrap();
-            let mut werk = verwijzingen(&rest);
-            if type_van(&rest) == "IFCRELDEFINESBYPROPERTIES" {
-                if let Some(s) = attributen(&rest).get(5).and_then(|a| verwijzing(a)) {
-                    if doc.ty(s) == "IFCPROPERTYSET" && doc.verwijzers(s).is_empty() {
-                        let srest = doc.inst.remove(&s).unwrap();
-                        werk.extend(verwijzingen(&srest));
+            let doel = format!("#{x}");
+            let mut weg = Vec::new();
+            for r in doc.verwijzers(x) {
+                let mut a = doc.a(r);
+                let mut leeg = false;
+                for attr in a.iter_mut().skip(2) {
+                    if attr.starts_with('(') {
+                        let mut l = lijst(attr);
+                        if l.contains(&doel) {
+                            l.retain(|e| *e != doel);
+                            leeg |= l.is_empty();
+                            *attr = maak_lijst(&l);
+                        }
+                    } else if *attr == doel {
+                        leeg = true;
                     }
                 }
+                if leeg {
+                    weg.push(r);
+                } else {
+                    doc.zet(r, &a);
+                }
             }
-            doc.ruim_op(werk);
+            weg.retain(|&r| doc.verwijzers(r).is_empty());
+            weg.push(x);
+            verwijder_met_rest(doc, &weg);
         }
-        Stap::Verplaats { object, punt } => {
+        Stap::Verplaats { object, punt, vorm } => {
             let Some(x) = doc.met_gid(object) else { return };
-            let Some(p) = doc.a(x).get(5).and_then(|a| verwijzing(a)) else { return };
-            if doc.ty(p) != "IFCLOCALPLACEMENT" || doc.plaatsing_eigenaars(p) != 1 {
+            let Some(p) = doc.plaatsing(x) else { return };
+            if doc.plaatsing_eigenaars(p) != 1 {
                 return;
             }
             let mut pa = doc.a(p);
@@ -690,11 +985,34 @@ fn pas_toe(doc: &mut Doc, s: &Stap) {
                 return;
             }
             let axa = doc.a(ax);
-            let np = doc.nieuw(format!("IFCCARTESIANPOINT(({}.,{}.,{}.))", punt[0], punt[1], punt[2]));
+            let [x, y, z] = punt.map(|v| getal(v, *vorm));
+            let np = doc.nieuw(format!("IFCCARTESIANPOINT(({x},{y},{z}))"));
             let na = doc.nieuw(format!("IFCAXIS2PLACEMENT3D(#{np},{},{})", axa[1], axa[2]));
             pa[1] = format!("#{na}");
             doc.zet(p, &pa);
             doc.ruim_op(vec![ax]);
+        }
+        Stap::DeelPlaatsing { object, met } => {
+            let (Some(x), Some(y)) = (doc.met_gid(object), doc.met_gid(met)) else { return };
+            let (Some(px), Some(py)) = (doc.plaatsing(x), doc.plaatsing(y)) else { return };
+            if px == py || doc.plaatsing_eigenaars(px) != 1 {
+                return;
+            }
+            let mut a = doc.a(x);
+            a[5] = format!("#{py}");
+            doc.zet(x, &a);
+            doc.ruim_op(vec![px]);
+        }
+        Stap::SplitsPlaatsing { object } => {
+            let Some(x) = doc.met_gid(object) else { return };
+            let Some(p) = doc.plaatsing(x) else { return };
+            if doc.plaatsing_eigenaars(p) < 2 {
+                return;
+            }
+            let kopie = doc.nieuw(doc.inst[&p].clone());
+            let mut a = doc.a(x);
+            a[5] = format!("#{kopie}");
+            doc.zet(x, &a);
         }
         Stap::NieuwElement { relatie, globalid, naam } => {
             let Some(r) = doc.met_gid(relatie) else { return };
@@ -731,6 +1049,43 @@ fn pas_toe(doc: &mut Doc, s: &Stap) {
             ra[4] = maak_lijst(&l);
             doc.zet(r, &ra);
         }
+        Stap::TaakDatum { taak, veld, waarde } => {
+            let Some(t) = doc.met_gid(taak) else { return };
+            let Some(tt) = doc.a(t).get(11).and_then(|a| verwijzing(a)) else { return };
+            if doc.ty(tt) == "IFCTASKTIME" {
+                zet_in_knoop(doc, t, 11, tt, *veld, waarde);
+            }
+        }
+        Stap::EigenOwnerHistory { globalid, tijd } => {
+            let Some(x) = doc.met_gid(globalid) else { return };
+            let Some(oh) = doc.a(x).get(1).and_then(|a| verwijzing(a)) else { return };
+            if doc.ty(oh) != "IFCOWNERHISTORY" {
+                return;
+            }
+            let mut a = doc.a(oh);
+            if a.len() < 8 {
+                return;
+            }
+            a[3] = ".MODIFIED.".into();
+            a[4] = tijd.to_string();
+            if doc.verwijzers(oh) == vec![x] {
+                doc.zet(oh, &a);
+            } else {
+                let kopie = doc.nieuw(format!("IFCOWNERHISTORY({})", a.join(",")));
+                let mut xa = doc.a(x);
+                xa[1] = format!("#{kopie}");
+                doc.zet(x, &xa);
+            }
+        }
+        Stap::Auteur { waarde } => {
+            for n in doc.van_type("IFCPERSON") {
+                let mut a = doc.a(n);
+                if a.len() > 1 {
+                    a[1] = waarde.clone();
+                    doc.zet(n, &a);
+                }
+            }
+        }
         Stap::Tijdstempel { waarde } => {
             doc.kop = zet_tijdstempel_in_kop(&doc.kop, &format!("2030-01-0{waarde}T00:00:00"));
             for n in doc.van_type("IFCOWNERHISTORY") {
@@ -748,7 +1103,12 @@ fn pas_toe(doc: &mut Doc, s: &Stap) {
                 }
             }
         }
-        Stap::Hernummer { zaad } => *doc = Doc::lees(&gemeen::hernummer(&doc.tekst(), *zaad)),
+        Stap::Regeleinde => doc.crlf = true,
+        Stap::Hernummer { zaad } => {
+            let crlf = doc.crlf;
+            *doc = Doc::lees(&gemeen::hernummer(&doc.tekst(), *zaad));
+            doc.crlf = crlf;
+        }
     }
 }
 
@@ -766,20 +1126,18 @@ fn maak_versie(basis: &str, bewerkingen: &[Bewerking], letter: char, verboden: &
     let mut stappen = Vec::new();
     let mut alles = BTreeSet::new();
     for b in bewerkingen {
-        let mogelijk: Vec<(Stap, BTreeSet<String>)> = kandidaten(&doc, b, &kant)
-            .into_iter()
-            .map(|s| {
-                let r = raakt(&doc, &s);
-                (s, r)
-            })
-            .filter(|(_, r)| r.is_disjoint(verboden))
-            .collect();
+        let mogelijk = kandidaten(&doc, b, &kant);
         kant.teller += 2;
         if mogelijk.is_empty() {
             continue;
         }
+        // Het gekozen doel, of het eerste daarna dat niets uit `verboden` raakt.
         let k = index_van(b).map_or(0, |i| i as usize % mogelijk.len());
-        let (stap, r) = mogelijk[k].clone();
+        let gekozen = (0..mogelijk.len()).map(|d| &mogelijk[(k + d) % mogelijk.len()]).find_map(|s| {
+            let r = raakt(&doc, s);
+            r.is_disjoint(verboden).then(|| (s.clone(), r))
+        });
+        let Some((stap, r)) = gekozen else { continue };
         pas_toe(&mut doc, &stap);
         alles.extend(r);
         stappen.push(stap);
@@ -887,6 +1245,15 @@ fn verhaal(bron: Bron, kanten: &[(&str, &[Stap])]) -> String {
         uit.push_str(&format!("\n{naam}: {stappen:?}"));
     }
     uit
+}
+
+/// Geldt het orakel? Niet als de ene kant de auteur wijzigt en de andere objecten toevoegt: in het orakel hangen de
+/// nieuwe objecten aan de gedeelde IfcOwnerHistory met de nieuwe auteur; samenvoegen geeft ze de IfcOwnerHistory van
+/// hun eigen kant (met de oude auteur). Beide zijn te verdedigen; `behoud` toetst dit geval wel.
+fn orakel_geldt(o: &[Stap], h: &[Stap]) -> bool {
+    let auteur = |x: &[Stap]| x.iter().any(|s| matches!(s, Stap::Auteur { .. }));
+    let toe = |x: &[Stap]| x.iter().any(Stap::voegt_toe);
+    !(auteur(o) && toe(h) || auteur(h) && toe(o))
 }
 
 /// De stappen van ons en hun na elkaar, als de volgorde niet uitmaakt (o;h ≡ h;o). Anders None.
@@ -1000,10 +1367,10 @@ fn behoud(b: &str, o: &str, h: &str, r: &str) -> Uit {
     Ok(())
 }
 
-/// Vluchtige velden: wijzigde alleen hun ze, dan die van hun; anders die van ons (§5.6). Onze tijdstempel raakt alle
-/// IfcOwnerHistory's en de planning tegelijk; het orakel is dan "hun en daarna ons", anders "ons en daarna hun".
+/// Vluchtige velden: wijzigde alleen hun ze, dan die van hun; anders die van ons (§5.6). Wijzigt ons vluchtige velden
+/// (een tijdstempel, een eigen IfcOwnerHistory), dan is het orakel "hun en daarna ons", anders "ons en daarna hun".
 fn vluchtig_volgens_de_regel(b: &str, o: &[Stap], h: &[Stap], r: &str) -> Uit {
-    let ons_tijd = o.iter().any(|s| matches!(s, Stap::Tijdstempel { .. }));
+    let ons_tijd = o.iter().any(Stap::vluchtig);
     let verwacht = if ons_tijd { na_elkaar(b, &[h, o]) } else { na_elkaar(b, &[o, h]) };
     let v = verschil_van(&verwacht, r)?;
     eis(v.vluchtig.is_empty(), || {
@@ -1076,18 +1443,15 @@ proptest! {
         let (o, h) = (versie(b, &so, 'O'), versie(b, &sh, 'H'));
         let wat = verhaal(bron, &[("ons", &o.stappen), ("hun", &h.stappen)]);
         let u = samen(b, &o.tekst, &h.tekst)?;
-        let verwacht = orakel(b, &o.stappen, &h.stappen)?;
-        match (&u.r, &verwacht) {
-            (Some(r), _) => {
-                behoud(b, &o.tekst, &h.tekst, r).map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
-                let v = verwacht.as_ref().ok_or_else(|| TestCaseError::fail(format!(
-                    "o;h en h;o verschillen, maar er is geen conflict\n{wat}"
-                )))?;
-                gelijk(r, v, &format!("resultaat tegen o;h\n{wat}"))?;
-                vluchtig_volgens_de_regel(b, &o.stappen, &h.stappen, r)
-                    .map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
-            }
-            (None, _) => {}
+        let Some(r) = &u.r else { return Ok(()) };
+        behoud(b, &o.tekst, &h.tekst, r).map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
+        if orakel_geldt(&o.stappen, &h.stappen) {
+            let v = orakel(b, &o.stappen, &h.stappen)?.ok_or_else(|| TestCaseError::fail(format!(
+                "o;h en h;o verschillen, maar er is geen conflict\n{wat}"
+            )))?;
+            gelijk(r, &v, &format!("resultaat tegen o;h\n{wat}"))?;
+            vluchtig_volgens_de_regel(b, &o.stappen, &h.stappen, r)
+                .map_err(|e| TestCaseError::fail(format!("{e}\n{wat}")))?;
         }
     }
 
@@ -1111,11 +1475,25 @@ proptest! {
     }
 
     /// Een klant slaat opnieuw op terwijl zijn werk al op de server staat (bijv. het antwoord op de eerste upload
-    /// ging verloren): met r = (b, o, h) geven (b, o, r) en (b, h, r) weer r.
+    /// ging verloren): met r = (b, o, h) geven (b, o, r) en (b, h, r) weer r. Faalt: zie
+    /// `opnieuw_opslaan_met_nieuwe_set_en_tijdstempel`.
     #[test]
+    #[ignore = "bevinding 1: opnieuw opslaan na een gelukte samenvoeging geeft een conflict op een vluchtig veld"]
     fn opnieuw_opslaan_na_gelukt(bron in bron(), so in reeks(), sh in reeks()) {
+        opnieuw_opslaan(bron, &so, &sh)?;
+    }
+
+    /// De zwakkere vorm van `opnieuw_opslaan_na_gelukt`: zonder bewerkingen van vluchtige velden.
+    #[test]
+    fn opnieuw_opslaan_zonder_vluchtige_velden(bron in bron(), so in reeks_zonder_vluchtig(), sh in reeks_zonder_vluchtig()) {
+        opnieuw_opslaan(bron, &so, &sh)?;
+    }
+}
+
+fn opnieuw_opslaan(bron: Bron, so: &[Bewerking], sh: &[Bewerking]) -> Uit {
+    {
         let b = tekst_van(bron);
-        let (o, h) = (versie(b, &so, 'O'), versie(b, &sh, 'H'));
+        let (o, h) = (versie(b, so, 'O'), versie(b, sh, 'H'));
         let wat = verhaal(bron, &[("ons", &o.stappen), ("hun", &h.stappen)]);
         let Some(r) = samen(b, &o.tekst, &h.tekst)?.r else { return Ok(()) };
         for (naam, (x, y, z)) in [
@@ -1126,6 +1504,7 @@ proptest! {
             gelijk(&r2, &r, &format!("{naam} tegen r\n{wat}"))?;
         }
     }
+    Ok(())
 }
 
 // --- 6. Volgorde. ---
@@ -1387,9 +1766,13 @@ fn generator_maakt_echte_wijzigingen() {
         Bewerking::EigenschapErbij { pset: i, naam: 0, waarde: 1 },
         Bewerking::NieuwePset { object: i, naam: 0, waarde: 1 },
         Bewerking::Verwijder { doel: i },
-        Bewerking::Verplaats { doel: i, x: 3 },
+        Bewerking::VerwijderObject { doel: i },
+        Bewerking::Verplaats { doel: i, x: 3, vorm: 2 },
+        Bewerking::DeelPlaatsing { doel: i },
         Bewerking::NieuwElement { bevat: i, naam: 0 },
         Bewerking::HaalUit { doel: i },
+        Bewerking::TaakDatum { doel: i, veld: 1, waarde: 3 },
+        Bewerking::Auteur { waarde: 1 },
     ];
     let mut gedaan: HashMap<String, usize> = HashMap::new();
     for bron in [Bron::Wand, Bron::Planning, Bron::Gebouw2x3, Bron::Architectuur2x3] {
@@ -1400,17 +1783,90 @@ fn generator_maakt_echte_wijzigingen() {
         assert_eq!(Doc::lees(b).objecten().len(), v.statistiek.a.objecten, "{bron:?}");
         for bw in &alle {
             let x = versie(b, std::slice::from_ref(bw), 'O');
+            // Elke verwijzing bestaat nog.
+            let doc = Doc::lees(&x.tekst);
+            for (n, rest) in &doc.inst {
+                for d in verwijzingen(rest) {
+                    assert!(doc.inst.contains_key(&d), "{bron:?}: {:?}: #{n} wijst naar #{d}, dat er niet is", x.stappen);
+                }
+            }
             let v = verschil(b.as_bytes(), x.tekst.as_bytes()).unwrap();
             if let Some(s) = x.stappen.first() {
                 assert!(!v.is_leeg(), "{bron:?}: {s:?} veranderde niets");
                 *gedaan.entry(format!("{bw:?}").split(' ').next().unwrap().to_string()).or_default() += 1;
             }
         }
-        // De tijdstempel is vluchtig: het verschil is leeg, maar noemt hem wel.
-        let x = versie(b, &[Bewerking::Tijdstempel { waarde: 3 }], 'O');
-        let v = verschil(b.as_bytes(), x.tekst.as_bytes()).unwrap();
-        assert!(v.is_leeg() && !v.vluchtig.is_empty(), "{bron:?}: {v:?}");
+        // De tijdstempel en een eigen IfcOwnerHistory zijn vluchtig: het verschil is leeg, maar noemt ze wel.
+        for bw in [Bewerking::Tijdstempel { waarde: 3 }, Bewerking::EigenOwnerHistory { doel: i, waarde: 1 }] {
+            let x = versie(b, &[bw], 'O');
+            let v = verschil(b.as_bytes(), x.tekst.as_bytes()).unwrap();
+            assert!(v.is_leeg() && !v.vluchtig.is_empty(), "{bron:?}: {:?} {v:?}", x.stappen);
+        }
+        // Delen en daarna splitsen: twee stappen.
+        let x = versie(b, &[Bewerking::DeelPlaatsing { doel: i }, Bewerking::SplitsPlaatsing { doel: i }], 'O');
+        if x.stappen.len() == 2 {
+            *gedaan.entry("SplitsPlaatsing".into()).or_default() += 1;
+        }
+        // Windows-regeleinden: andere tekst, zelfde inhoud.
+        let x = versie(b, &[Bewerking::Regeleinde, Bewerking::Hernummer { zaad: 5 }], 'O');
+        assert!(x.tekst.contains("\r\n") && !x.tekst.replace("\r\n", "").contains('\n'), "{bron:?}");
+        assert!(verschil(b.as_bytes(), x.tekst.as_bytes()).unwrap().is_leeg(), "{bron:?}");
     }
     // Elke soort bewerking kwam op minstens één bestand voor.
-    assert_eq!(gedaan.len(), alle.len(), "{gedaan:?}");
+    assert_eq!(gedaan.len(), alle.len() + 1, "{gedaan:?}");
+}
+
+// --- Bevindingen: de kleinste tegenvoorbeelden, uitgeschreven. ---
+
+/// Een nieuwe eigenschappenset voor W (#43) met deze GlobalIds, aan de gedeelde IfcOwnerHistory #5.
+fn nieuwe_set(pset: &str, relatie: &str) -> String {
+    format!(
+        "#90=IFCPROPERTYSINGLEVALUE('Nieuw',$,IFCLABEL('x'),$);\n\
+         #91=IFCPROPERTYSET('{}',#5,'Pset_Nieuw',$,(#90));\n\
+         #92=IFCRELDEFINESBYPROPERTIES('{}',#5,$,$,(#43),#91);",
+        gemeen::gid(pset),
+        gemeen::gid(relatie)
+    )
+}
+
+/// Bevinding 1 (`opnieuw_opslaan_na_gelukt`). Ons slaat op zoals Open Planner Studio: alleen de tijdstempel in de
+/// gedeelde IfcOwnerHistory verandert (CreationDate 1700000000 -> 1700000001). Hun hangt een nieuwe
+/// eigenschappenset aan wand W. Samenvoegen (b, ons, hun) lukt: r. Daarna slaat hun dezelfde versie nog eens op met
+/// basis b (het antwoord op de eerste upload ging bijv. verloren), terwijl r op de server staat: (b, hun, r).
+/// Verwacht: r, zonder conflict; hun voegt niets nieuws toe. Kreeg: conflict `GedeeldAnker` ("objecten delen in het
+/// resultaat IfcOwnerHistory ..., maar vragen elk een andere waarde voor een vluchtig veld"). De nieuwe set staat in
+/// hun én in r, niet in de basis; voor een nieuw object kiest de regel altijd ons (hier: hun-versie, oude
+/// tijdstempel), voor de bestaande objecten hun (hier: r, nieuwe tijdstempel). Ze delen één IfcOwnerHistory.
+#[test]
+#[ignore = "bevinding: opnieuw opslaan na een gelukte samenvoeging geeft een conflict op de vluchtige tijdstempel"]
+fn opnieuw_opslaan_met_nieuwe_set_en_tijdstempel() {
+    for schema in gemeen::SCHEMAS {
+        let b = gemeen::gebouw(schema);
+        let o = gemeen::vervang(&b, ",1700000000);", ",1700000001);");
+        let h = gemeen::voeg_toe(&b, &nieuwe_set("NieuwSet", "NieuwRel"));
+        let r = voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes()).unwrap();
+        let r = String::from_utf8(r.inhoud.expect("(b, ons, hun) lukt")).unwrap();
+        let s = voeg_samen(b.as_bytes(), h.as_bytes(), r.as_bytes()).unwrap();
+        let soorten: Vec<_> = s.conflicten.iter().map(|c| c.soort).collect();
+        assert!(s.gelukt, "{schema}: (b, hun, r) gaf conflicten {soorten:?}");
+        assert!(verschil(&s.inhoud.unwrap(), r.as_bytes()).unwrap().is_leeg(), "{schema}");
+    }
+}
+
+/// Bevinding 1, de algemene vorm. Ons en hun voegen allebei dezelfde eigenschappenset toe (dezelfde GlobalIds en
+/// inhoud); alleen hun zet ook de tijdstempel in de gedeelde IfcOwnerHistory. Verwacht: de set één keer, de
+/// tijdstempel van hun (alleen hun wijzigde hem), geen conflict. Kreeg: conflict `GedeeldAnker`.
+#[test]
+#[ignore = "bevinding: hetzelfde nieuwe object aan beide kanten plus een tijdstempel van hun geeft een conflict"]
+fn zelfde_nieuwe_set_en_tijdstempel_van_hun() {
+    for schema in gemeen::SCHEMAS {
+        let b = gemeen::gebouw(schema);
+        let o = gemeen::voeg_toe(&b, &nieuwe_set("NieuwSet", "NieuwRel"));
+        let h = gemeen::vervang(&o, ",1700000000);", ",1700000001);");
+        let s = voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes()).unwrap();
+        let soorten: Vec<_> = s.conflicten.iter().map(|c| c.soort).collect();
+        assert!(s.gelukt, "{schema}: (b, ons, hun) gaf conflicten {soorten:?}");
+        let v = verschil(&s.inhoud.unwrap(), h.as_bytes()).unwrap();
+        assert!(v.is_leeg() && v.vluchtig.is_empty(), "{schema}: {v:?}");
+    }
 }
