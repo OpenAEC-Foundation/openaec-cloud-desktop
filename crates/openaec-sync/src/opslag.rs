@@ -523,6 +523,31 @@ impl Opslag for ClientOpslag {
         let map = self.zorg_voor_map(mappad).await?;
         self.client.verplaats(bestand, naam, map.as_deref(), false).await.map(|_| ())
     }
+
+    /// Eén map opvragen (`api.bladeren`), zoals de controle na een verloren antwoord bij het afronden: niet de hele lijst.
+    /// Staat het bestand niet meer in zijn map (verwijderd of verplaatst), dan None.
+    async fn huidig(&self, bestand: &OpslagBestand) -> Result<Option<OpslagBestand>, Fout> {
+        let (mappad, _) = splits(&bestand.pad);
+        let bekend = match mappad.is_empty() {
+            true => Some(self.wortel()),
+            false => self.mappen.lock().unwrap().get(mappad).cloned().map(Some),
+        };
+        let map = match bekend {
+            Some(map) => map,
+            None => match self.zoek_map(mappad).await? {
+                Some(map) => Some(map),
+                None => return Ok(None),
+            },
+        };
+        let inhoud = self.client.bladeren(&self.ruimte, map.as_deref()).await?;
+        Ok(inhoud.bestanden.into_iter().find(|b| b.name == bestand.bestand).map(|b| OpslagBestand {
+            pad: samen(mappad, &b.naam),
+            bestand: b.name,
+            versie: b.huidige_versie,
+            grootte: b.grootte,
+            versie_id: b.versie_id,
+        }))
+    }
 }
 
 /// Een klein gedownload bestand controleren (BLAKE3 als de server hem kent) en atomair op zijn plek zetten.

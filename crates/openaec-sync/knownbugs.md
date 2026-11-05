@@ -57,10 +57,12 @@ De punten 20 tot en met 29 horen bij de offline wachtrij (werkstroom 6, `docs/sa
     als de ander dezelfde attributen terugdraaide), anders een conflictkopie. Geen verlies. Kan met `versies(bestand)`
     en de blokhashes per versie, of met optie C. — S
 21. **Hernoemen wordt alleen herkend als een ronde het zag vóór de volgende wijziging** (eigen bevinding, 5 november
-    2026). De herkenning vergelijkt grootte en wijzigingstijd. Draaide de app niet, of hernoemde en wijzigde de gebruiker
-    binnen de 2 s van de bestandswachter, dan blijft het zoals vóór deze stap: het nieuwe pad een nieuw bestand, het oude
-    naar de prullenbak (of terug als een ander het wijzigde). Ook een lastige naam (een veilige naam, een spatie vooraan)
-    valt erbuiten. Geen verlies, wel een nieuw bestand-id en geen samenvoeging. — S
+    2026). Grootte en wijzigingstijd kiezen de kandidaat; de vingerafdruk van de inhoud in de toestand bewijst het
+    (review Sol op PR #11, punt 1). Draaide de app niet, of hernoemde en wijzigde de gebruiker binnen de 2 s van de
+    bestandswachter, dan blijft het zoals vóór deze stap: het nieuwe pad een nieuw bestand, het oude naar de prullenbak
+    (of terug als een ander het wijzigde). Zo ook zonder vingerafdruk: een placeholder die alleen online staat, en een
+    bestand uit een toestand van vóór deze stap (tot de volgende overdracht). Een lastige naam (een veilige naam, een
+    spatie vooraan) valt er ook buiten. Geen verlies, wel een nieuw bestand-id en geen samenvoeging. — S
 22. **Een hernoeming op de server door een ander wordt niet gevolgd** (eigen bevinding, 5 november 2026). Wijzigde ik
     offline `a.ifc` en hernoemde een ander het naar `b.ifc`, dan komt mijn werk als nieuw bestand op `a.ifc`, en komt
     `b.ifc` erbij. Geen verlies, wel twee bestanden en geen samenvoeging. Kan door in de lijst het bestand-id te volgen
@@ -77,12 +79,25 @@ De punten 20 tot en met 29 horen bij de offline wachtrij (werkstroom 6, `docs/sa
     `Ronde::lever_in` legt de upload wel vast als onderweg, maar kijkt bij een volgende ronde niet in de toestand: crasht
     het programma na die upload en vóór het afronden van de bron, dan gaat de bron nog eens (een tweede conflictkopie of
     nieuw bestand). Zeldzaam (een programma schreef na een vervanging in de bron) en zonder verlies. — S
-26. **Elke upload kost een extra lezing en een fsync** (eigen bevinding, 5 november 2026). Vóór elke upload hasht de
-    motor het bestand en schrijft hij een klein bestand met fsync. Bij duizenden kleine bestanden kost dat tijd; niet
-    gemeten. — S
-27. **Verwijderen op de server is nog niet voorwaardelijk** (ontwerp §5.5, review Sol over het geheel, 5 november
-    2026). Een verwijdering gaat alleen als de lijst van deze ronde nog de basis toont. Slaat een ander op tussen die
-    lijst en de verwijdering, dan gaat zijn nieuwe versie naar de prullenbak op de server (terug te halen, maar weg uit
-    het actieve dossier). Proef `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` staat op `#[ignore]` en faalt
-    nu (`cargo test --test offline -- --ignored`: `verwijderd` is 1). Stap 5b bouwt de controle vlak vóór het
-    verwijderen; daarna gaat de `#[ignore]` eraf. Dicht pas met optie E uit `offline.md`. — B
+26. **Elke overdracht kost een extra lezing, en een upload ook een fsync** (eigen bevinding, 5 november 2026; review
+    Sol op PR #11, "dubbele volledige hashlezing"). Vóór elke upload hasht de motor het bestand (`Ronde::noteer_bestand`)
+    en schrijft hij een klein bestand met fsync; de client hasht het daarna nog eens voor de upload zelf
+    (`upload_poging` in `lib.rs`). Na elke download leest de motor het bestand nog eens voor de vingerafdruk
+    (`Ronde::inhoud`). Bij duizenden kleine bestanden of een heel groot bestand kost dat tijd; niet gemeten. Kan door de
+    hashes van de motor aan de client mee te geven, en bij een download de hashes te gebruiken die de client al
+    controleerde. — B
+27. **Verwijderen op de server: verkleind, niet gesloten** (ontwerp §5.5, review Sol over het geheel en op PR #11,
+    punt 3). Een verwijdering gaat alleen met een zekere basis (de versieregel in de toestand), als de lijst die basis
+    toont, en als het bestand vlak vóór het verwijderen opnieuw opgevraagd nog op die versie staat (`Opslag::huidig`).
+    De race tussen dat opvragen en het verwijderen sluit pas als de server `verwijder(bestand, basis_versie_id)` kent
+    (ontwerp §5.5, optie E in `offline.md`). Slaat een ander precies in dat gat op, dan gaat zijn nieuwe versie naar de
+    prullenbak op de server (terug te halen, maar weg uit het actieve dossier). Proef
+    `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` dekt het gat tussen de lijst en het opvragen. Dit punt is
+    geen vervolgpunt: het blokkeert tot de server met een basis verwijdert. — B
+28. **Het bewijs van een eigen upload hangt aan het volgnummer** (review Sol op PR #11, punt 5). `eigen_upload`
+    vergelijkt de blokhashes van de huidige versie, maar `ClientOpslag::blokhashes` vraagt ze op met het volgnummer
+    (`api.blokken`), niet met de versieregel. Komt hetzelfde nummer met een andere regel terug tussen de lijst en die
+    vraag, dan kan de toestand een regel krijgen waar de hashes niet bij horen. Zeldzaam (een herstel of verplaatsing
+    met overschrijven precies dan); de volgende ronde ziet dan een andere regel en haalt op of voegt samen. Kan met
+    `blokken` per versieregel op de server, of door na de vergelijking met `Opslag::huidig` na te gaan dat dezelfde regel
+    er nog staat (een extra verzoek), of met `lees_versie` als terugval (een volledige download). — B

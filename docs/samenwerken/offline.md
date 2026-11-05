@@ -19,15 +19,19 @@ verschil, en wordt één upload. De wachtrij bestaat uit drie delen.
 
 1. **De toestand** (`.openaec/staat.json`, al uit 5a en 5b; geschreven met fsync). Per bestand de basis: het bestand-id,
    het volgnummer en de `versie_id` waarop het lokale werk rust, en het kenmerk (grootte, wijzigingstijd) dat bij die
-   versie hoort. Offline verandert de basis niet, want de toestand gaat pas verder na een upload of download die de
-   server bevestigde. Bij een samenvoeging die nog niet lokaal staat, ook "afgeleid van S" (5b). Een bestand dat hier
-   offline gewist is, blijft in de toestand staan tot de verwijdering op de server gedaan is: die regel is de basis van
-   de verwijdering (ontwerp §5.5, "Ook verwijderen is voorwaardelijk").
-2. **Hernoemingen** (`verplaatst` in de toestand): nieuw pad → pad op de server. Een ronde ziet een hernoeming aan een
-   bekend bestand dat van zijn pad verdween, terwijl precies één nieuw bestand dezelfde grootte en wijzigingstijd heeft
-   (hernoemen laat die staan). De ronde verplaatst de basis mee naar het nieuwe pad en legt het oude pad op de server
-   vast. Dat gebeurt vóór het eerste verzoek aan de server, dus ook offline: de app start 2 s na een lokale wijziging
-   een ronde, en die komt tot de server.
+   versie hoort, met een vingerafdruk van de inhoud hier (één BLAKE3-hash over de blokhashes). Offline verandert de
+   basis niet, want de toestand gaat pas verder na een upload of download die de server bevestigde. Bij een
+   samenvoeging die nog niet lokaal staat, ook "afgeleid van S" (5b). Een bestand dat hier offline gewist is, blijft in
+   de toestand staan tot de verwijdering op de server gedaan is: die regel is de basis van de verwijdering (ontwerp
+   §5.5, "Ook verwijderen is voorwaardelijk").
+2. **Hernoemingen** (`verplaatst` in de toestand): nieuw pad → pad op de server. Een ronde zoekt een hernoeming bij een
+   bekend bestand dat van zijn pad verdween: precies één nieuw bestand met dezelfde grootte en wijzigingstijd (hernoemen
+   laat die staan) is de kandidaat. Pas als de kandidaat ook de vingerafdruk uit de toestand heeft, is het een
+   hernoeming. Voorbeeld: `a.txt` (AAAA) is weg en `b.txt` (BBBB) is nieuw, even groot en met dezelfde tijd. Dat is geen
+   hernoeming: `b.txt` wordt een nieuw bestand en `a.txt` gaat naar de prullenbak (proef
+   `zelfde_grootte_en_tijd_maar_andere_inhoud_is_geen_hernoeming`). Bij een hernoeming verplaatst de ronde de basis mee
+   naar het nieuwe pad en legt ze het oude pad op de server vast. Dat gebeurt vóór het eerste verzoek aan de server, dus
+   ook offline: de app start 2 s na een lokale wijziging een ronde, en die komt tot de server.
 3. **Uploads onderweg** (`.openaec/onderweg/<id>.json`, nieuw; zelfde stijl als het journaal van 5a). Vóór elke upload:
    het pad, de grootte en de blokhashes van de verstuurde inhoud, en het kenmerk van de momentopname S van het lokale
    bestand. Is de verstuurde inhoud een samenvoeging van S, dan ook waar S staat (`.openaec/eigen/`, zoals in 5b). Het
@@ -50,10 +54,18 @@ wel.
    blokhashes) nu als huidige versie op dat pad, en kent de toestand die versie nog niet? Dan was het de eigen upload.
    De toestand neemt die versie over, met het kenmerk van S (en "afgeleid" bij een samenvoeging).
 6. **Vergelijken en overdragen** (zoals in 5b): eerst de mappen voor de uploads, dan alle uploads en downloads (een
-   gewijzigd IFC-bestand door de opslaan-lus), dan pas de verwijderingen. Een verwijdering op de server gaat alleen als
-   de versie in de lijst nog de basis is: hetzelfde bestand-id, volgnummer en `versie_id`. Anders werkte een ander
-   verder, en komt die versie terug. `Opslag::verwijder` krijgt het bestand uit de lijst, dus met de `versie_id` van de
-   basis.
+   gewijzigd IFC-bestand door de opslaan-lus), dan pas de verwijderingen. Een verwijdering op de server gaat alleen
+   als drie dingen kloppen:
+   - De basis is zeker. Kent de server versieregels, dan moet ook de toestand de `versie_id` kennen. Een toestand van
+     vóór de versieregels haalt het bestand terug, met een melding; daarna is er een basis
+     (`gewist_met_een_toestand_zonder_versieregel`).
+   - De versie in de lijst is nog de basis: hetzelfde bestand-id, volgnummer en `versie_id`. Anders werkte een ander
+     verder, en komt die versie terug.
+   - Vlak vóór het verwijderen vraagt de sync het bestand opnieuw op (`Opslag::huidig`; bij de client één map met
+     `api.bladeren`). Staat het niet meer op de versie uit de lijst, of is dat niet na te gaan, dan blijft het staan,
+     en vergelijkt de volgende ronde opnieuw (`gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen`).
+
+   Het gat tussen dat opvragen en het verwijderen blijft: dicht pas met optie E (knownbugs 27).
 7. **De toestand op schijf**, daarna pas de afgehandelde bestanden in `.openaec/onderweg/` weg.
 
 Voorbeeld: Anna hernoemt offline `planning.ifc` naar `fase 2/planning-v2.ifc` en wijzigt taak B. Piet wijzigt op de
@@ -100,7 +112,7 @@ bestand gelijk aan die versie. Er gaat dus niets verloren.
 | Een ander wijzigde het bestand | Gewijzigd | IFC: samengevoegd, of een conflictkopie met rapport. Anders: een conflictkopie |
 | Een ander wiste het bestand | Gewijzigd | Het werk komt terug als nieuw bestand (proef `de_server_wiste_het_bestand_intussen`) |
 | Een ander sloeg een nieuwe versie op | Gewist | De verwijdering gaat niet; de nieuwe versie komt terug (`offline_gewist_terwijl_een_ander_opsloeg`; ook bij hetzelfde volgnummer met een andere versieregel) |
-| Een ander sloeg op tussen onze lijst en onze verwijdering | Gewist | Nog een gat: de versie van de ander gaat naar de prullenbak (knownbugs 27). Stap 5b haalt vlak vóór het verwijderen de huidige versie op; dicht pas met optie E |
+| Een ander sloeg op tussen onze lijst en onze verwijdering | Gewist | De sync vraagt het bestand vlak vóór het verwijderen opnieuw op, ziet de nieuwe versie en laat het staan (`gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen`). Slaat de ander precies tussen dat opvragen en het verwijderen op, dan gaat zijn versie naar de prullenbak: dicht pas met optie E (knownbugs 27) |
 | Een ander wiste het en maakte een nieuw met dezelfde naam | Gewijzigd | `onbekende_basis`: een conflictkopie met rapport; hier het nieuwe bestand van de ander (`dezelfde_naam_opnieuw_gemaakt_op_de_server`) |
 | Een ander hernoemde het bestand | Gewijzigd | Het werk komt als nieuw bestand op het oude pad, het hernoemde bestand komt erbij. Geen verlies, wel twee bestanden (knownbugs 22) |
 | Op het nieuwe pad staat al een ander bestand | Hernoemd | De server weigert `verplaats`: zoals vóór deze stap een nieuw bestand (conflictkopie) en het oude pad naar de prullenbak (`hernoemen_naar_een_bezet_pad_wordt_een_nieuw_bestand`) |
@@ -128,7 +140,7 @@ alleen wat de trait `Opslag` al vraagt, en legt geen vorm vast die alleen bij PR
 
 - **E. Verwijderen met een basis.** `verwijder(bestand, basis_versie_id)` (ontwerp §5.5): de server wist alleen als de
   basis nog de huidige versie is. De client heeft de basis al bij de hand (zie stap 6); alleen de aanroep verandert.
-  Vraagt een wijziging op de server.
+  Sluit het laatste gat van stap 6 (knownbugs 27). Vraagt een wijziging op de server. Tot dan blokkeert dit punt.
 
 A werkt nu al, ook tegen de server van `main` (zonder vergelijk-en-schrijf schrijft de motor geen bestanden onderweg;
 zie hieronder). B of C maakt het afspelen ook voor conflictkopieën herhaalbaar.
@@ -138,7 +150,10 @@ zie hieronder). B of C maakt het afspelen ook voor conflictkopieën herhaalbaar.
 - Bestanden onderweg schrijft de motor alleen bij een opslag met vergelijk-en-schrijf (`Opslag::vergelijk_en_schrijf`):
   alleen dan geeft de lijst een `versie_id` om de eigen upload aan terug te vinden. Bij een oudere server blijft alles
   zoals het was.
-- Een hernoeming herkent de motor alleen als een ronde haar zag vóór het bestand daarna veranderde. Zie knownbugs 21.
+- Een hernoeming herkent de motor alleen als een ronde haar zag vóór het bestand daarna veranderde, en alleen met een
+  vingerafdruk in de toestand (niet bij een placeholder die alleen online staat). Zie knownbugs 21.
+- De vingerafdruk kost na een download een extra lezing van het bestand; bij een upload komt ze uit de hashes die de
+  motor toch al maakt (knownbugs 26).
 - Aanwezigheid en meldingen zijn er offline niet (§5.13). Uitgecheckte objecten offline bewaren hoort bij §5.7 en is hier
   niet gebouwd.
 - De punten die bewust open blijven, staan in `crates/openaec-sync/knownbugs.md` (20 en verder).

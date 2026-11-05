@@ -207,6 +207,13 @@ pub trait Opslag {
         let _ = (bestand, naar);
         Err(Fout::Controle("deze opslag kent geen verplaatsen".into()))
     }
+
+    /// Bestand `bestand` (zoals in de lijst) zoals het nu op de server staat, opnieuw gevraagd; None als het er niet
+    /// (meer) is. Vlak vóór een verwijdering op de server (ontwerp §5.5): zo gaat die alleen door als de versie nog de
+    /// basis is. Standaard uit een nieuwe lijst; een opslag die het goedkoper kan, doet het zelf.
+    async fn huidig(&self, bestand: &OpslagBestand) -> Result<Option<OpslagBestand>, Fout> {
+        Ok(self.lijst().await?.into_iter().find(|b| b.bestand == bestand.bestand))
+    }
 }
 
 /// Wat de motor doet met een lokaal bestand waarvan de naam niet kan (zie [`crate::namen`]).
@@ -309,6 +316,10 @@ struct Bekend {
     /// De server staat op deze versie (een samenvoeging), maar het bestand hier (met dit kenmerk) is nog de eigen invoer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     afgeleid: Option<Afgeleid>,
+    /// De vingerafdruk van de inhoud hier bij dit kenmerk (zie [`vingerafdruk`]): het bewijs voor een hernoeming (zie
+    /// [`zoek_verplaatsingen`]). None als die niet gemeten is (een placeholder, een toestand van daarvóór).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inhoud: Option<String>,
 }
 
 /// "Server op N, lokaal afgeleid van S" (ontwerp §5.6, "Terugzetten in de lokale map", punt 1 en 2): de opslaan-lus
@@ -681,6 +692,9 @@ struct Ronde<'a, O> {
     samen: bool,
     /// Uploads onderweg waarvan de uitkomst in de toestand komt: weg zodra die op schijf staat.
     afgehandeld: Mutex<Vec<String>>,
+    /// De vingerafdruk (zie [`vingerafdruk`]) van inhoud die de ronde al hashte, per (pad op de server, kenmerk): zo
+    /// leest [`Ronde::onthoud_als`] een bestand niet nog eens.
+    gemeten: Mutex<HashMap<(String, (u64, u128)), String>>,
 }
 
 impl<O: Opslag> Ronde<'_, O> {
@@ -701,16 +715,39 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]). Met het
     /// kenmerk (grootte, wijzigingstijd) dat bij die versie hoort, gemeten vóór het bestand op zijn plek kwam (of gezet
-    /// door de bewerking zelf): een programma dat er daarna meteen in schrijft, geeft zo een lokale wijziging.
-    fn onthoud_als(&self, pad: &str, bestand: &str, versie: u64, versie_id: Option<&str>, (grootte, mtime_ns): (u64, u128)) {
+    /// door de bewerking zelf): een programma dat er daarna meteen in schrijft, geeft zo een lokale wijziging. Met de
+    /// vingerafdruk van de inhoud hier (zie [`Ronde::inhoud`]).
+    async fn onthoud_als(&self, pad: &str, bestand: &str, versie: u64, versie_id: Option<&str>, k: (u64, u128)) {
+        let inhoud = self.inhoud(pad, k).await;
+        self.onthoud(pad, bestand, versie, versie_id, k, inhoud);
+    }
+
+    /// Als [`Ronde::onthoud_als`], met een vingerafdruk die de aanroeper al weet (of None: een placeholder, die niet
+    /// gelezen mag worden).
+    fn onthoud(&self, pad: &str, bestand: &str, versie: u64, versie_id: Option<&str>, (grootte, mtime_ns): (u64, u128), inhoud: Option<String>) {
         let rel = self.rel(pad);
         let versie_id = versie_id.map(str::to_string);
-        self.toestand
-            .lock()
-            .unwrap()
-            .bestanden
-            .insert(pad.to_string(), Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns, versie_id, afgeleid: None });
+        let b = Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns, versie_id, afgeleid: None, inhoud };
+        self.toestand.lock().unwrap().bestanden.insert(pad.to_string(), b);
         self.rapport.lock().unwrap().bijgewerkt.push(rel);
+    }
+
+    /// De vingerafdruk van het bestand hier van `pad`, als het nog kenmerk `k` heeft: uit wat de ronde al hashte, of
+    /// anders gelezen (een extra lezing, zie knownbugs 26). Niet bij alleen lezen: dan zoekt de motor geen hernoemingen.
+    async fn inhoud(&self, pad: &str, k: (u64, u128)) -> Option<String> {
+        if let Some(h) = self.gemeten.lock().unwrap().remove(&(pad.to_string(), k)) {
+            return Some(h);
+        }
+        if self.opslag.alleen_lezen() {
+            return None;
+        }
+        let lokaal = self.hier(pad);
+        tokio::task::spawn_blocking(move || meet_inhoud(&lokaal, k)).await.ok().flatten()
+    }
+
+    /// Onthoud dat de inhoud met kenmerk `k` voor `pad` deze blokhashes heeft (zie [`Ronde::inhoud`]).
+    fn gemeten(&self, pad: &str, k: (u64, u128), hashes: &[String]) {
+        self.gemeten.lock().unwrap().insert((pad.to_string(), k), vingerafdruk(hashes));
     }
 
     fn vergeet(&self, pad: &str) {
@@ -747,6 +784,7 @@ impl<O: Opslag> Ronde<'_, O> {
         if kenmerk(lokaal)? != k {
             return Ok(None);
         }
+        self.gemeten(sleutel, k, &hashes);
         self.noteer(Onderweg::nieuw(sleutel, k.0, hashes, k, None)).map(Some)
     }
 
@@ -781,7 +819,11 @@ impl<O: Opslag> Ronde<'_, O> {
                 // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen (zonder iets te vervangen), en
                 // de serverversie op de oorspronkelijke plek zetten. Niets gaat verloren. Hernoemen houdt het kenmerk.
                 vervang::plaats(&self.hier(pad), &self.hier(&up.pad))?;
-                self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd);
+                let meting = self.gemeten.lock().unwrap().remove(&(pad.to_string(), verstuurd));
+                if let Some(h) = meting {
+                    self.gemeten.lock().unwrap().insert((up.pad.clone(), verstuurd), h);
+                }
+                self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd).await;
                 let gedownload = self.haal_op(pad, server).await?;
                 self.tel(|r| {
                     r.conflicten += 1;
@@ -790,12 +832,12 @@ impl<O: Opslag> Ronde<'_, O> {
                 Ok(Actie::Conflict)
             }
             Some(_) => {
-                self.onthoud_als(pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd);
+                self.onthoud_als(pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd).await;
                 self.tel(|r| r.geupload += 1);
                 Ok(Actie::Geupload)
             }
             None => {
-                self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd);
+                self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), verstuurd).await;
                 self.tel(|r| r.geupload += 1);
                 Ok(Actie::Geupload)
             }
@@ -826,7 +868,7 @@ impl<O: Opslag> Ronde<'_, O> {
         let Some(r) = self.opslag.plaats_zelf(server, lokaal).await else { return Ok(false) };
         let k = r?;
         self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Download, totaal: 0 });
-        self.onthoud_als(pad, &server.bestand, server.versie, server.versie_id.as_deref(), k);
+        self.onthoud(pad, &server.bestand, server.versie, server.versie_id.as_deref(), k, None);
         Ok(true)
     }
 
@@ -835,7 +877,7 @@ impl<O: Opslag> Ronde<'_, O> {
         let versie = vervang::Versie { bestand: server.bestand.clone(), versie: server.versie, versie_id: server.versie_id.clone() };
         match self.vervang_hier(pad, Some((nieuw, versie))).await? {
             vervang::Uitkomst::Geplaatst(k) => {
-                self.onthoud_als(pad, &server.bestand, server.versie, server.versie_id.as_deref(), k);
+                self.onthoud_als(pad, &server.bestand, server.versie, server.versie_id.as_deref(), k).await;
                 Ok(true)
             }
             _ => Ok(false),
@@ -923,7 +965,7 @@ impl<O: Opslag> Ronde<'_, O> {
             p.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| vervang::plaats(&bron, &p)).is_ok()
         });
         if geplaatst {
-            self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), k);
+            self.onthoud_als(&up.pad, &up.bestand, up.versie, up.versie_id.as_deref(), k).await;
         }
         if let Err(e) = vervang::klaar(self.root, v) {
             log::warn!("{}: bron niet op te ruimen: {e}", v.pad);
@@ -1088,7 +1130,12 @@ impl<O: Opslag> Ronde<'_, O> {
             }
         };
         let grootte = inhoud.len() as u64;
-        let id = self.noteer(Onderweg::nieuw(pad, grootte, hash_bytes(inhoud, blokgrootte(grootte)), k, afgeleid))?;
+        let hashes = hash_bytes(inhoud, blokgrootte(grootte));
+        if afgeleid.is_none() {
+            // De inhoud is het lokale bestand zelf (met kenmerk k).
+            self.gemeten(pad, k, &hashes);
+        }
+        let id = self.noteer(Onderweg::nieuw(pad, grootte, hashes, k, afgeleid))?;
         let tijdelijk = vervang::nieuw_pad(self.root)?;
         tokio::fs::write(&tijdelijk, inhoud).await?;
         let r = self.opslag.schrijf_als(pad, &tijdelijk, basis, samengevoegd_uit).await;
@@ -1119,7 +1166,7 @@ impl<O: Opslag> Ronde<'_, O> {
         Teller::new(self.waarnemer, &self.rel(pad), Richting::Upload).stand(k.0, k.0);
         self.tel(|r| r.geupload += 1);
         if inhoud == ons {
-            self.onthoud_als(pad, &bestand, versie, Some(&id), k);
+            self.onthoud_als(pad, &bestand, versie, Some(&id), k).await;
             return Ok(Actie::Geupload);
         }
         log::info!("{}: samengevoegd met het werk van een ander; nu versie {versie} op de server", self.rel(pad));
@@ -1128,7 +1175,9 @@ impl<O: Opslag> Ronde<'_, O> {
         {
             let mut toestand = self.toestand.lock().unwrap();
             let afgeleid = Some(Afgeleid { eigen: naam, van });
-            let b = Bekend { bestand: bestand.clone(), versie, grootte: k.0, mtime_ns: k.1, versie_id: Some(id.clone()), afgeleid };
+            // Het bestand hier is nog S: de eigen invoer.
+            let inhoud = Some(vingerafdruk(&hash_bytes(ons, blokgrootte(k.0))));
+            let b = Bekend { bestand: bestand.clone(), versie, grootte: k.0, mtime_ns: k.1, versie_id: Some(id.clone()), afgeleid, inhoud };
             toestand.bestanden.insert(pad.to_string(), b);
             bewaar(self.root, &toestand)?;
         }
@@ -1136,7 +1185,8 @@ impl<O: Opslag> Ronde<'_, O> {
         tokio::fs::write(&tijdelijk, &inhoud).await?;
         let regel = vervang::Versie { bestand: bestand.clone(), versie, versie_id: Some(id.clone()) };
         if let vervang::Uitkomst::Geplaatst(k) = self.vervang_hier(pad, Some((tijdelijk, regel))).await? {
-            self.onthoud_als(pad, &bestand, versie, Some(&id), k);
+            self.gemeten(pad, k, &hash_bytes(&inhoud, blokgrootte(k.0)));
+            self.onthoud_als(pad, &bestand, versie, Some(&id), k).await;
         }
         Ok(Actie::Geupload)
     }
@@ -1223,6 +1273,15 @@ impl<O: Opslag> Ronde<'_, O> {
                 Ok(Some(Actie::Verwijderd))
             }
             Taak::VerwijderServer { pad, server } => {
+                // Vlak vóór het verwijderen opnieuw kijken (ontwerp §5.5): schreef een ander na de lijst, of is de versie
+                // niet na te gaan, dan blijft het bestand staan, en vergelijkt de volgende ronde opnieuw. Dit verkleint
+                // het gat; dicht is het pas als de server zelf met een basis verwijdert (knownbugs 27).
+                let nu = self.opslag.huidig(server).await?;
+                let gelijk = nu.as_ref().is_some_and(|n| n.versie == server.versie && n.versie_id == server.versie_id);
+                if !gelijk {
+                    log::info!("{}: op de server veranderd vlak vóór het verwijderen; blijft staan", self.rel(pad));
+                    return Ok(None);
+                }
                 self.opslag.verwijder(server).await?;
                 self.vergeet(pad);
                 self.tel(|r| r.verwijderd += 1);
@@ -1660,7 +1719,7 @@ pub async fn sync_met_opties<O: Opslag>(
         |sleutel, n| toestand.bestanden.get(sleutel).is_some_and(|b| b.bestand == n.bestand && b.versie == n.versie && b.afgeleid.is_none()),
     )?;
     for (sleutel, n, (grootte, mtime_ns)) in herstel.bijwerken {
-        let b = Bekend { bestand: n.bestand, versie: n.versie, grootte, mtime_ns, versie_id: n.versie_id, afgeleid: None };
+        let b = Bekend { bestand: n.bestand, versie: n.versie, grootte, mtime_ns, versie_id: n.versie_id, afgeleid: None, inhoud: None };
         toestand.bestanden.insert(sleutel, b);
     }
     // Een verwijdering staat, ook als de toestand van die ronde niet meer bewaard werd. Anders zou de vergelijking het
@@ -1689,7 +1748,7 @@ pub async fn sync_met_opties<O: Opslag>(
         let overslaan = |p: &str| {
             negeer.negeert(p) || uitgesloten_pad(p, uitgesloten) || lopend.contains(p) || herstel.geblokkeerd.contains_key(p)
         };
-        if zoek_verplaatsingen(&mut toestand, &ruw, overslaan) {
+        if zoek_verplaatsingen(root, &mut toestand, &ruw, overslaan).await {
             bewaar(root, &toestand)?;
         }
     }
@@ -1799,6 +1858,7 @@ pub async fn sync_met_opties<O: Opslag>(
         gestopt: AtomicBool::new(false),
         samen,
         afgehandeld: Mutex::new(onderweg.into_iter().map(|o| o.id).collect()),
+        gemeten: Mutex::new(HashMap::new()),
     };
 
     // Beslissen per pad. Wat geen overdracht is (opnemen, vergeten, uitgesloten), gebeurt meteen.
@@ -1867,7 +1927,15 @@ pub async fn sync_met_opties<O: Opslag>(
                 }
             }
             (false, Some(server)) => {
-                if bekend.is_some() && !server_gewijzigd && !alleen_lezen {
+                // Een verwijdering gaat alleen met een zekere basis: kent de server versieregels, dan ook de toestand
+                // (een volgnummer kan terugkomen, ontwerp §5.5). Een toestand van daarvóór haalt het bestand terug; zo
+                // is er een basis, en kan de gebruiker het opnieuw verwijderen.
+                let zeker = bekend.as_ref().is_some_and(|b| server.versie_id.is_none() || b.versie_id.is_some());
+                if bekend.is_some() && !zeker && !server_gewijzigd && !alleen_lezen {
+                    let melding = format!("{}: hier verwijderd, maar de basis is niet zeker; teruggehaald", ronde.rel(&pad));
+                    ronde.rapport.lock().unwrap().meldingen.push(melding);
+                }
+                if zeker && !server_gewijzigd && !alleen_lezen {
                     verwijderingen.push(Taak::VerwijderServer { pad, server: server.clone() });
                 } else {
                     overdrachten.push(Taak::Download { pad, server: server.clone() });
@@ -1927,12 +1995,42 @@ pub async fn sync_met_opties<O: Opslag>(
 }
 
 /// Hier hernoemd of verplaatst, ook offline: een bekend bestand is van zijn pad verdwenen, en precies één nieuw bestand
-/// heeft dezelfde grootte en wijzigingstijd (hernoemen laat die staan). Dan verhuist het in de toestand mee, met zijn
-/// basis, en onthoudt de toestand het pad op de server tot [`verplaats_op_server`] de hernoeming daar deed. Een wijziging
-/// daarna is zo een wijziging van hetzelfde bestand (samenvoegen vanuit de basis), geen nieuw bestand. Bij twijfel (twee
-/// kandidaten, een lastige naam, `overslaan`) blijft het zoals altijd: een nieuw bestand en een verwijdering. Geeft true
-/// als de toestand veranderde.
-fn zoek_verplaatsingen(toestand: &mut Toestand, ruw: &BTreeMap<String, (u64, u128)>, overslaan: impl Fn(&str) -> bool) -> bool {
+/// heeft dezelfde grootte en wijzigingstijd (hernoemen laat die staan) én dezelfde inhoud (de vingerafdruk in de
+/// toestand, zie [`Bekend::inhoud`]). Grootte en tijd kiezen alleen de kandidaat; pas de inhoud bewijst het. Dan
+/// verhuist het bestand in de toestand mee, met zijn basis, en onthoudt de toestand het pad op de server tot
+/// [`verplaats_op_server`] de hernoeming daar deed. Een wijziging daarna is zo een wijziging van hetzelfde bestand
+/// (samenvoegen vanuit de basis), geen nieuw bestand. Bij twijfel (twee kandidaten, een lastige naam, `overslaan`, geen
+/// vingerafdruk of een andere inhoud) blijft het zoals altijd: een nieuw bestand en een verwijdering. Geeft true als de
+/// toestand veranderde.
+async fn zoek_verplaatsingen(root: &Path, toestand: &mut Toestand, ruw: &BTreeMap<String, (u64, u128)>, overslaan: impl Fn(&str) -> bool) -> bool {
+    let mut veranderd = false;
+    for (van, naar) in kandidaten(toestand, ruw, overslaan) {
+        let Some(b) = toestand.bestanden.get(&van) else { continue };
+        let (k, verwacht, lokaal) = ((b.grootte, b.mtime_ns), b.inhoud.clone(), lokaal_bestand(root, &naar));
+        let bewezen = match verwacht {
+            Some(h) => tokio::task::spawn_blocking(move || meet_inhoud(&lokaal, k)).await.ok().flatten() == Some(h),
+            None => false,
+        };
+        if !bewezen {
+            log::info!("{van} → {naar}: zelfde grootte en tijd, maar de inhoud is niet als hetzelfde te bewijzen; geen hernoeming");
+            continue;
+        }
+        let Some(b) = toestand.bestanden.remove(&van) else { continue };
+        toestand.bestanden.insert(naar.clone(), b);
+        // Twee keer hernoemd vóór de server het zag: op de server staat het nog op het eerste pad.
+        let op_server = toestand.verplaatst.remove(&van).unwrap_or_else(|| van.clone());
+        if op_server != naar {
+            toestand.verplaatst.insert(naar.clone(), op_server);
+        }
+        log::info!("{van}: hier hernoemd naar {naar}");
+        veranderd = true;
+    }
+    veranderd
+}
+
+/// De kandidaten voor [`zoek_verplaatsingen`]: (oud pad, nieuw pad), waar precies één verdwenen bekend bestand en
+/// precies één nieuw gewoon bestand hetzelfde kenmerk hebben.
+fn kandidaten(toestand: &Toestand, ruw: &BTreeMap<String, (u64, u128)>, overslaan: impl Fn(&str) -> bool) -> Vec<(String, String)> {
     // Per kenmerk: de bekende bestanden die weg zijn, en de nieuwe.
     let mut paren: BTreeMap<(u64, u128), (Vec<String>, Vec<String>)> = BTreeMap::new();
     for (sleutel, b) in &toestand.bestanden {
@@ -1947,20 +2045,28 @@ fn zoek_verplaatsingen(toestand: &mut Toestand, ruw: &BTreeMap<String, (u64, u12
             p.1.push(rel.clone());
         }
     }
-    let mut veranderd = false;
-    for (weg, nieuw) in paren.into_values() {
-        let ([van], [naar]) = (weg.as_slice(), nieuw.as_slice()) else { continue };
-        let Some(b) = toestand.bestanden.remove(van) else { continue };
-        toestand.bestanden.insert(naar.clone(), b);
-        // Twee keer hernoemd vóór de server het zag: op de server staat het nog op het eerste pad.
-        let op_server = toestand.verplaatst.remove(van).unwrap_or_else(|| van.clone());
-        if op_server != *naar {
-            toestand.verplaatst.insert(naar.clone(), op_server);
-        }
-        log::info!("{van}: hier hernoemd naar {naar}");
-        veranderd = true;
+    paren
+        .into_values()
+        .filter_map(|(weg, nieuw)| match (weg.as_slice(), nieuw.as_slice()) {
+            ([van], [naar]) => Some((van.clone(), naar.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Een vingerafdruk van een inhoud uit haar blokhashes (met [`blokgrootte`] bij haar grootte): één korte hash voor de
+/// toestand, en uit de blokhashes die de motor bij een upload toch al maakt.
+fn vingerafdruk(hashes: &[String]) -> String {
+    blake3::hash(hashes.join("\n").as_bytes()).to_hex().to_string()
+}
+
+/// De vingerafdruk van `lokaal`, als het kenmerk `k` heeft, voor en na het lezen (anders veranderde het onderweg).
+fn meet_inhoud(lokaal: &Path, k: (u64, u128)) -> Option<String> {
+    if kenmerk(lokaal).ok()? != k {
+        return None;
     }
-    veranderd
+    let hashes = crate::blokken::hash_bestand_nu(lokaal, blokgrootte(k.0)).ok()?;
+    (kenmerk(lokaal).ok()? == k).then(|| vingerafdruk(&hashes))
 }
 
 /// Doe de hernoemingen van [`zoek_verplaatsingen`] op de server, vóór de lijst: zo komt een hernoeming vóór een
@@ -2025,6 +2131,8 @@ async fn eigen_upload<O: Opslag>(
             mtime_ns: o.kenmerk.1,
             versie_id: Some(regel.versie_id),
             afgeleid: o.afgeleid.clone(),
+            // Bij een samenvoeging is het bestand hier S, niet de verstuurde inhoud.
+            inhoud: o.afgeleid.is_none().then(|| vingerafdruk(&o.hashes)),
         })),
         // Niet na te gaan nu (offline): niets opnieuw versturen in deze ronde.
         Err(f) if tijdelijk(&f) => Err(f),

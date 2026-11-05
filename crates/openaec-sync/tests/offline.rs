@@ -254,6 +254,15 @@ impl Opslag for Server {
             .flatten())
     }
 
+    /// Eén bestand opnieuw opvragen, zoals de server (zonder de haak van `na_lijst`).
+    async fn huidig(&self, bestand: &OpslagBestand) -> Result<Option<OpslagBestand>, Fout> {
+        self.verbinding()?;
+        Ok(self.bestanden.lock().unwrap().iter().find(|(_, f)| f.id == bestand.bestand).map(|(pad, f)| {
+            let (regel, inhoud) = f.versies.last().unwrap();
+            OpslagBestand { pad: pad.clone(), bestand: f.id.clone(), versie: f.versies.len() as u64, grootte: inhoud.len() as u64, versie_id: Some(regel.clone()) }
+        }))
+    }
+
     /// Zoals de server: hetzelfde doel is goed; een ander bestand op het doel, of een bestand dat weg is, niet.
     async fn verplaats(&self, bestand: &str, naar: &str) -> Result<(), Fout> {
         self.verbinding()?;
@@ -396,6 +405,47 @@ async fn hernoemen_naar_een_bezet_pad_wordt_een_nieuw_bestand() {
     assert_eq!(server.huidig("c.txt").unwrap(), b"van een ander");
     assert_eq!(std::fs::read(dir.path().join("c (conflict test).txt")).unwrap(), b"eerste");
     assert!(server.huidig("a.txt").is_none(), "het oude pad is weg (prullenbak)");
+}
+
+/// Review Sol op PR #11, punt 1: a.txt (AAAA) is weg en b.txt (BBBB) is nieuw, met dezelfde grootte en wijzigingstijd.
+/// Dat lijkt een hernoeming, maar de inhoud is anders. Dus zoals altijd: b.txt is een nieuw bestand met BBBB, en a.txt
+/// gaat naar de prullenbak. BBBB gaat niet verloren.
+#[tokio::test]
+async fn zelfde_grootte_en_tijd_maar_andere_inhoud_is_geen_hernoeming() {
+    let (server, dir) = begin("a.txt", b"AAAA").await;
+    let id = server.id("a.txt").unwrap();
+    let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+    let tijd = std::fs::metadata(&a).unwrap().modified().unwrap();
+    std::fs::remove_file(&a).unwrap();
+    std::fs::write(&b, b"BBBB").unwrap();
+    std::fs::File::options().write(true).open(&b).unwrap().set_modified(tijd).unwrap();
+
+    let r = ronde(&server, dir.path()).await.unwrap();
+    assert_eq!((r.geupload, r.verwijderd, r.fouten.len()), (1, 1, 0), "{r:?}");
+    assert_eq!(server.huidig("b.txt").unwrap(), b"BBBB", "BBBB staat op de server");
+    assert_ne!(server.id("b.txt").unwrap(), id, "een nieuw bestand");
+    assert!(server.huidig("a.txt").is_none(), "a.txt naar de prullenbak");
+    assert_eq!(std::fs::read(&b).unwrap(), b"BBBB");
+    in_sync(&server, dir.path()).await;
+}
+
+/// Een eigen bestand, geüpload en daarna hernoemd: de vingerafdruk komt uit de hashes die de upload al maakte.
+#[tokio::test]
+async fn eigen_bestand_hernoemd() {
+    let server = Server::default();
+    let dir = tempfile::tempdir().unwrap();
+    schrijf(dir.path(), "eigen.txt", b"mijn tekst");
+    let r = ronde(&server, dir.path()).await.unwrap();
+    assert_eq!((r.geupload, r.fouten.len()), (1, 0), "{r:?}");
+    let id = server.id("eigen.txt").unwrap();
+    std::fs::rename(dir.path().join("eigen.txt"), dir.path().join("hernoemd.txt")).unwrap();
+
+    let r = ronde(&server, dir.path()).await.unwrap();
+    assert_eq!((r.geupload, r.verwijderd, r.fouten.len()), (0, 0, 0), "{r:?}");
+    assert_eq!(server.paden(), vec!["hernoemd.txt".to_string()]);
+    assert_eq!(server.id("hernoemd.txt").unwrap(), id, "hetzelfde bestand");
+    assert_eq!(server.aantal_versies("hernoemd.txt"), 1);
+    in_sync(&server, dir.path()).await;
 }
 
 /// Het programma stopt vlak na de upload, vóór de toestand: de volgende start herkent de eigen upload. Geen tweede
@@ -650,10 +700,10 @@ async fn offline_gewist_en_dezelfde_versie_met_een_andere_regel() {
     assert_eq!(server.huidig("f1.txt").unwrap(), b"andere inhoud, ook nummer 1", "F1 blijft staan");
 }
 
-/// Als hierboven, maar A slaat op tussen de lijst van B en zijn verwijdering. Dicht pas als de sync vlak voor het
-/// verwijderen de huidige versie opnieuw ophaalt (stap 5b) of de server de basis controleert (ontwerp §5.5).
+/// Als hierboven, maar A slaat op tussen de lijst van B en zijn verwijdering (review Sol op PR #11, punt 3). De sync
+/// vraagt het bestand vlak vóór het verwijderen opnieuw op, ziet versie 2 en laat F1 staan; de volgende ronde haalt
+/// versie 2 hier op. Het gat tussen dat opvragen en het verwijderen blijft (knownbugs 27).
 #[tokio::test]
-#[ignore = "wacht op de controle vlak voor het verwijderen uit stap 5b (knownbugs 27)"]
 async fn gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen() {
     let (server, dir) = begin("f1.txt", b"versie 1").await;
     std::fs::remove_file(dir.path().join("f1.txt")).unwrap();
@@ -662,4 +712,31 @@ async fn gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen() {
     let r = ronde(&server, dir.path()).await.unwrap();
     assert_eq!((r.verwijderd, r.fouten.len()), (0, 0), "{r:?}");
     assert_eq!(server.huidig("f1.txt").unwrap(), b"versie 2 van A", "F1 blijft staan");
+
+    let r = ronde(&server, dir.path()).await.unwrap();
+    assert_eq!((r.gedownload, r.verwijderd, r.fouten.len()), (1, 0, 0), "{r:?}");
+    assert_eq!(std::fs::read(dir.path().join("f1.txt")).unwrap(), b"versie 2 van A");
+    in_sync(&server, dir.path()).await;
+}
+
+/// Review Sol op PR #11, punt 2: een toestand van vóór de versieregels (geen `versie_id`) is geen zekere basis voor een
+/// verwijdering. Hier kreeg de server intussen een andere inhoud met hetzelfde volgnummer; op het nummer lijkt er niets
+/// veranderd. De sync verwijdert niet, maar haalt het bestand terug: dan is er een basis.
+#[tokio::test]
+async fn gewist_met_een_toestand_zonder_versieregel() {
+    let (server, dir) = begin("f1.txt", b"versie 1").await;
+    let staat = dir.path().join(".openaec/staat.json");
+    let mut t = toestand(dir.path());
+    t["bestanden"]["f1.txt"].as_object_mut().unwrap().remove("versie_id").expect("de toestand kende de versieregel");
+    std::fs::write(&staat, serde_json::to_vec(&t).unwrap()).unwrap();
+    server.vervang_laatste("f1.txt", b"andere inhoud, ook nummer 1");
+    std::fs::remove_file(dir.path().join("f1.txt")).unwrap();
+
+    let r = ronde(&server, dir.path()).await.unwrap();
+    assert_eq!((r.verwijderd, r.gedownload, r.fouten.len()), (0, 1, 0), "{r:?}");
+    assert!(r.meldingen.iter().any(|m| m.contains("basis is niet zeker")), "{:?}", r.meldingen);
+    assert_eq!(server.huidig("f1.txt").unwrap(), b"andere inhoud, ook nummer 1", "F1 blijft staan");
+    assert_eq!(std::fs::read(dir.path().join("f1.txt")).unwrap(), b"andere inhoud, ook nummer 1", "en komt hier terug");
+    assert!(toestand(dir.path())["bestanden"]["f1.txt"]["versie_id"].is_string(), "nu met een zekere basis");
+    in_sync(&server, dir.path()).await;
 }
