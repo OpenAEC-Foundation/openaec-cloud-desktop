@@ -27,6 +27,8 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 - Getallen vergelijken we precies op hun waarde, zonder afronden: `1.`, `1.0` en `1.E0` zijn gelijk,
   `9007199254740992.` en `9007199254740993.` niet. Teksten vergelijken we na het decoderen van de codes.
 - De volgorde in een SET of BAG telt niet (bijv. de eigenschappen in `HasProperties`); in een LIST wel.
+- Regeleinden en witruimte tussen de waarden tellen niet: een bestand met `\r\n` (zoals veel Windows-programma's
+  schrijven) is gelijk aan hetzelfde bestand met `\n`.
 - **Ankers.** Een knoop waar een object rechtstreeks naar verwijst (bijv. `ObjectPlacement`), is een anker van dat
   object. Een verwijzing naar het anker van een ánder object telt als dat anker, niet als zijn inhoud. Zo is "wand W
   hangt nu onder verdieping Q in plaats van P" een wijziging, ook als de plaatsingen van P en Q dezelfde inhoud

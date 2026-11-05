@@ -73,20 +73,49 @@ fn eigenschapswaarde() {
 
 #[test]
 fn object_erbij_en_eraf() {
-    let a = bestand("13-supermarkt-albert-heijn.ifc");
-    let volgorde = regel(&a, "#105=").to_string();
-    let b = verwijder_regel(&a, "#105=");
-    let b = voeg_toe(
-        &b,
-        "#900=IFCTASKTIME('Nieuw Time',.PREDICTED.,$,.WORKTIME.,'P0Y0M1D','2027-03-01T07:00:00','2027-03-01T16:00:00',$,$,$,$,$,$,.F.,$,$,$,$,$,$);\n#901=IFCTASK('2Nieuw0000000000000000',#6,'Nieuwe taak',$,$,'9',$,$,$,.F.,$,#900,.CONSTRUCTION.);",
-    );
-    let v = verschil(a.as_bytes(), b.as_bytes()).unwrap();
-    assert_eq!(v.toegevoegd.len(), 1);
-    assert_eq!(v.toegevoegd[0].naam.as_deref(), Some("Nieuwe taak"));
-    assert_eq!(v.verwijderd.len(), 1);
-    assert_eq!(v.verwijderd[0].type_naam, "IfcRelSequence");
-    assert!(v.gewijzigd.is_empty(), "{:?}", v.gewijzigd);
-    assert!(volgorde.contains("2gtUsjV_bwyacvRkg5nkzY"));
+    // Ook met regeleinden van Windows (zo faalde deze test eerst op de Windows-runner).
+    let lf = bestand("13-supermarkt-albert-heijn.ifc");
+    for a in [lf.clone(), met_crlf(&lf)] {
+        let volgorde = regel(&a, "#105=").to_string();
+        let b = verwijder_regel(&a, "#105=");
+        let b = voeg_toe(
+            &b,
+            "#900=IFCTASKTIME('Nieuw Time',.PREDICTED.,$,.WORKTIME.,'P0Y0M1D','2027-03-01T07:00:00','2027-03-01T16:00:00',$,$,$,$,$,$,.F.,$,$,$,$,$,$);\n#901=IFCTASK('2Nieuw0000000000000000',#6,'Nieuwe taak',$,$,'9',$,$,$,.F.,$,#900,.CONSTRUCTION.);",
+        );
+        let v = verschil(a.as_bytes(), b.as_bytes()).unwrap();
+        assert_eq!(v.toegevoegd.len(), 1);
+        assert_eq!(v.toegevoegd[0].naam.as_deref(), Some("Nieuwe taak"));
+        assert_eq!(v.verwijderd.len(), 1);
+        assert_eq!(v.verwijderd[0].type_naam, "IfcRelSequence");
+        assert!(v.gewijzigd.is_empty(), "{:?}", v.gewijzigd);
+        assert!(volgorde.contains("2gtUsjV_bwyacvRkg5nkzY"));
+    }
+}
+
+/// Windows-programma's schrijven vaak `\r\n` als regeleinde. Dat regeleinde is geen wijziging, en een echte
+/// wijziging in zo'n bestand vinden we gewoon.
+#[test]
+fn regeleinden_van_windows() {
+    for (naam, a) in alle_bestanden() {
+        let b = met_crlf(&a);
+        assert_ne!(a, b, "{naam}");
+        for (x, y) in [(&a, &b), (&b, &a), (&b, &b)] {
+            let v = verschil(x.as_bytes(), y.as_bytes()).unwrap();
+            assert!(v.is_leeg(), "{naam}: {v:?}");
+        }
+    }
+    for schema in SCHEMAS {
+        let a = met_crlf(&gebouw(schema));
+        let b = vervang(&a, "#5,'W',$", "#5,'W2',$");
+        let v = verschil(a.as_bytes(), b.as_bytes()).unwrap();
+        assert_eq!(v.gewijzigd.len(), 1, "{schema}: {v:?}");
+        let attr = &v.gewijzigd[0].attributen;
+        assert_eq!(
+            (attr.len(), attr[0].attribuut.as_str(), attr[0].oud.as_str(), attr[0].nieuw.as_str()),
+            (1, "Name", "'W'", "'W2'"),
+            "{schema}"
+        );
+    }
 }
 
 #[test]
