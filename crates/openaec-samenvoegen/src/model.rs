@@ -112,6 +112,18 @@ pub struct VersieStatistiek {
     pub cycli: usize,
 }
 
+/// Per instantie de instanties die naar haar verwijzen ([`Model::verwijzers`]).
+pub(crate) struct Verwijzers {
+    begin: Vec<u32>,
+    van: Vec<u32>,
+}
+
+impl Verwijzers {
+    pub fn van(&self, k: usize) -> &[u32] {
+        &self.van[self.begin[k] as usize..self.begin[k + 1] as usize]
+    }
+}
+
 pub(crate) struct Model<'a> {
     pub bestand: Bestand<'a>,
     schema: Option<&'static schema::Schema>,
@@ -670,6 +682,72 @@ impl<'a> Model<'a> {
             }
         }
         e
+    }
+
+    /// Wie naar elke instantie verwijst, voor [`Model::alle_eigenaars`].
+    pub fn verwijzers(&self) -> Verwijzers {
+        let n = self.bestand.instanties.len();
+        let mut begin = vec![0u32; n + 1];
+        for i in 0..n {
+            for &c in self.bestand.verwijzingen(i) {
+                begin[c as usize + 1] += 1;
+            }
+        }
+        for i in 0..n {
+            begin[i + 1] += begin[i];
+        }
+        let mut plek = begin.clone();
+        let mut van = vec![0u32; begin[n] as usize];
+        for i in 0..n {
+            for &c in self.bestand.verwijzingen(i) {
+                van[plek[c as usize] as usize] = i as u32;
+                plek[c as usize] += 1;
+            }
+        }
+        Verwijzers { begin, van }
+    }
+
+    /// Alle objecten waar knoop `k` bij hoort (zie [`Model::eigenaar`]), gesorteerd: de objecten die rechtstreeks
+    /// naar hem verwijzen en, als hij geen ankerknoop is, de eigenaars van de knopen die naar hem verwijzen.
+    pub fn alle_eigenaars(&self, k: usize, terug: &Verwijzers) -> Vec<u32> {
+        let mut objecten = Vec::new();
+        let mut gezien: HashSet<u32> = HashSet::from([k as u32]);
+        let mut stapel = vec![k as u32];
+        while let Some(x) = stapel.pop() {
+            let anker = self.anker_id[x as usize].is_some();
+            for &r in terug.van(x as usize) {
+                match self.soort[r as usize] {
+                    Soort::Object(o) => objecten.push(o),
+                    Soort::Knoop if !anker && gezien.insert(r) => stapel.push(r),
+                    Soort::Knoop => {}
+                }
+            }
+        }
+        objecten.sort_unstable();
+        objecten.dedup();
+        objecten
+    }
+
+    /// Een identiteit van een groep eigenaars die tussen de versies te vergelijken is: een hash over de sleutels van
+    /// de objecten die in alle drie de versies staan, of over alle sleutels als er zo geen object bij is (net als
+    /// bij de identiteit van een anker).
+    pub fn eigenaars_id(&self, objecten: &[u32]) -> Hash {
+        let gemeen = objecten.iter().any(|&o| self.objecten[o as usize].gemeen);
+        let mut sleutels: Vec<&str> = objecten
+            .iter()
+            .map(|&o| &self.objecten[o as usize])
+            .filter(|x| x.gemeen || !gemeen)
+            .map(|x| x.sleutel.as_str())
+            .collect();
+        sleutels.sort_unstable();
+        sleutels.dedup();
+        let mut h = blake3::Hasher::new();
+        h.update(if gemeen { b"G" } else { b"X" });
+        for s in sleutels {
+            h.update(&(s.len() as u32).to_le_bytes());
+            h.update(s.as_bytes());
+        }
+        *h.finalize().as_bytes()
     }
 
     /// Sleutel van een losse knoop: het type, het attribuut Name en de attributen met één verwijzing naar een object

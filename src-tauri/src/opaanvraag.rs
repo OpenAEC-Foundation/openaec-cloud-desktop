@@ -129,10 +129,6 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
         self.binnen.lees_versie(versie).await
     }
 
-    async fn huidige_versie(&self, bestand: &str) -> Result<Option<Versieregel>, Fout> {
-        self.binnen.huidige_versie(bestand).await
-    }
-
     async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
         self.binnen.blokhashes(versie).await
     }

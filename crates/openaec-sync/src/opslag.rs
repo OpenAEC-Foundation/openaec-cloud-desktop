@@ -513,11 +513,6 @@ impl Opslag for ClientOpslag {
         crate::lees_versie(&self.client, &versie.bestand, (versie.versie, &versie.versie_id), &self.rem).await
     }
 
-    async fn huidige_versie(&self, bestand: &str) -> Result<Option<Versieregel>, Fout> {
-        let i = self.client.info(bestand).await?;
-        Ok(i.versie_id.filter(|_| !i.verwijderd).map(|versie_id| Versieregel { bestand: i.bestand, versie: i.huidige_versie, versie_id }))
-    }
-
     async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
         let b = self.client.blokken_van(&versie.bestand, versie.versie).await?;
         Ok(b.hashes.filter(|_| b.versie == versie.versie).map(|h| (b.blokgrootte, h)))

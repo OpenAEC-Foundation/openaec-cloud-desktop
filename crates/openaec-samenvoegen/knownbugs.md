@@ -50,3 +50,19 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
 13. **Het regeleinde van ons komt uit de eerste 64 KiB** (eigen bevinding, 5 november 2026). De schrijver kiest
     `\r\n` voor nieuwe regels als die in de eerste 64 KiB van ons staat. Een bestand met `\n` in het begin en `\r\n`
     verderop krijgt dan nieuwe regels met `\n`. ISO 10303-21-lezers aanvaarden beide; het bestand blijft geldig. — S
+14. **De groep van een losse knoop op een vorm van meer objecten kent die objecten niet** (eigen bevinding bij de
+    review van PR #7 op `6a27723`, 5 november 2026). De sleutel van een losse knoop (bijv. een IfcStyledItem) noemt
+    bij een vorm die bij meer objecten hoort alleen "meer" (`wortel_sleutel_van`), niet welke objecten. Twee
+    stijlen op twee gedeelde vormen met dezelfde inhoud (bijv. die van W en V, en die van X en Y) vallen dan in één
+    groep. De schrijver kiest de vorm wel goed (dezelfde objecten); alleen het besluit per groep is grover. Wijzigen
+    beide kanten zo'n groep, dan kan dat een conflict te veel geven, geen verlies. — S
+15. **Botsende vluchtige waarden in een gedeelde knoop geven een conflict, geen splitsing** (eigen bevinding,
+    5 november 2026). Vragen objecten die in het resultaat één knoop delen een andere vluchtige waarde, en kan het
+    object de eigen knoop van de andere kant niet krijgen (de knoop verschilt verder, bijv. een andere
+    OwningApplication bij ons), dan is dat een conflict. Een eigen kopie voor dat object zou het oplossen. Het komt
+    alleen voor als de ene kant de knoop inhoudelijk wijzigt en de andere hem anders deelt. Tests:
+    `botsende_vluchtige_waarden_in_een_gedeelde_knoop`, `twee_objecten_vragen_elk_een_andere_waarde`. — B
+16. **Oudere tests vergelijken met de eigen vergelijker** (review PR #7 op `6a27723`, opmerking, 5 november 2026).
+    Een deel van de tests in `tests/samenvoegen.rs` controleert het resultaat met `zelfde`, dus met `verschil` uit
+    deze bibliotheek. Een fout die in het verschil en in het samenvoegen samen zit, zien die tests niet. De tests
+    uit de reviews gaan na met `Feiten` (een losse lezer). Die oudere tests kunnen ook naar `Feiten` over. — B

@@ -357,7 +357,25 @@ async fn upload_poging(
         voortgang(gedaan, totaal);
         etags.push(etag);
     }
-    client.upload_klaar(&start.upload, &etags).await
+    match client.upload_klaar(&start.upload, &etags).await {
+        // Geen antwoord op het afronden: misschien legde de server de versie toch vast. Staat precies deze inhoud nu op
+        // de plek, dan is dat de upload (anders uploadt de volgende ronde opnieuw, en wordt het een conflictkopie).
+        Err(f) if geen_antwoord(&f) => vastgelegd(client, ruimte, map, naam, grootte, blok, &hashes).await.ok_or(f),
+        r => r,
+    }
+}
+
+/// Kwam er geen antwoord (verbinding weg, of een tussenstation dat het antwoord niet doorgaf)?
+fn geen_antwoord(f: &Fout) -> bool {
+    matches!(f, Fout::Netwerk(_)) || matches!(f, Fout::Server { status, .. } if *status >= 500)
+}
+
+/// Het bestand `naam` in `map`, als de huidige versie precies deze inhoud is (grootte en blokhashes).
+async fn vastgelegd(client: &Client, ruimte: &str, map: Option<&str>, naam: &str, grootte: u64, blok: u64, hashes: &[String]) -> Option<UploadResultaat> {
+    let b = client.bladeren(ruimte, map).await.ok()?.bestanden.into_iter().find(|b| b.naam == naam)?;
+    let h = client.blokken(&b.name).await.ok()?;
+    let gelijk = h.versie == b.huidige_versie && h.grootte == grootte && h.blokgrootte == blok && h.hashes.as_deref() == Some(hashes);
+    gelijk.then(|| UploadResultaat { bestand: b.name, naam: b.naam, versie: h.versie, conflict: false, versie_id: b.versie_id })
 }
 
 /// Eén deel van een upload naar zijn ondertekende URL; geeft de ETag en het aantal bytes.

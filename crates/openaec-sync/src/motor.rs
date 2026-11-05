@@ -190,12 +190,6 @@ pub trait Opslag {
         Err(Fout::Controle("deze opslag kent geen versieregels".into()))
     }
 
-    /// De huidige versie van `bestand`; None als het verwijderd is.
-    async fn huidige_versie(&self, bestand: &str) -> Result<Option<Versieregel>, Fout> {
-        let _ = bestand;
-        Err(Fout::Controle("deze opslag kent geen versieregels".into()))
-    }
-
     /// Blokgrootte en blokhashes van deze versie, als de opslag ze kent: zo krijgt een bestand van vóór de versieregels
     /// zijn versieregel, maar alleen als het hier precies die inhoud heeft. Standaard None.
     async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
@@ -949,7 +943,8 @@ impl<O: Opslag> Ronde<'_, O> {
             }
         };
         self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Upload, totaal: inhoud.len() as u64 });
-        let (uitkomst, laatste) = self.lus(pad, basis, inhoud).await?;
+        let lijst = LusBasis { bestand: huidig.bestand.clone(), versie: LusVersie::van(&huidig.versie_id, huidig.versie) };
+        let (uitkomst, laatste) = self.lus(pad, basis, lijst, inhoud).await?;
         let (reden, melding, tegen, samenvoeging) = match uitkomst {
             Ok(Uitkomst::Opgeslagen { nieuw, inhoud, .. }) => return self.na_samenvoegen(pad, nieuw, inhoud, &ons, k, van).await.map(Some),
             Ok(Uitkomst::Conflict { huidige, reden, .. }) => match reden {
@@ -974,24 +969,17 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Draai de opslaan-lus van `openaec_samenvoegen` voor `pad`. De lus draait op een eigen thread (hij voegt samen en
     /// wacht op de server); elk verzoek aan de server komt via een kanaal hier terug, en de ronde voert het uit met de
-    /// echte opslag. Geeft ook de laatste fout van de opslag: een weigering draagt alleen tekst.
-    async fn lus(&self, pad: &str, basis: LusBasis, ons: Vec<u8>) -> Result<(LusUitkomst, Option<Fout>), Fout> {
+    /// echte opslag. `lijst`: de versie uit de lijst van deze ronde. Geeft ook de laatste fout van de opslag: een
+    /// weigering draagt alleen tekst.
+    async fn lus(&self, pad: &str, basis: LusBasis, lijst: LusBasis, ons: Vec<u8>) -> Result<(LusUitkomst, Option<Fout>), Fout> {
         let (vragen, mut ontvang) = tokio::sync::mpsc::channel(1);
-        let mut opslag = Lus { vragen, bestand: basis.bestand.clone() };
+        let mut opslag = Lus { vragen, lijst };
         let draad = tokio::task::spawn_blocking(move || sla_op(&mut opslag, basis, &ons, &LusOpties::default()));
         let mut laatste = None;
         // De basis van de laatst geweigerde poging (verouderd): de volgende schrijfpoging is daaruit samengevoegd.
         let mut verouderd: Option<LusVersie> = None;
         while let Some(vraag) = ontvang.recv().await {
             match vraag {
-                Vraag::Huidige(bestand, terug) => {
-                    let r = match self.opslag.huidige_versie(&bestand).await {
-                        Ok(Some(v)) => Ok(LusBasis { bestand: v.bestand, versie: LusVersie::van(&v.versie_id, v.versie) }),
-                        Ok(None) => Err(Weigering::OnbekendeBasis),
-                        Err(f) => Err(als_weigering(f, &mut laatste)),
-                    };
-                    let _ = terug.send(r);
-                }
                 Vraag::Lees(b, terug) => {
                     let r = self.opslag.lees_versie(&regel(&b)).await.map_err(|f| als_weigering(f, &mut laatste));
                     let _ = terug.send(r);
@@ -1362,7 +1350,6 @@ fn regel(b: &LusBasis) -> Versieregel {
 
 /// Een verzoek van de opslaan-lus aan de ronde (zie [`Ronde::lus`]).
 enum Vraag {
-    Huidige(String, Terug<LusBasis>),
     Lees(LusBasis, Terug<Vec<u8>>),
     Schrijf(LusBasis, Vec<u8>, Terug<LusBasis>),
 }
@@ -1371,7 +1358,8 @@ enum Vraag {
 /// wacht op het antwoord (hij draait op een eigen thread).
 struct Lus {
     vragen: tokio::sync::mpsc::Sender<Vraag>,
-    bestand: String,
+    /// De versie uit de lijst van deze ronde.
+    lijst: LusBasis,
 }
 
 impl Lus {
@@ -1387,9 +1375,10 @@ impl openaec_samenvoegen::Opslag for Lus {
     type Bestand = String;
     type Versie = LusVersie;
 
+    /// De versie uit de lijst; geen eigen vraag aan de server. De lus vraagt dit niet: de server geeft de huidige
+    /// versie bij een weigering (zie `sla_op`).
     fn huidige(&mut self) -> Result<LusBasis, LusWeigering> {
-        let bestand = self.bestand.clone();
-        self.vraag(|terug| Vraag::Huidige(bestand, terug))
+        Ok(self.lijst.clone())
     }
 
     fn lees(&mut self, versie: &LusBasis) -> Result<Vec<u8>, LusWeigering> {
