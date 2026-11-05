@@ -28,8 +28,7 @@ use serde::Serialize;
 use crate::koppelregel::koppelregel;
 use crate::model::{
     attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, koppel_toevoegingen, markeer_gemeen,
-    ongeordend_hash, op_sleutel,
-    stem_ankers_af, Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
+    ongeordend_hash, op_sleutel, stem_ankers_af, Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::ontleden::{elementen, Token, Tokens};
 use crate::schema::Aggregaat;
@@ -927,8 +926,8 @@ fn eigen_knoop_samenvoegen(
     for l in botsingen {
         let veld = format!("{naam}.{}", entiteit.attributen[l].naam);
         let toon = |k: usize| m[k].toon(attribuut_tekst(&m[k], c[k], l), false, MAX_TEKST);
-        let mut x = Conflict::nieuw(ConflictSoort::BeideGewijzigd, format!("beide kanten wijzigden {veld} anders"))
-            .over(m, s);
+        let mut x =
+            Conflict::nieuw(ConflictSoort::BeideGewijzigd, format!("beide kanten wijzigden {veld} anders")).over(m, s);
         x.attribuut = Some(veld);
         x.basis = Some(toon(B));
         x.ons = Some(toon(O));
@@ -1742,23 +1741,109 @@ fn boom(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
     }
 }
 
-/// Geen kring in de volgorde van taken (`IfcRelSequence`): ons legt A -> B, hun B -> A. Elke kant apart is een
-/// goede planning, samen niet. Een kring die ons of hun zelf al had, komt niet door het samenvoegen; die melden we
-/// niet, net als bij de boom.
+/// Geen nieuwe kring in de volgorde van taken (`IfcRelSequence`): ons legt A -> B, hun B -> A. Elke kant apart is een
+/// goede planning, samen niet; OPS kan zo'n planning niet doorrekenen. Een relatie van A naar B ligt in een kring als
+/// A en B elkaar bereiken. Nieuw is zo'n relatie als A en B elkaar in ons en in hun niet bereikten. Een kring die een
+/// kant elders al had, verbergt zo geen nieuwe. Per nieuwe kring één conflict.
 fn volgorde(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
-    if !kringen(&volgranden(&m[O])).is_empty() || !kringen(&volgranden(&m[H])).is_empty() {
-        return;
-    }
-    for eerste in kringen(&volgranden(r)) {
-        let Some(&si) = plan.op_sleutel.get(&eerste) else { continue };
+    let randen = [volgranden(&m[O]), volgranden(&m[H])];
+    let delen = [samenhang(&randen[0]), samenhang(&randen[1])];
+    let al_in_kring = |k: usize, a: &str, b: &str| {
+        if a == b {
+            randen[k].iter().any(|(x, y, _)| x == a && y == a)
+        } else {
+            delen[k].get(a).is_some_and(|d| delen[k].get(b) == Some(d))
+        }
+    };
+    let rr = volgranden(r);
+    let dr = samenhang(&rr);
+    let mut nieuw: Vec<&(String, String, String)> = rr
+        .iter()
+        .filter(|(a, b, _)| dr[a.as_str()] == dr[b.as_str()] && !al_in_kring(0, a, b) && !al_in_kring(1, a, b))
+        .collect();
+    nieuw.sort();
+    let in_r = op_sleutel(r);
+    let naam = |s: &str| in_r.get(s).map_or(s.to_string(), |&o| r.object_weergave(o));
+    let mut gemeld = HashSet::new();
+    for (a, b, relatie) in nieuw {
+        if !gemeld.insert(dr[a.as_str()]) {
+            continue;
+        }
+        let Some(&si) = plan.op_sleutel.get(relatie) else { continue };
         let mut c = Conflict::nieuw(
             ConflictSoort::VolgordeKring,
-            "na het samenvoegen zit er een kring in de volgorde van taken (IfcRelSequence)",
+            format!(
+                "na het samenvoegen zit de relatie van {} naar {} in een kring in de volgorde van taken \
+                 (IfcRelSequence); ons en hun hadden die kring elk niet",
+                naam(a),
+                naam(b)
+            ),
         )
         .over(m, &plan.sleutels[si]);
-        c.attribuut = Some("IsPredecessorTo".into());
+        c.attribuut = Some("RelatedProcess".into());
         uit.push(c);
     }
+}
+
+/// Per knoop (sleutel) van de graaf `randen` het nummer van zijn sterk samenhangende deel: twee knopen met hetzelfde
+/// nummer bereiken elkaar. Tarjan, zonder recursie.
+fn samenhang(randen: &[(String, String, String)]) -> HashMap<&str, usize> {
+    let mut opvolgers: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (a, b, _) in randen {
+        opvolgers.entry(a).or_default().push(b);
+        opvolgers.entry(b).or_default();
+    }
+    let mut knopen: Vec<&str> = opvolgers.keys().copied().collect();
+    knopen.sort_unstable();
+    // Per knoop: (volgnummer, laagste bereikbare volgnummer op de stapel).
+    let mut nummer: HashMap<&str, (usize, usize)> = HashMap::new();
+    let mut stapel: Vec<&str> = Vec::new();
+    let mut op_stapel: HashSet<&str> = HashSet::new();
+    let mut uit = HashMap::new();
+    for start in knopen {
+        if nummer.contains_key(start) {
+            continue;
+        }
+        let mut pad: Vec<(&str, usize)> = vec![(start, 0)];
+        nummer.insert(start, (nummer.len(), nummer.len()));
+        stapel.push(start);
+        op_stapel.insert(start);
+        while let Some(&mut (x, ref mut volgende)) = pad.last_mut() {
+            if let Some(&y) = opvolgers[x].get(*volgende) {
+                *volgende += 1;
+                match nummer.get(y) {
+                    None => {
+                        nummer.insert(y, (nummer.len(), nummer.len()));
+                        stapel.push(y);
+                        op_stapel.insert(y);
+                        pad.push((y, 0));
+                    }
+                    Some(&(ny, _)) if op_stapel.contains(y) => {
+                        let nx = nummer.get_mut(x).expect("bezocht");
+                        nx.1 = nx.1.min(ny);
+                    }
+                    Some(_) => {}
+                }
+                continue;
+            }
+            pad.pop();
+            let (eigen, laagste) = nummer[x];
+            if let Some(&(ouder, _)) = pad.last() {
+                let no = nummer.get_mut(ouder).expect("bezocht");
+                no.1 = no.1.min(laagste);
+            }
+            if eigen == laagste {
+                while let Some(y) = stapel.pop() {
+                    op_stapel.remove(y);
+                    uit.insert(y, eigen);
+                    if y == x {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    uit
 }
 
 /// De plaatsingen (`PlacementRelTo`): per instantie de plaatsing waar hij relatief aan staat.

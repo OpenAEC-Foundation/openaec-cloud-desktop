@@ -13,6 +13,13 @@ van dat project.
 - `13-supermarkt-albert-heijn.ifc`
 - `05-brugvervanging-n279.ifc`
 
+### Gewijzigde planningen (`planning/`)
+
+Gemaakt met `scripts/ops/maak_planningen.sh` en de code van OPS op commit `604dd2940` (3 november 2026): de
+supermarktplanning hierboven opnieuw opgeslagen (`basis.ifc`), en per bestand één wijziging zoals een planner hem in
+OPS maakt, doorgerekend en opgeslagen. De namen zeggen wat er gewijzigd is (bijv. `duur-ons.ifc`, `relatie-hun.ifc`).
+Licentie: LGPL-3.0, zoals OPS.
+
 ## Bouwmodellen met geometrie (IFC2X3 en IFC4)
 
 Uit [buildingSMART/Sample-Test-Files](https://github.com/buildingSMART/Sample-Test-Files), commit

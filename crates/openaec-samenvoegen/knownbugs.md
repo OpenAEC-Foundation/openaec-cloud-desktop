@@ -2,7 +2,8 @@
 
 Punten uit reviews die geen nieuwe fixronde vragen (VERVOLG): zeldzaam, alleen tekst, een ontbrekende test of
 opruimen. Elk punt heeft een vast nummer; nummers worden nooit hergebruikt. De punten 1 tot en met 9 horen bij
-PR #6 (verschil), de punten vanaf 10 bij PR #7 (samenvoegen). Zekerheid: **B** = bevestigd (met een test, een
+PR #6 (verschil), de punten 10 tot en met 29 bij PR #7 (samenvoegen), de punten 30 tot en met 39 bij werkstroom 7
+(planningen van Open Planner Studio). Zekerheid: **B** = bevestigd (met een test, een
 script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
 
 1. **De voorwaarden voor de IFC2X3-tabel zijn niet uitgezocht** (review PR #6, bevinding 8, 5 november 2026). De kop
@@ -66,3 +67,32 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     Een deel van de tests in `tests/samenvoegen.rs` controleert het resultaat met `zelfde`, dus met `verschil` uit
     deze bibliotheek. Een fout die in het verschil en in het samenvoegen samen zit, zien die tests niet. De tests
     uit de reviews gaan na met `Feiten` (een losse lezer). Die oudere tests kunnen ook naar `Feiten` over. — B
+30. **Afgeleide velden van een planning geven een conflict** (eigen bevinding bij werkstroom 7, 5 november 2026).
+    Na elke wijziging rekent Open Planner Studio (OPS) de planning door: de datums en de speling van de opvolgers,
+    de projecteinddatum, de fases erboven en `OPS_Analysis.ExactFloat`. Wijzigt ons de duur van taak A en hun die
+    van taak B in dezelfde keten, dan zijn die velden aan beide kanten anders: tientallen conflicten, geen
+    samenvoeging. Er gaat niets verloren. Een planner verwacht beide wijzigingen. OPS rekent bij openen zelf opnieuw
+    door, behalve in de modus "datums zoals opgeslagen"; zie `docs/samenwerken/planning.md`, "Open vraag". Test:
+    `andere_duur_voor_twee_taken_in_een_keten`. — B
+31. **Twee nieuwe taken in dezelfde fase geven een conflict** (eigen bevinding bij werkstroom 7, 5 november 2026).
+    De kinderen van een fase staan in `IfcRelNests.RelatedObjects`, een LIST. Voegen ons en hun elk een taak toe aan
+    dezelfde fase, dan wijzigen beide die LIST anders: conflict (ontwerp §5.6). Samenvoegen zou ook twee taken met
+    dezelfde WBS-code geven (bijv. twee keer 3.5), want OPS nummert de code uit de boom. Test:
+    `nieuwe_taken_in_dezelfde_fase`. — B
+32. **Twee nieuwe baselines geven een conflict** (eigen bevinding bij werkstroom 7, 5 november 2026). OPS bewaart
+    alle baselines als JSON in één eigenschap (`OPS_Baselines.Baselines`), in een set met een vaste GlobalId. Leggen
+    ons en hun elk een baseline vast, dan voegen ze allebei die set toe met een andere inhoud: conflict, geen
+    verlies. Test: `allebei_een_baseline`. — B
+33. **Dezelfde nieuwe relatie met een breuk in de lag** (eigen bevinding bij werkstroom 7, 5 november 2026). OPS
+    schrijft een lag van een breuk van een dag als minuten in `IfcLagTime`, met een record per GlobalId in
+    `OPS_Sequences`. Voegen ons en hun dezelfde relatie toe met dezelfde minuten, en heeft alleen hun zo'n record,
+    dan houden we de relatie van ons en het record van hun, dat naar een GlobalId wijst die er niet meer is. OPS
+    leest de lag dan in minuten in plaats van in dagen; de lengte is gelijk. Niet getest. — S
+34. **De boomregel en de plaatsingsregel kijken niet als een kant al een kring had** (eigen bevinding bij werkstroom 7,
+    5 november 2026). De regel voor `IfcRelSequence` meldt elke nieuwe kring, ook als ons of hun elders al een kring
+    had (`nieuwe_kring_naast_een_oude_kring`). De boomregel en de plaatsingsregel slaan de controle in dat geval nog
+    helemaal over. In een model zonder kringen speelt dat niet. — S
+35. **Bij een kring die OPS doorrekende, noemt het rapport de afgeleide velden** (eigen bevinding bij werkstroom 7,
+    5 november 2026). De kringregel kijkt naar het geschreven resultaat. Hebben ons en hun hun planning doorgerekend,
+    dan geven de afgeleide velden (punt 30) eerst een conflict, en komt het rapport niet tot de kring. Het blijft een
+    conflict; alleen de reden in het rapport is minder duidelijk. — B

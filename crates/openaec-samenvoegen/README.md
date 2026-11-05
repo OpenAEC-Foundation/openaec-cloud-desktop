@@ -66,6 +66,8 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 | Beide wijzigden, andere attributen, of hetzelfde attribuut op dezelfde manier | Beide wijzigingen |
 | Beide wijzigden een SET of BAG van verwijzingen | Wat erbij kwam en wat eraf ging, van beide kanten |
 | Beide wijzigden een eigenschappenset of hoeveelhedenset | Per eigenschap (op naam); twee nieuwe waarden = conflict |
+| Beide wijzigden dezelfde eigen knoop van een object (bijv. de IfcTaskTime van een taak: ons de duur, hun de naam) | Per attribuut van die knoop; twee andere waarden voor hetzelfde attribuut = conflict (`TaskTime.ScheduleDuration`) |
+| Beide voegden dezelfde relatie toe met een andere GlobalId (een relatie met alleen enkele verwijzingen naar objecten, bijv. IfcRelSequence van A naar B) | Gelijke inhoud: één relatie (die van ons); een andere inhoud (bijv. een ander SequenceType): conflict |
 | Beide wijzigden een ander attribuut of een LIST anders | Conflict |
 | De ene kant verwijderde, de andere wijzigde | Conflict |
 | Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
@@ -87,6 +89,9 @@ Na het samenvoegen controleren we, en elk probleem is een conflict:
   het geen conflict.
 - **De boomregel.** In IfcRelAggregates, IfcRelNests en IfcRelContainedInSpatialStructure zit geen kring, en wat in
   ons én in hun vanaf het project bereikbaar was, is dat nog steeds.
+- **Volgorde van taken.** Geen nieuwe kring in `IfcRelSequence` (bijv. ons legt A -> B, hun B -> A). Een relatie
+  ligt in een kring als haar twee taken elkaar bereiken; nieuw is de kring als ze elkaar in ons en in hun niet
+  bereikten. Een kring die een kant elders al had, verbergt zo geen nieuwe.
 - **Plaatsingen.** Geen kring in `PlacementRelTo` (bijv. ons zet P relatief aan Q, hun Q relatief aan P). Een
   kring die ons of hun zelf al had, melden we niet.
 - **Zelfcontrole.** We lezen het geschreven bestand opnieuw. Elk object, elke groep losse knopen, de HEADER en de
@@ -139,7 +144,11 @@ conflict is er niets geschreven.
 - Schema's buiten IFC2X3, IFC4 en IFC4X3 (zoals IFC4X1): `verschil` werkt met een heuristiek, `voeg_samen` geeft een
   conflict.
 - Twee kanten die hetzelfde attribuut van een knoop anders wijzigen (bijv. ons de x, hun de y van hetzelfde punt):
-  dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop.
+  dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop. Alleen een eigen knoop van
+  één object, zonder vluchtige velden en zonder verwijzingen in wat van hun komt (bijv. een IfcTaskTime), voegen we
+  per attribuut samen.
+- Afgeleide velden van een planning (datums en speling na doorrekenen) geven een conflict; zie
+  `docs/samenwerken/planning.md`.
 - Knopen die zonder object ertussen in een kring naar elkaar verwijzen, ook via ankers (bijv. twee plaatsingen
   relatief aan elkaar): `verschil` geeft een fout (`Fout::Kring`), `voeg_samen` een conflict.
 - Bestanden van 4 GiB of groter.
@@ -207,6 +216,20 @@ uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer
 
 Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
 regeleinde), met IfcOpenShell 0.9.0.post1.
+
+## Controle met Open Planner Studio
+
+`docs/samenwerken/planning.md` (in de root van deze repo) zegt wat samen kan in een planning van OPS. De bestanden in
+`tests/bestanden/planning/` maakt OPS zelf (`scripts/ops/maak_planningen.sh <ops-repo>`). De resultaten van
+`tests/planning.rs` leest de lezer van OPS terug:
+
+```text
+SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test planning
+node scripts/ops/ops.mjs <ops-repo> lees /tmp/resultaten/planning-*.ifc
+```
+
+Daarvoor is een kloon van OPS nodig met `npm ci` (of `NODE_PATH` naar zijn `node_modules`); er verandert niets in die
+kloon.
 
 ## Bronnen
 
