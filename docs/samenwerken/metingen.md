@@ -164,6 +164,10 @@ tijd per MB is ook ongeveer constant: dicht 0,085 → 0,068 s per MB, brug 0,04 
 van OPS groeit iets sneller dan lineair in tijd: 0,15 s per MB bij 11 MB, 0,19 bij 88 MB (vermoeden: de tabellen op
 GlobalId, met 5,8 miljoen objecten bij 88 MB; niet nagegaan).
 
+**Het schema maakt geen verschil.** Hetzelfde brugmodel in IFC4 en in IFC4X3_ADD2 geeft binnen 1 % hetzelfde
+geheugen, en dezelfde tijd binnen de ruis (150 MB: 664 tegen 670 MB). Wat telt, is hoe het bestand is opgebouwd:
+veel kleine instanties of weinig grote.
+
 **Een formule voor het geheugen.** Het geheugen hangt af van drie dingen: de bytes (S), het aantal knopen (K) en het
 aantal objecten (O). Een fit met de kleinste kwadraten over alle 214 punten (`scripts/meting/tabel.py`):
 
