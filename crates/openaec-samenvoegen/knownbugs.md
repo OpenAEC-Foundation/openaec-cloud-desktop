@@ -82,7 +82,9 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     de projecteinddatum, de fases erboven en `OPS_Analysis.ExactFloat`. Wijzigt ons de duur van taak A en hun die
     van taak B in dezelfde keten, dan zijn die velden aan beide kanten anders: tientallen conflicten, geen
     samenvoeging. Er gaat niets verloren. Een planner verwacht beide wijzigingen. OPS rekent bij openen zelf opnieuw
-    door, behalve in de modus "datums zoals opgeslagen"; zie `docs/samenwerken/planning.md`, "Open vraag". Test:
+    door, behalve in de modus "datums zoals opgeslagen". Het conflict blijft (besluit van de orkestrator in fixronde
+    1); de latere weg (invoer samenvoegen en doorrekenen met OPS) en waarom die nu niet kan, staan in
+    `docs/samenwerken/planning.md`, "Afgeleide velden". Dat is een besluit voor de eigenaar. Test:
     `andere_duur_voor_twee_taken_in_een_keten`. — B
 31. **Twee nieuwe taken in dezelfde fase geven een conflict** (eigen bevinding bij werkstroom 7, 5 november 2026).
     De kinderen van een fase staan in `IfcRelNests.RelatedObjects`, een LIST. Voegen ons en hun elk een taak toe aan
@@ -93,11 +95,12 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     alle baselines als JSON in één eigenschap (`OPS_Baselines.Baselines`), in een set met een vaste GlobalId. Leggen
     ons en hun elk een baseline vast, dan voegen ze allebei die set toe met een andere inhoud: conflict, geen
     verlies. Test: `allebei_een_baseline`. — B
-33. **Dezelfde nieuwe relatie met een breuk in de lag** (eigen bevinding bij werkstroom 7, 5 november 2026). OPS
-    schrijft een lag van een breuk van een dag als minuten in `IfcLagTime`, met een record per GlobalId in
-    `OPS_Sequences`. Voegen ons en hun dezelfde relatie toe met dezelfde minuten, en heeft alleen hun zo'n record,
-    dan houden we de relatie van ons en het record van hun, dat naar een GlobalId wijst die er niet meer is. OPS
-    leest de lag dan in minuten in plaats van in dagen; de lengte is gelijk. Niet getest. — S
+33. **Gesloten: dezelfde nieuwe relatie met een breuk in de lag** (eigen bevinding bij werkstroom 7, 5 november
+    2026; BLOKKEERT in de review van Sol op `2ff8ad5`). Heeft alleen hun een record in `OPS_Sequences` (bijv. een
+    halve dag, in IFC `PT4H0M0S` zoals 240 minuten), dan hield het resultaat de relatie van ons en raakte het record
+    van hun los: OPS las 240 minuten in plaats van een halve dag, en 150 in plaats van 150,4 minuten. Dat is wel
+    verlies. Nu een conflict met `attribuut` `OPS_Sequences`, ook bij de P6-grens. Test:
+    `dezelfde_nieuwe_relatie_met_andere_gegevens_van_ops`. — B
 34. **De boomregel en de plaatsingsregel kijken niet als een kant al een kring had** (eigen bevinding bij werkstroom 7,
     5 november 2026). De regel voor `IfcRelSequence` meldt elke nieuwe kring, ook als ons of hun elders al een kring
     had (`nieuwe_kring_naast_een_oude_kring`). De boomregel en de plaatsingsregel slaan de controle in dat geval nog
@@ -106,3 +109,13 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     5 november 2026). De kringregel kijkt naar het geschreven resultaat. Hebben ons en hun hun planning doorgerekend,
     dan geven de afgeleide velden (punt 30) eerst een conflict, en komt het rapport niet tot de kring. Het blijft een
     conflict; alleen de reden in het rapport is minder duidelijk. — B
+36. **Dezelfde nieuwe relatie met hetzelfde record in `OPS_Sequences` geeft een conflict** (eigen bevinding in
+    fixronde 1 van werkstroom 7, 5 november 2026). Leggen ons en hun dezelfde relatie met een lag van een halve dag,
+    dan heeft elk het record `[0.5,240]`, maar onder de eigen GlobalId van de relatie. De set `OPS_Sequences` heeft
+    aan beide kanten dezelfde vaste GlobalId en een andere inhoud: conflict, geen verlies. We voegen de JSON niet
+    samen. Test: `dezelfde_nieuwe_relatie_met_andere_gegevens_van_ops`. — B
+37. **De kringregel kan een kring melden die OPS niet ziet** (eigen bevinding in fixronde 1 van werkstroom 7,
+    5 november 2026). De graaf volgt `expandSummaryRelations` van OPS, met drie verschillen. De nesting komt alleen
+    uit `IfcRelNests`, niet uit de `ParentGuid` die OPS als vangnet leest. Een fase zonder taken eronder telt als
+    taak; OPS laat een relatie ermee weg. En OPS laat relaties weg boven 50.000 uitgebreide relaties. Dan kan er een
+    conflict te veel komen, nooit een kring te weinig. — S

@@ -12,7 +12,7 @@
 //   {"hernoem": "A", "naar": "B"}
 //   {"duur": "A", "dagen": 7}
 //   {"wis": "A"}                                    met haar relaties en toewijzingen
-//   {"relatie": ["A", "B"], "type": "FINISH_START"}
+//   {"relatie": ["A", "B"], "type": "FINISH_START"} met eventueel "lagDagen": 0.5, "lagMinuten": 150.4 of "p6": true
 //   {"verplaats": "A", "onder": "B"}                achteraan bij de kinderen van B; WBS-codes opnieuw
 //   {"nieuw": "A", "onder": "B", "zoals": "C"}      een kopie van blad C met een nieuw id en naam A
 //   {"baseline": "Naam"}
@@ -56,7 +56,11 @@ function wijzig(p: Gelezen, w: Record<string, any>) {
     applyWbsNumbering(p.tasks);
   } else if (w.relatie) {
     const [a, b] = w.relatie.map((n: string) => taak(p, n));
-    p.sequences.push({ id: generateId('seq'), predecessorId: a.id, successorId: b.id, type: w.type, lagDays: 0 });
+    const s: Gelezen['sequences'][number] =
+      { id: generateId('seq'), predecessorId: a.id, successorId: b.id, type: w.type, lagDays: w.lagDagen ?? 0 };
+    if (w.lagMinuten !== undefined) s.lagMinutes = w.lagMinuten;
+    if (w.p6) s.p6StartAtPredecessorFinishBoundary = true;
+    p.sequences.push(s);
   } else if (w.verplaats) {
     const t = taak(p, w.verplaats);
     const ouder = taak(p, w.onder);

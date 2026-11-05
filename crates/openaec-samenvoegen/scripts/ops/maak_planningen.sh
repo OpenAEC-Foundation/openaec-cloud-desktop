@@ -23,6 +23,14 @@ v wis-ons '{"wis":"Partially break out floor"}'
 v relatie-ons '{"relatie":["Start of refurbishment","Partially break out floor"],"type":"FINISH_START"}'
 v relatie-hun '{"relatie":["Start of refurbishment","Partially break out floor"],"type":"FINISH_START"}'
 v relatie-ss-ons '{"relatie":["Start of refurbishment","Partially break out floor"],"type":"START_START"}'
+# Dezelfde relatie met gegevens in OPS_Sequences (een lag met een breuk, de P6-grens).
+r='"relatie":["Start of refurbishment","Partially break out floor"],"type":"FINISH_START"'
+v relatie-lag150-ons "{$r,\"lagMinuten\":150}"
+v relatie-lag150.4-hun "{$r,\"lagMinuten\":150.4}"
+v relatie-lag240-ons "{$r,\"lagMinuten\":240}"
+v relatie-halvedag-hun "{$r,\"lagDagen\":0.5}"
+v relatie-halvedag-ons "{$r,\"lagDagen\":0.5}"
+v relatie-p6-hun "{$r,\"p6\":true}"
 v verplaats-ons '{"verplaats":"Checkout island","onder":"3. Extension"}'
 v verplaats-hun '{"verplaats":"Checkout island","onder":"4. Building services"}'
 v nieuw-ons '{"nieuw":"Gevelreclame","onder":"3. Extension","zoals":"Floor, extension"}'

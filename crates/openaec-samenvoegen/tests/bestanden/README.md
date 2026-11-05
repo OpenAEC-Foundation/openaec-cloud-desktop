@@ -18,7 +18,9 @@ van dat project.
 Gemaakt met `scripts/ops/maak_planningen.sh` en de code van OPS op commit `604dd2940` (3 november 2026): de
 supermarktplanning hierboven opnieuw opgeslagen (`basis.ifc`), en per bestand één wijziging zoals een planner hem in
 OPS maakt, doorgerekend en opgeslagen. De namen zeggen wat er gewijzigd is (bijv. `duur-ons.ifc`, `relatie-hun.ifc`).
-Licentie: LGPL-3.0, zoals OPS.
+`relatie-lag150-ons`, `relatie-lag150.4-hun`, `relatie-lag240-ons`, `relatie-halvedag-*` en `relatie-p6-hun` hebben
+dezelfde nieuwe relatie met een lag of de P6-grens; een deel daarvan staat in `OPS_Sequences`. Licentie: LGPL-3.0,
+zoals OPS.
 
 ## Bouwmodellen met geometrie (IFC2X3 en IFC4)
 

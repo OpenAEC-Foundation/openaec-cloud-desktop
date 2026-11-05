@@ -70,8 +70,8 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 | Beide wijzigden, andere attributen, of hetzelfde attribuut op dezelfde manier | Beide wijzigingen |
 | Beide wijzigden een SET of BAG van verwijzingen | Wat erbij kwam en wat eraf ging, van beide kanten |
 | Beide wijzigden een eigenschappenset of hoeveelhedenset | Per eigenschap (op naam); twee nieuwe waarden = conflict |
-| Beide wijzigden dezelfde eigen knoop van een object (bijv. de IfcTaskTime van een taak: ons de duur, hun de naam) | Per attribuut van die knoop; twee andere waarden voor hetzelfde attribuut = conflict (`TaskTime.ScheduleDuration`) |
-| Beide voegden dezelfde relatie toe met een andere GlobalId (een relatie met alleen enkele verwijzingen naar objecten, bijv. IfcRelSequence van A naar B) | Gelijke inhoud: één relatie (die van ons); een andere inhoud (bijv. een ander SequenceType): conflict |
+| Beide wijzigden de IfcTaskTime van een taak, die alleen bij die taak hoort (bijv. ons de duur, hun de naam) | In twee delen: de naam en alle tijden samen. Beide kanten de tijden anders (ook ons de duur, hun de start) = conflict per veld dat verschilt (`TaskTime.ScheduleDuration`). Elke andere knoop: conflict op het hele attribuut |
+| Beide voegden dezelfde relatie toe met een andere GlobalId (een relatie met alleen enkele verwijzingen naar objecten, bijv. IfcRelSequence van A naar B) | Gelijke inhoud: één relatie (die van ons); een andere inhoud (bijv. een ander SequenceType), of andere gegevens van Open Planner Studio onder de GlobalId in `OPS_Sequences` (een lag met een breuk, de P6-grens): conflict |
 | Beide wijzigden een ander attribuut of een LIST anders | Conflict |
 | De ene kant verwijderde, de andere wijzigde | Conflict |
 | Beide voegden een object met dezelfde GlobalId toe, met een andere inhoud | Conflict |
@@ -93,9 +93,11 @@ Na het samenvoegen controleren we, en elk probleem is een conflict:
   het geen conflict.
 - **De boomregel.** In IfcRelAggregates, IfcRelNests en IfcRelContainedInSpatialStructure zit geen kring, en wat in
   ons én in hun vanaf het project bereikbaar was, is dat nog steeds.
-- **Volgorde van taken.** Geen nieuwe kring in `IfcRelSequence` (bijv. ons legt A -> B, hun B -> A). Een relatie
-  ligt in een kring als haar twee taken elkaar bereiken; nieuw is de kring als ze elkaar in ons en in hun niet
-  bereikten. Een kring die een kant elders al had, verbergt zo geen nieuwe.
+- **Volgorde van taken.** Geen nieuwe kring in `IfcRelSequence` (bijv. ons legt A -> B, hun B -> A). De graaf is die
+  van Open Planner Studio: een relatie met een fase geldt voor elke taak eronder (nesting via `IfcRelNests` in het
+  resultaat), en een relatie tussen een fase en een taak eronder telt niet mee. Een relatie ligt in een kring als
+  haar twee einden elkaar bereiken; nieuw is de kring als ze elkaar in ons en in hun niet bereikten. Een kring die
+  een kant elders al had, verbergt zo geen nieuwe. Zie `docs/samenwerken/planning.md`.
 - **Plaatsingen.** Geen kring in `PlacementRelTo` (bijv. ons zet P relatief aan Q, hun Q relatief aan P). Een
   kring die ons of hun zelf al had, melden we niet.
 - **Zelfcontrole.** We lezen het geschreven bestand opnieuw. Elk object, elke groep losse knopen, de HEADER en de
@@ -148,9 +150,8 @@ conflict is er niets geschreven.
 - Schema's buiten IFC2X3, IFC4 en IFC4X3 (zoals IFC4X1): `verschil` werkt met een heuristiek, `voeg_samen` geeft een
   conflict.
 - Twee kanten die hetzelfde attribuut van een knoop anders wijzigen (bijv. ons de x, hun de y van hetzelfde punt):
-  dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop. Alleen een eigen knoop van
-  één object, zonder vluchtige velden en zonder verwijzingen in wat van hun komt (bijv. een IfcTaskTime), voegen we
-  per attribuut samen.
+  dat is een conflict op het attribuut van het object, geen samenvoeging binnen de knoop. Alleen de IfcTaskTime van
+  één taak voegen we in twee delen samen (de naam en de tijden).
 - Afgeleide velden van een planning (datums en speling na doorrekenen) geven een conflict; zie
   `docs/samenwerken/planning.md`.
 - Knopen die zonder object ertussen in een kring naar elkaar verwijzen, ook via ankers (bijv. twee plaatsingen
@@ -221,8 +222,11 @@ IfcOpenShell: het schema, verplichte attributen, de grenzen van aggregaten en de
 
 ```text
 SAMENVOEGEN_UITVOER=/tmp/resultaten cargo test --test samenvoegen
-uv run --no-project --python 3.12 --with ifcopenshell python -I scripts/valideer_met_ifcopenshell.py /tmp/resultaten
+uv run --no-project --python 3.12 --with ifcopenshell --with pytest python -I scripts/valideer_met_ifcopenshell.py [--regels] /tmp/resultaten
 ```
+
+Met `--regels` controleert IfcOpenShell ook de regels uit het EXPRESS-schema (WHERE-regels en functies); dat is
+trager.
 
 Laatste run (5 november 2026, fixronde 1): 121 van 121 resultaten geldig (waarvan 6 met `\r\n` als
 regeleinde), met IfcOpenShell 0.9.0.post1. Na werkstroom 7 (planningen, 5 november 2026, met de basis op `4010e80`): 188 van 188, met de resultaten van

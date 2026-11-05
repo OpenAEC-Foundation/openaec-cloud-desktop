@@ -199,9 +199,11 @@ fn allebei_een_andere_duur_voor_dezelfde_taak() {
 #[test]
 fn andere_duur_voor_twee_taken_in_een_keten() {
     let c = mislukt(&planning("basis"), &planning("duur-ons"), &planning("duur-ander-hun"));
-    // De duur van de fase is ook afgeleid (de som van de taken eronder); die van de taken zelf botst niet.
-    let duur: Vec<_> = c.iter().filter(|x| x.attribuut.as_deref() == Some("TaskTime.ScheduleDuration")).collect();
-    assert!(duur.iter().all(|x| x.naam.as_deref() == Some("3. Extension")), "{duur:#?}");
+    // De tijden van een taak zijn één blok. De staalconstructie kreeg bij ons een andere duur en bij hun andere
+    // datums (de fundering ervoor duurt langer): een conflict, en het rapport noemt per veld wat verschilt, ook de
+    // duur. Zo ook bij de fundering.
+    assert!(heeft(&c, "TaskTime.ScheduleDuration", "'P0Y0M20D'", "'P0Y0M5D'"), "{c:#?}");
+    assert!(heeft(&c, "TaskTime.ScheduleDuration", "'P0Y0M5D'", "'P0Y0M14D'"), "{c:#?}");
     assert!(c.iter().any(|x| x.attribuut.as_deref() == Some("FinishTime")), "{c:#?}");
     assert!(c.iter().any(|x| x.attribuut.as_deref() == Some("TaskTime.EarlyStart")), "{c:#?}");
 }
@@ -255,6 +257,31 @@ fn allebei_dezelfde_nieuwe_relatie() {
 fn dezelfde_nieuwe_relatie_met_een_ander_type() {
     let c = mislukt(&planning("basis"), &planning("relatie-ss-ons"), &planning("relatie-hun"));
     assert!(c.iter().any(|x| x.soort == ConflictSoort::BeideToegevoegd), "{c:#?}");
+}
+
+/// Dezelfde nieuwe relatie, maar OPS bewaart onder haar GlobalId iets anders in `OPS_Sequences` (BLOKKEERT uit de
+/// review van Sol). Na het koppelen houdt de relatie de GlobalId van ons; zonder conflict raakt het record van hun
+/// los. De drie gevallen van Sol: ons 150 en hun 150,4 minuten (allebei `PT2H30M0S`), ons 240 minuten en hun een
+/// halve dag (allebei `PT4H0M0S`), en alleen hun met de P6-grens. Elk is een conflict, in beide richtingen.
+#[test]
+fn dezelfde_nieuwe_relatie_met_andere_gegevens_van_ops() {
+    let b = planning("basis");
+    for (ons, hun, waarde) in [
+        ("relatie-lag150-ons", "relatie-lag150.4-hun", "ExactMinuteLags [150.4,150]"),
+        ("relatie-lag240-ons", "relatie-halvedag-hun", "DayMeasureLags [0.5,240]"),
+        ("relatie-ons", "relatie-p6-hun", "P6StartAtPredecessorFinishBoundarySequenceGuids"),
+    ] {
+        let (o, h) = (planning(ons), planning(hun));
+        for (x, y, wat) in [(&o, &h, ["(niets)", waarde]), (&h, &o, [waarde, "(niets)"])] {
+            let c = mislukt(&b, x, y);
+            assert!(heeft(&c, "OPS_Sequences", wat[0], wat[1]), "{ons} en {hun}: {c:#?}");
+        }
+    }
+    // Allebei een halve dag: hetzelfde record, maar onder een andere GlobalId. Dat blijft een conflict op de
+    // eigenschappenset (OPS_Sequences), want we voegen de JSON niet samen. Er gaat niets verloren.
+    let c = mislukt(&b, &planning("relatie-halvedag-ons"), &planning("relatie-halvedag-hun"));
+    assert!(!c.iter().any(|x| x.attribuut.as_deref() == Some("OPS_Sequences")), "{c:#?}");
+    assert!(c.iter().any(|x| x.naam.as_deref() == Some("OPS_Sequences")), "{c:#?}");
 }
 
 /// Een relatie toevoegen met een eigen regel, zonder doorrekenen (zoals een ander programma dat kan doen).
@@ -322,6 +349,48 @@ fn nieuwe_kring_naast_een_oude_kring() {
     assert!(!c[0].melding.contains("Lay floor tiles"), "{}", c[0].melding);
 }
 
+/// Een kring via een fase (BLOKKEERT uit de review van Sol). OPS rekent een relatie met een fase door voor elke taak
+/// in die fase. Ons legt "3. Extension" -> Start of refurbishment, hun Start of refurbishment -> de staalconstructie
+/// (een taak in 3. Extension). Samen: staal -> (fase) -> start -> staal.
+#[test]
+fn nieuwe_kring_via_een_fase() {
+    let b = planning("basis");
+    let ons = met_relatie(&b, "RelOns", "3. Extension", "Start of refurbishment");
+    let hun = met_relatie(&b, "RelHun", "Start of refurbishment", STAAL);
+    for (o, h) in [(&ons, &hun), (&hun, &ons)] {
+        let c = mislukt(&b, o, h);
+        assert_eq!(c.len(), 1, "{c:#?}");
+        assert_eq!(c[0].soort, ConflictSoort::VolgordeKring);
+    }
+}
+
+/// Ons hangt de kassa onder "3. Extension" (in OPS), hun legt "3. Extension" -> Lay floor tiles. In de basis loopt Lay
+/// floor tiles via twee taken naar de kassa. Met de nesting van het resultaat geldt de relatie van hun ook voor de
+/// kassa: kassa -> Lay floor tiles -> ... -> kassa. Ons en hun apart hebben geen kring (BLOKKEERT uit de review van
+/// Sol).
+#[test]
+fn nieuwe_kring_door_verhangen_en_een_relatie_met_de_fase() {
+    let b = planning("basis");
+    let ons = planning("verplaats-ons");
+    let hun = met_relatie(&b, "RelHun", "3. Extension", "Lay floor tiles");
+    for (o, h) in [(&ons, &hun), (&hun, &ons)] {
+        let c = mislukt(&b, o, h);
+        assert_eq!(c.len(), 1, "{c:#?}");
+        assert_eq!(c[0].soort, ConflictSoort::VolgordeKring);
+    }
+}
+
+/// Een relatie tussen een fase en een taak eronder telt in OPS niet mee (`expandSummaryRelations`): geen kring. Ons
+/// hangt de kassa onder "3. Extension", hun legt "3. Extension" -> kassa. Allebei; OPS rekent het resultaat door.
+#[test]
+fn relatie_met_de_eigen_fase_is_geen_kring() {
+    let b = planning("basis");
+    let hun = met_relatie(&b, "RelHun", "3. Extension", "Checkout island");
+    let (_, t) = gelukt(&b, &planning("verplaats-ons"), &hun);
+    assert_eq!(t.ouder("Checkout island"), "3. Extension");
+    assert!(t.relaties.iter().any(|r| r.0 == "3. Extension" && r.1 == "Checkout island"));
+}
+
 /// Ons hangt de kassa onder de uitbouw, hun onder de installaties: conflict.
 #[test]
 fn taak_aan_beide_kanten_naar_een_andere_samenvatting() {
@@ -375,7 +444,7 @@ fn allebei_een_baseline() {
     assert!(c.iter().any(|x| x.naam.as_deref() == Some("OPS_Baselines")), "{c:#?}");
 }
 
-// --- De regel voor een eigen knoop, los van OPS. ---
+// --- De regel voor de IfcTaskTime, los van OPS. ---
 
 /// Een kleine planning in IFC4 of IFC4X3: taken A en B, elk met een eigen IfcTaskTime (of, met `gedeeld`, één
 /// gedeelde).
@@ -397,10 +466,11 @@ fn kleine_planning(schema: &str, gedeeld: bool) -> String {
     )
 }
 
-/// De regel werkt in IFC4 en IFC4X3 (IFC2X3 kent geen IfcTaskTime). Is de knoop gedeeld, dan geldt hij niet: de
-/// knoop van ons herschrijven zou ook de andere taak raken.
+/// De regel werkt in IFC4 en IFC4X3 (IFC2X3 kent geen IfcTaskTime). De naam en de tijden zijn twee delen: ons de
+/// duur en hun de naam geeft allebei; ons de duur en hun de start is een conflict, want de tijden zijn één blok. Is
+/// de knoop gedeeld, dan geldt de regel niet: de knoop van ons herschrijven zou ook de andere taak raken.
 #[test]
-fn eigen_knoop_per_attribuut() {
+fn taaktijd_in_twee_delen() {
     for schema in ["IFC4", "IFC4X3_ADD2"] {
         for gedeeld in [false, true] {
             let b = kleine_planning(schema, gedeeld);
@@ -424,6 +494,40 @@ fn eigen_knoop_per_attribuut() {
             );
             let c = voeg(&b, &o, &h2).conflicten;
             assert!(heeft(&c, "TaskTime.ScheduleDuration", "'P7D'", "'P9D'"), "{c:#?}");
+            // Ons de duur, hun de start van dezelfde taak: twee wijzigingen in het blok van de tijden.
+            let h3 = vervang(&b, "'A Time',.PREDICTED.,$,.WORKTIME.,'P5D','2027-03-01", "'A Time',.PREDICTED.,$,.WORKTIME.,'P5D','2027-03-08");
+            let c = voeg(&b, &o, &h3).conflicten;
+            assert!(heeft(&c, "TaskTime.ScheduleDuration", "'P7D'", "'P5D'"), "{c:#?}");
+            assert!(heeft(&c, "TaskTime.ScheduleStart", "'2027-03-01T07:00:00'", "'2027-03-08T07:00:00'"), "{c:#?}");
         }
+    }
+}
+
+/// Het geval uit de review van Sol (BLOKKEERT): een IfcObjective die alleen bij één relatie hoort, met in de basis
+/// HARD en 'Special'. Ons wist de UserDefinedGrade, hun zet de ConstraintGrade op USERDEFINED. Per attribuut
+/// samenvoegen gaf USERDEFINED zonder UserDefinedGrade, en dat breekt een regel van IFC (IfcConstraint, WR11). Alleen
+/// de IfcTaskTime voegen we in delen samen; hier is het een conflict op het hele attribuut.
+#[test]
+fn andere_eigen_knoop_blijft_een_conflict() {
+    let b = ifc(
+        "IFC4",
+        &format!(
+            "#1=IFCPERSON($,'Anne',$,$,$,$,$,$);\n#2=IFCORGANIZATION($,'Bouw BV',$,$,$);\n\
+             #3=IFCPERSONANDORGANIZATION(#1,#2,$);\n#4=IFCAPPLICATION(#2,'1','test','test');\n\
+             #5=IFCOWNERHISTORY(#3,#4,$,.NOCHANGE.,$,$,$,1700000000);\n\
+             #20=IFCBUILDINGELEMENTPROXY('{}',#5,'Kolom',$,$,$,$,$,$);\n\
+             #21=IFCOBJECTIVE('Eis',$,.HARD.,$,$,$,'Special',$,$,.REQUIREMENT.,$);\n\
+             #22=IFCRELASSOCIATESCONSTRAINT('{}',#5,$,$,(#20),$,#21);",
+            gid("Kolom"),
+            gid("Eis")
+        ),
+    );
+    let o = vervang(&b, ".HARD.,$,$,$,'Special'", ".HARD.,$,$,$,$");
+    let h = vervang(&b, ".HARD.,$,$,$,'Special'", ".USERDEFINED.,$,$,$,'Special'");
+    for (x, y) in [(&o, &h), (&h, &o)] {
+        let s = voeg(&b, x, y);
+        assert!(!s.gelukt, "{:?}", s.inhoud.as_deref().map(String::from_utf8_lossy));
+        let c = &s.conflicten;
+        assert!(c.iter().any(|c| c.attribuut.as_deref() == Some("RelatingConstraint")), "{c:#?}");
     }
 }

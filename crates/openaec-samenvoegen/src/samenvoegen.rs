@@ -186,8 +186,8 @@ pub(crate) enum Deel {
     Van(usize),
     /// Een samengevoegde lijst: per element de kant en het bereik in de tekst van het attribuut van die kant.
     Lijst(Vec<(usize, (usize, usize))>),
-    /// De eigen knoop van het object (bijv. de IfcTaskTime van een taak), per attribuut samengevoegd: per attribuut
-    /// van de knoop de kant. De schrijver herschrijft de knoop van ons.
+    /// De IfcTaskTime van een taak, in twee delen samengevoegd (de naam en de tijden): per attribuut van de knoop de
+    /// kant. De schrijver herschrijft de knoop van ons.
     Knoop(Vec<usize>),
 }
 
@@ -329,7 +329,8 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
     let (mut mb, mut mo, mut mh) = (mb?, mo?, mh?);
     let gekoppeld = koppel_relaties(&mb, &mut mo) + koppel_relaties(&mb, &mut mh);
     // Dezelfde nieuwe relatie aan beide kanten (bijv. A -> B in een planning), met een andere GlobalId.
-    let gekoppeld = gekoppeld + koppel_toevoegingen(&mb, &mo, &mut mh);
+    let (n, andere_gegevens) = koppel_toevoegingen(&mb, &mo, &mut mh);
+    let gekoppeld = gekoppeld + n;
     markeer_gemeen(&mut [&mut mb, &mut mo, &mut mh]);
     std::thread::scope(|s| {
         s.spawn(|| mb.bereken_puur());
@@ -385,6 +386,7 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
         return Ok(Samenvoeging { inhoud: Some(inhoud.to_vec()), gelukt: true, conflicten, statistiek });
     }
     conflicten.extend(koppelregel(&m, &plan));
+    conflicten.extend(andere_relatiegegevens(&m, &plan, andere_gegevens));
     conflicten.extend(relaties_vervangen(&m, &plan));
     if conflicten.is_empty() {
         conflicten = controleer_verwijzingen(&m, &plan);
@@ -866,7 +868,7 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, conflicten: &mut Vec<Conflict>) 
                 continue;
             }
         }
-        if let Some(kanten) = eigen_knoop_samenvoegen(m, s, i, j, &attribuut.naam, conflicten) {
+        if let Some(kanten) = taaktijd_samenvoegen(m, s, i, j, &attribuut.naam, conflicten) {
             delen.push(Deel::Knoop(kanten));
             continue;
         }
@@ -883,12 +885,13 @@ fn beide_gewijzigd(m: &[Model; 3], s: &Sleutel, conflicten: &mut Vec<Conflict>) 
     Besluit::Samen(delen)
 }
 
-/// Beide kanten wijzigden attribuut `j`, een verwijzing naar een knoop die alleen bij dit object hoort (bijv. de
-/// IfcTaskTime van een taak: ons de duur, hun de naam). Dan per attribuut van die knoop, zoals bij een object: twee
-/// andere waarden voor hetzelfde attribuut zijn een conflict (`TaskTime.ScheduleDuration`). Geeft per attribuut van
-/// de knoop de kant, of None als de regel niet past: een ander type, een vluchtig veld, of een attribuut van hun met
-/// een verwijzing (de schrijver neemt de tekst van hun letterlijk over). Dan blijft het een conflict op `j`.
-fn eigen_knoop_samenvoegen(
+/// Beide kanten wijzigden de IfcTaskTime van een taak (attribuut `TaskTime`), bijv. ons de duur en hun de naam. OPS
+/// schrijft de taaknaam ook in de IfcTaskTime ("… Time"). Dan twee delen: de naam (attribuut 0) en alle tijden samen
+/// (de rest, als één blok). Wijzigden beide kanten hetzelfde deel anders, dan een conflict per veld waarin ons en hun
+/// verschillen (`TaskTime.ScheduleDuration`). Geeft per attribuut van de knoop de kant, of None: een andere knoop, of
+/// een IfcTaskTime die niet alleen bij deze taak hoort. Dan blijft het een conflict op `j`. Alleen deze knoop: per
+/// attribuut samenvoegen kan bij andere knopen een regel van IFC breken (review van Sol, bijv. een IfcObjective).
+fn taaktijd_samenvoegen(
     m: &[Model; 3],
     s: &Sleutel,
     i: [usize; 3],
@@ -896,32 +899,30 @@ fn eigen_knoop_samenvoegen(
     naam: &str,
     conflicten: &mut Vec<Conflict>,
 ) -> Option<Vec<usize>> {
-    let c = [m[B].eigen_knoop(i[B], j)?, m[O].eigen_knoop(i[O], j)?, m[H].eigen_knoop(i[H], j)?];
-    let entiteit = m[O].entiteit(c[O])?;
-    let n = entiteit.attributen.len();
-    let type_naam = m[O].bestand.type_naam(c[O]);
-    let zelfde_type =
-        (0..3).all(|k| m[k].bestand.type_naam(c[k]) == type_naam && m[k].bestand.attributen(c[k]).len() == n);
-    if !zelfde_type || entiteit.attributen.iter().any(|a| a.vluchtig) {
+    if naam != "TaskTime" {
         return None;
     }
-    let mut kanten = Vec::with_capacity(n);
+    let c = [m[B].eigen_knoop(i[B], j)?, m[O].eigen_knoop(i[O], j)?, m[H].eigen_knoop(i[H], j)?];
+    let n = m[O].bestand.attributen(c[O]).len();
+    let entiteit = m[O].entiteit(c[O])?;
+    let past = |k: usize| m[k].bestand.type_naam(c[k]) == "IFCTASKTIME" && m[k].bestand.attributen(c[k]).len() == n;
+    if !(0..3).all(past) || entiteit.attributen.len() != n || entiteit.attributen.iter().any(|a| a.vluchtig) {
+        return None;
+    }
+    let mut kanten = vec![O; n];
     let mut botsingen = Vec::new();
-    for l in 0..n {
-        let h = [m[B].attribuut_hash(c[B], l), m[O].attribuut_hash(c[O], l), m[H].attribuut_hash(c[H], l)];
+    for deel in [0..1, 1..n] {
+        let h = |k: usize| deel.clone().map(|l| m[k].attribuut_hash(c[k], l)).collect::<Vec<_>>();
+        let h = [h(B), h(O), h(H)];
         let kant = if h[O] == h[H] || h[H] == h[B] {
             O
         } else if h[O] == h[B] {
             H
         } else {
-            botsingen.push(l);
+            botsingen.extend(deel.clone().zip(h[O].iter().zip(&h[H])).filter(|(_, (o, h))| o != h).map(|(l, _)| l));
             O
         };
-        let tekst = attribuut_tekst(&m[H], c[H], l);
-        if kant == H && Tokens::nieuw(tekst).any(|(_, t)| matches!(t, Token::Verwijzing(_))) {
-            return None;
-        }
-        kanten.push(kant);
+        kanten[deel].fill(kant);
     }
     for l in botsingen {
         let veld = format!("{naam}.{}", entiteit.attributen[l].naam);
@@ -1334,7 +1335,7 @@ pub(crate) fn verwachte_hash(m: &[Model; 3], s: &Sleutel) -> Option<Hash> {
                     Deel::Knoop(kanten) => {
                         let knoop = |k: usize| {
                             let i = m[k].objecten[s.obj[k].unwrap()].inst as usize;
-                            m[k].eigen_knoop(i, j).expect("gecontroleerd in eigen_knoop_samenvoegen")
+                            m[k].eigen_knoop(i, j).expect("gecontroleerd in taaktijd_samenvoegen")
                         };
                         let c = [0, knoop(O), knoop(H)];
                         let delen: Vec<(&Model, usize)> = kanten.iter().map(|&k| (&m[k], c[k])).collect();
@@ -1590,6 +1591,29 @@ fn aggregaat_grenzen(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden)
     }
 }
 
+/// Dezelfde nieuwe relatie aan beide kanten ([`koppel_toevoegingen`]), maar OPS bewaart onder haar GlobalId iets
+/// anders. Bijv. ons een lag van 240 minuten, hun een lag van een halve dag: in IFC allebei `PT4H0M0S`, maar alleen
+/// hun heeft het record `[0.5,240]` in `OPS_Sequences`. Na het koppelen houdt de relatie de GlobalId van ons; het
+/// record van hun zou dan los raken en OPS leest 240 minuten. Daarom een conflict.
+fn andere_relatiegegevens(m: &[Model; 3], plan: &Plan, anders: Vec<(String, [String; 2])>) -> Vec<Conflict> {
+    let toon = |t: String| if t.is_empty() { "(niets)".to_string() } else { t };
+    anders
+        .into_iter()
+        .filter_map(|(sleutel, [o, h])| {
+            let &si = plan.op_sleutel.get(&sleutel)?;
+            let mut c = Conflict::nieuw(
+                ConflictSoort::BeideToegevoegd,
+                "ons en hun voegden allebei deze relatie toe, maar met andere gegevens in OPS_Sequences (een lag \
+                 met een breuk of de P6-grens)",
+            )
+            .over(m, &plan.sleutels[si]);
+            c.attribuut = Some("OPS_Sequences".into());
+            [c.ons, c.hun] = [Some(toon(o)), Some(toon(h))];
+            Some(c)
+        })
+        .collect()
+}
+
 /// De boomrelaties: (ouder, kind) per relatie, met de sleutel van de relatie.
 fn boomranden(m: &Model) -> Vec<(String, String, String)> {
     randen(
@@ -1742,11 +1766,12 @@ fn boom(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
 }
 
 /// Geen nieuwe kring in de volgorde van taken (`IfcRelSequence`): ons legt A -> B, hun B -> A. Elke kant apart is een
-/// goede planning, samen niet; OPS kan zo'n planning niet doorrekenen. Een relatie van A naar B ligt in een kring als
-/// A en B elkaar bereiken. Nieuw is zo'n relatie als A en B elkaar in ons en in hun niet bereikten. Een kring die een
-/// kant elders al had, verbergt zo geen nieuwe. Per nieuwe kring één conflict.
+/// goede planning, samen niet; OPS kan zo'n planning niet doorrekenen. We kijken naar de graaf zoals OPS hem
+/// doorrekent ([`volggraaf`]), met de nesting van het resultaat. Een relatie ligt in een kring als haar twee einden
+/// elkaar bereiken. Nieuw is zo'n kring als die einden elkaar in ons en in hun niet bereikten. Een kring die een kant
+/// elders al had, verbergt zo geen nieuwe. Per nieuwe kring één conflict.
 fn volgorde(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
-    let randen = [volgranden(&m[O]), volgranden(&m[H])];
+    let randen = [volggraaf(&m[O]), volggraaf(&m[H])];
     let delen = [samenhang(&randen[0]), samenhang(&randen[1])];
     let al_in_kring = |k: usize, a: &str, b: &str| {
         if a == b {
@@ -1755,34 +1780,96 @@ fn volgorde(m: &[Model; 3], plan: &Plan, r: &Model, uit: &mut Gevonden) {
             delen[k].get(a).is_some_and(|d| delen[k].get(b) == Some(d))
         }
     };
-    let rr = volgranden(r);
+    let rr = volggraaf(r);
     let dr = samenhang(&rr);
     let mut nieuw: Vec<&(String, String, String)> = rr
         .iter()
-        .filter(|(a, b, _)| dr[a.as_str()] == dr[b.as_str()] && !al_in_kring(0, a, b) && !al_in_kring(1, a, b))
+        .filter(|(a, b, relatie)| {
+            !relatie.is_empty() && dr[a.as_str()] == dr[b.as_str()] && !al_in_kring(0, a, b) && !al_in_kring(1, a, b)
+        })
         .collect();
     nieuw.sort();
     let in_r = op_sleutel(r);
     let naam = |s: &str| in_r.get(s).map_or(s.to_string(), |&o| r.object_weergave(o));
+    let einden: HashMap<String, (String, String)> =
+        volgranden(r).into_iter().map(|(a, b, relatie)| (relatie, (a, b))).collect();
     let mut gemeld = HashSet::new();
-    for (a, b, relatie) in nieuw {
+    for (a, _, relatie) in nieuw {
         if !gemeld.insert(dr[a.as_str()]) {
             continue;
         }
         let Some(&si) = plan.op_sleutel.get(relatie) else { continue };
+        let Some((van, naar)) = einden.get(relatie) else { continue };
         let mut c = Conflict::nieuw(
             ConflictSoort::VolgordeKring,
             format!(
                 "na het samenvoegen zit de relatie van {} naar {} in een kring in de volgorde van taken \
                  (IfcRelSequence); ons en hun hadden die kring elk niet",
-                naam(a),
-                naam(b)
+                naam(van),
+                naam(naar)
             ),
         )
         .over(m, &plan.sleutels[si]);
         c.attribuut = Some("RelatedProcess".into());
         uit.push(c);
     }
+}
+
+/// De volgorde zoals OPS hem doorrekent (`expandSummaryRelations` in OPS): een relatie met een samenvatting (een taak
+/// met taken eronder in IfcRelNests) geldt voor elke bladtaak eronder. Zo wordt een kring zichtbaar die alleen via een
+/// fase loopt. Een samenvatting P krijgt daarvoor twee hulpknopen, zodat het aantal randen klein blijft: elke
+/// bladtaak onder P wijst naar `uit:P`, en `in:P` wijst naar elke bladtaak onder P. Een relatie tussen een
+/// samenvatting en een taak eronder (of de samenvatting zelf) telt niet mee; OPS laat die ook weg. (van, naar,
+/// relatie); een hulprand heeft geen relatie.
+fn volggraaf(m: &Model) -> Vec<(String, String, String)> {
+    let mut kinderen: HashMap<String, Vec<String>> = HashMap::new();
+    for (ouder, kind, _) in randen(m, &["IFCRELNESTS"], &["RelatingObject"], &["RelatedObjects"]) {
+        kinderen.entry(ouder).or_default().push(kind);
+    }
+    // De bladtaken onder x, of x zelf als x geen kinderen heeft. Bestand tegen een kring in de nesting.
+    let bladen = |x: &str| -> HashSet<String> {
+        let mut uit = HashSet::new();
+        let mut gezien = HashSet::new();
+        let mut stapel = vec![x.to_string()];
+        while let Some(y) = stapel.pop() {
+            if !gezien.insert(y.clone()) {
+                continue;
+            }
+            match kinderen.get(&y) {
+                Some(k) => stapel.extend(k.iter().cloned()),
+                None => {
+                    uit.insert(y);
+                }
+            }
+        }
+        uit
+    };
+    let mut uit = Vec::new();
+    let mut hulp = HashSet::new();
+    let mut hulpknoop = |richting: &str, x: &str, bladen: &HashSet<String>, uit: &mut Vec<(String, String, String)>| {
+        let h = format!("{richting}:{x}");
+        if hulp.insert(h.clone()) {
+            for b in bladen {
+                let rand = if richting == "uit" { (b.clone(), h.clone()) } else { (h.clone(), b.clone()) };
+                uit.push((rand.0, rand.1, String::new()));
+            }
+        }
+        h
+    };
+    for (a, b, relatie) in volgranden(m) {
+        if !kinderen.contains_key(&a) && !kinderen.contains_key(&b) {
+            uit.push((a, b, relatie));
+            continue;
+        }
+        let (va, vb) = (bladen(&a), bladen(&b));
+        if va.is_empty() || vb.is_empty() || !va.is_disjoint(&vb) {
+            continue;
+        }
+        let van = if kinderen.contains_key(&a) { hulpknoop("uit", &a, &va, &mut uit) } else { a };
+        let naar = if kinderen.contains_key(&b) { hulpknoop("in", &b, &vb, &mut uit) } else { b };
+        uit.push((van, naar, relatie));
+    }
+    uit
 }
 
 /// Per knoop (sleutel) van de graaf `randen` het nummer van zijn sterk samenhangende deel: twee knopen met hetzelfde

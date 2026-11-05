@@ -1546,8 +1546,10 @@ pub(crate) fn koppel_relaties(basis: &Model, x: &mut Model) -> usize {
 /// enkele verwijzingen naar objecten heeft (bijv. IfcRelSequence van taak A naar taak B) is door die objecten
 /// bepaald. Heeft hun precies één nieuwe relatie met hetzelfde type en dezelfde objecten als precies één nieuwe
 /// relatie van ons, dan krijgt die van hun de sleutel van ons. Bij gelijke inhoud blijft er dan één over (die van
-/// ons), bij een andere inhoud (bijv. een andere SequenceType) is het een conflict. Geeft het aantal koppelingen.
-pub(crate) fn koppel_toevoegingen(basis: &Model, ons: &Model, hun: &mut Model) -> usize {
+/// ons), bij een andere inhoud (bijv. een andere SequenceType) is het een conflict. Geeft het aantal koppelingen en
+/// de gekoppelde relaties waarbij OPS onder de GlobalId iets anders bewaart ([`ops_relatiegegevens`]): per relatie
+/// de sleutel en wat ons en hun bewaren. Dat moet een conflict worden, want de relatie houdt de GlobalId van ons.
+pub(crate) fn koppel_toevoegingen(basis: &Model, ons: &Model, hun: &mut Model) -> (usize, Vec<(String, [String; 2])>) {
     let nieuw = |x: &Model, ander: &Model| -> HashMap<Hash, Vec<usize>> {
         let in_basis: HashSet<&str> = basis.objecten.iter().map(|o| o.sleutel.as_str()).collect();
         let in_ander: HashSet<&str> = ander.objecten.iter().map(|o| o.sleutel.as_str()).collect();
@@ -1563,15 +1565,69 @@ pub(crate) fn koppel_toevoegingen(basis: &Model, ons: &Model, hun: &mut Model) -
         uit
     };
     let bij_ons = nieuw(ons, hun);
-    let bij_hun = nieuw(hun, ons);
-    let mut aantal = 0;
-    for (s, h) in bij_hun {
-        if let (Some([o]), [h]) = (bij_ons.get(&s).map(Vec::as_slice), h.as_slice()) {
-            hun.objecten[*h].sleutel = ons.objecten[*o].sleutel.clone();
-            aantal += 1;
+    let mut paren: Vec<(usize, usize)> = nieuw(hun, ons)
+        .into_iter()
+        .filter_map(|(s, h)| match (bij_ons.get(&s).map(Vec::as_slice), h.as_slice()) {
+            (Some(&[o]), &[h]) => Some((o, h)),
+            _ => None,
+        })
+        .collect();
+    paren.sort_unstable();
+    let mut anders = Vec::new();
+    if !paren.is_empty() {
+        let (eo, eh) = (ops_relatiegegevens(ons), ops_relatiegegevens(hun));
+        for &(o, h) in &paren {
+            let (go, gh) = (onder_globalid(&eo, &ons.objecten[o].globalid), onder_globalid(&eh, &hun.objecten[h].globalid));
+            if go != gh {
+                anders.push((ons.objecten[o].sleutel.clone(), [go, gh]));
+            }
         }
     }
-    aantal
+    for &(o, h) in &paren {
+        hun.objecten[h].sleutel = ons.objecten[o].sleutel.clone();
+    }
+    (paren.len(), anders)
+}
+
+/// De eigenschappen waarin OPS gegevens van een relatie bewaart, met de GlobalId van de relatie als sleutel. Ze staan
+/// in de eigenschappenset `OPS_Sequences` op het werkschema, want een IfcRelSequence kan zelf geen eigenschappenset
+/// dragen: het record van een lag in dagen met een breuk (bijv. een halve dag, in IFC `PT4H0M0S`), dat van een lag in
+/// minuten met een breuk (150,4 minuten, in IFC `PT2H30M0S`) en de lijst met de P6-grens.
+const OPS_RELATIEGEGEVENS: [&str; 3] =
+    ["DayMeasureLags", "ExactMinuteLags", "P6StartAtPredecessorFinishBoundarySequenceGuids"];
+
+/// De waarden van de eigenschappen uit [`OPS_RELATIEGEGEVENS`] in `m`: per eigenschap de naam en de tekst (JSON).
+fn ops_relatiegegevens(m: &Model) -> Vec<(String, String)> {
+    let tekst = |i: usize, j: usize| {
+        let a = m.bestand.attributen(i);
+        let t = Tokens::nieuw(m.bestand.tekst(*a.get(j)?)).find_map(|(_, t)| match t {
+            Token::Tekst(t) => Some(decodeer(t)),
+            _ => None,
+        });
+        t
+    };
+    (0..m.bestand.instanties.len())
+        .filter(|&i| m.bestand.type_naam(i) == "IFCPROPERTYSINGLEVALUE")
+        .filter_map(|i| Some((tekst(i, 0).filter(|n| OPS_RELATIEGEGEVENS.contains(&n.as_str()))?, tekst(i, 2)?)))
+        .collect()
+}
+
+/// Wat er in `eigenschappen` ([`ops_relatiegegevens`]) onder `globalid` staat, als tekst voor het rapport: per
+/// eigenschap de naam en de waarde (bij de P6-grens alleen de naam). Een waarde die geen JSON-object of -lijst is,
+/// telt helemaal mee als de GlobalId erin staat. Leeg: niets.
+fn onder_globalid(eigenschappen: &[(String, String)], globalid: &str) -> String {
+    let mut uit = Vec::new();
+    for (naam, waarde) in eigenschappen {
+        match serde_json::from_str::<serde_json::Value>(waarde) {
+            Ok(serde_json::Value::Object(o)) => uit.extend(o.get(globalid).map(|v| format!("{naam} {v}"))),
+            Ok(serde_json::Value::Array(a)) => {
+                uit.extend(a.iter().any(|v| v.as_str() == Some(globalid)).then(|| naam.clone()))
+            }
+            _ => uit.extend(waarde.contains(globalid).then(|| format!("{naam} {waarde}"))),
+        }
+    }
+    uit.sort();
+    uit.join("; ")
 }
 
 /// De sleutels van `x` in een tabel (sleutel -> objectindex). Een gekoppelde relatie staat onder de GlobalId van de
