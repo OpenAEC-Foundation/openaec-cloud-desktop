@@ -1078,19 +1078,21 @@ pub async fn sync_met_opties<O: Opslag>(
         |rel| lokaal_bestand(root, rel),
         |sleutel, n| toestand.bestanden.get(sleutel).is_some_and(|b| b.bestand == n.bestand && b.versie == n.versie),
     )?;
-    for (sleutel, n, (grootte, mtime_ns)) in herstel.bijwerken {
-        toestand.bestanden.insert(sleutel, Bekend { bestand: n.bestand, versie: n.versie, grootte, mtime_ns });
+    for (sleutel, n, (grootte, mtime_ns)) in &herstel.bijwerken {
+        let (bestand, versie, grootte, mtime_ns) = (n.bestand.clone(), n.versie, *grootte, *mtime_ns);
+        toestand.bestanden.insert(sleutel.clone(), Bekend { bestand, versie, grootte, mtime_ns });
     }
     // Een verwijdering staat, ook als de toestand van die ronde niet meer bewaard werd. Anders zou de vergelijking het
     // lege pad als "lokaal verwijderd" zien en het bestand op de server verwijderen. Eerst duurzaam (ook zonder server),
-    // dan pas mag het journaal weg; zie `vervang::leg_vast`.
+    // dan legt het journaal vast dat het verwerkt is (zie `vervang::leg_vast`): elk journaal past zijn toestand maar één
+    // keer toe. Ook een bijgewerkte vervanging meteen: deze ronde kan het bestand al verder zetten.
     for sleutel in &herstel.vergeten {
         toestand.bestanden.remove(sleutel);
         toestand.lokale_namen.remove(sleutel);
     }
-    if !herstel.vergeten.is_empty() {
+    if !herstel.vergeten.is_empty() || !herstel.bijwerken.is_empty() {
         bewaar(root, &toestand)?;
-        vervang::leg_vast(root, |s| toestand.bestanden.contains_key(s))?;
+        vervang::leg_vast(root, |s| toestand.bestanden.get(s).map(|b| (b.bestand.clone(), b.versie)))?;
     }
     // Werk in de bron van een verwijdering komt zo ook offline terug op het pad.
     vervang::rond_af(root, |rel| lokaal_bestand(root, rel), true);
@@ -1284,7 +1286,7 @@ pub async fn sync_met_opties<O: Opslag>(
     {
         let toestand = ronde.toestand.lock().unwrap();
         bewaar(root, &toestand)?;
-        vervang::leg_vast(root, |s| toestand.bestanden.contains_key(s))?;
+        vervang::leg_vast(root, |s| toestand.bestanden.get(s).map(|b| (b.bestand.clone(), b.versie)))?;
     }
     // Pas nu de toestand op schijf staat, de bronnen afronden (ook die van eerdere rondes); een journaal verdwijnt zo
     // nooit vóór de toestand die het verwerkt.

@@ -144,12 +144,27 @@ mod placeholder {
     pub trait Placeholders: Sync {
         /// Attributen van een pad (zonder op te halen); None als het niet bestaat.
         fn attributen(&self, pad: &Path) -> Option<u32>;
-        /// Maak een bestand dat alleen online staat. Weigert als er al iets op `pad` staat. Geeft de grootte en de
-        /// wijzigingstijd die het bestand kreeg (zoals de sync-motor ze meet), niet gemeten achteraf.
-        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)>;
-        /// Werk een bestand dat alleen online staat bij naar een nieuwe versie. Weigert als het niet meer in sync is
-        /// (opgehaald en gewijzigd). Geeft het kenmerk zoals [`Placeholders::maak`].
-        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)>;
+        /// Maak een bestand dat alleen online staat, met deze identiteit (zie [`identiteit`]). Weigert als er al iets op
+        /// `pad` staat. Geeft de grootte en de wijzigingstijd die het bestand kreeg (zoals de sync-motor ze meet), niet
+        /// gemeten achteraf.
+        fn maak(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)>;
+        /// Werk een bestand dat alleen online staat bij naar een nieuwe versie, met haar identiteit. Weigert als het
+        /// niet meer in sync is (opgehaald en gewijzigd). Geeft het kenmerk zoals [`Placeholders::maak`].
+        fn werk_bij(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)>;
+    }
+
+    /// De identiteit van een placeholder die de schil neerzet: het bestand-id en de versie die hij krijgt
+    /// (`<bestand>@<versie>`). De ophaler vraagt precies die versie (zie [`super::serverbestand`]), ook als de toestand
+    /// van de motor nog een andere kent.
+    pub fn identiteit(bestand: &OpslagBestand) -> String {
+        format!("{}@{}", bestand.bestand, bestand.versie)
+    }
+
+    /// Bestand-id en versie uit een identiteit van [`identiteit`]; None bij een andere identiteit (alleen een
+    /// bestand-id, of het merkteken van een bestand dat de app zelf in sync zette).
+    pub fn uit_identiteit(identiteit: &str) -> Option<(String, u64)> {
+        let (bestand, versie) = identiteit.rsplit_once('@')?;
+        Some((bestand.to_string(), versie.parse().ok()?))
     }
 
     /// De echte: de Cloud Filter API.
@@ -161,11 +176,11 @@ mod placeholder {
         fn attributen(&self, pad: &Path) -> Option<u32> {
             crate::cloudfilter::attributen(pad)
         }
-        fn maak(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)> {
-            crate::cloudfilter::maak_alleen_online(pad, grootte, bestand)
+        fn maak(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)> {
+            crate::cloudfilter::maak_alleen_online(pad, grootte, identiteit)
         }
-        fn werk_bij(&self, pad: &Path, grootte: u64, bestand: &str) -> anyhow::Result<(u64, u128)> {
-            crate::cloudfilter::werk_alleen_online_bij(pad, grootte, bestand)
+        fn werk_bij(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)> {
+            crate::cloudfilter::werk_alleen_online_bij(pad, grootte, identiteit)
         }
     }
 
@@ -212,11 +227,12 @@ mod placeholder {
         if !zonder_inhoud(p, root, lokaal, a) {
             return None;
         }
+        let identiteit = identiteit(bestand);
         let r = match a {
-            Some(_) => p.werk_bij(lokaal, bestand.grootte, &bestand.bestand),
+            Some(_) => p.werk_bij(lokaal, bestand.grootte, &identiteit),
             None => std::fs::create_dir_all(lokaal.parent().unwrap_or(root))
                 .map_err(anyhow::Error::from)
-                .and_then(|()| p.maak(lokaal, bestand.grootte, &bestand.bestand)),
+                .and_then(|()| p.maak(lokaal, bestand.grootte, &identiteit)),
         };
         match r {
             Ok(k) => Some(Ok(k)),
@@ -229,27 +245,35 @@ mod placeholder {
     }
 }
 
-/// Welk bestand op de server hoort bij een bestand dat alleen online staat: (bestand-id, versie) uit de toestand van de
-/// laatste ronde, anders het id dat in de placeholder staat (net aangemaakt in een lopende ronde; dan de huidige
-/// versie).
-#[cfg(windows)]
-pub fn serverbestand(root: &Path, pad: &Path) -> Option<(String, Option<u64>)> {
+/// Welk bestand op de server hoort bij een bestand dat alleen online staat (`identiteit`: die van de placeholder). Noemt
+/// de identiteit een versie (zie [`placeholder::identiteit`]), dan precies die: zo kreeg de schil de placeholder, ook
+/// als de toestand van de motor nog een andere versie kent (de ronde is nog niet bewaard). Anders (bestand-id, versie)
+/// uit de toestand van de laatste ronde (een bestand dat de app zelf in sync zette), en anders het id uit de identiteit
+/// met de huidige versie.
+pub fn serverbestand(root: &Path, pad: &Path, identiteit: Option<String>) -> Option<(String, Option<u64>)> {
     let rel = pad.strip_prefix(root).ok()?.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/");
     if let Some((id, versie)) = openaec_sync::motor::bekend_bestand(root, &rel) {
         return Some((id, Some(versie)));
     }
-    crate::cloudfilter::bestandsidentiteit(pad).map(|id| (id, None))
+    if let Some((id, versie)) = identiteit.as_deref().and_then(placeholder::uit_identiteit) {
+        return Some((id, Some(versie)));
+    }
+    identiteit.map(|id| (id, None))
 }
+
+/// Ophaler voor de hoofdmap: (volledig pad, offset, lengte, schrijf) -> klaar of een fout (zie `cloudfilter::Ophaler`).
+pub type Ophaler = Box<dyn Fn(&Path, i64, i64, &mut dyn FnMut(&[u8]) -> bool) -> std::result::Result<(), String> + Send + Sync>;
 
 /// De ophaler voor bestanden op aanvraag: zoek de koppeling bij het pad (`koppelingen` geeft de gekoppelde mappen in
 /// de hoofdmap), vraag een downloadlink voor precies die versie en stuur het gevraagde bereik door. Draait op een
 /// callback-thread van Windows (geen async runtime), dus blocking. `api` verstuurt het verzoek naar de API met de
 /// autorisatie van de sessie (en vernieuwt na een 401 één keer; zie `crate::api_blocking`); de downloadlink zelf gaat
-/// zonder Authorization-header.
-#[cfg(windows)]
-pub fn ophaler<K, A>(basis: impl Fn() -> Option<String> + Send + Sync + 'static, koppelingen: K, api: A) -> crate::cloudfilter::Ophaler
+/// zonder Authorization-header. `identiteit` leest de identiteit van een placeholder (op Windows de Cloud Filter API).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn ophaler<K, A, I>(basis: impl Fn() -> Option<String> + Send + Sync + 'static, koppelingen: K, api: A, identiteit: I) -> Ophaler
 where
     K: Fn() -> Vec<String> + Send + Sync + 'static,
+    I: Fn(&Path) -> Option<String> + Send + Sync + 'static,
     A: Fn(&str, &dyn Fn(&str) -> reqwest::Result<reqwest::blocking::Response>) -> Result<reqwest::blocking::Response, String>
         + Send
         + Sync
@@ -258,7 +282,7 @@ where
     Box::new(move |pad, begin, lengte, schrijf| {
         use std::io::Read;
         let root = koppelingen().into_iter().map(PathBuf::from).find(|r| pad.starts_with(r)).ok_or("dit bestand hoort bij geen gekoppelde ruimte")?;
-        let (bestand, versie) = serverbestand(&root, pad).ok_or("dit bestand is niet bekend op de server")?;
+        let (bestand, versie) = serverbestand(&root, pad, identiteit(pad)).ok_or("dit bestand is niet bekend op de server")?;
         let basis = basis().ok_or("niet verbonden")?;
         let http = reqwest::blocking::Client::builder().timeout(None).build().map_err(|e| e.to_string())?;
         let mut verzoek = serde_json::json!({ "bestand": bestand });
@@ -407,13 +431,17 @@ mod tests {
     #[derive(Default)]
     struct NepWolk {
         attributen: Mutex<std::collections::HashMap<PathBuf, u32>>,
+        /// De identiteit per placeholder, zoals de echte Cloud Filter API haar bewaart.
+        identiteiten: Mutex<std::collections::HashMap<PathBuf, String>>,
         tussendoor: Mutex<Option<Haak>>,
         na_bewerking: Mutex<Option<Haak>>,
     }
 
     impl NepWolk {
-        /// Grootte en wijzigingstijd zetten zoals de Cloud Filter API, en dat kenmerk teruggeven; daarna `na_bewerking`.
-        fn zet(&self, pad: &Path, grootte: u64) -> anyhow::Result<(u64, u128)> {
+        /// Grootte, wijzigingstijd en identiteit zetten zoals de Cloud Filter API, en het kenmerk teruggeven; daarna
+        /// `na_bewerking`.
+        fn zet(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)> {
+            self.identiteiten.lock().unwrap().insert(pad.to_path_buf(), identiteit.to_string());
             let f = std::fs::File::options().write(true).open(pad)?;
             f.set_len(grootte)?;
             let nu = std::time::SystemTime::now();
@@ -439,17 +467,17 @@ mod tests {
             }
             a
         }
-        fn maak(&self, pad: &Path, grootte: u64, _bestand: &str) -> anyhow::Result<(u64, u128)> {
+        fn maak(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)> {
             std::fs::OpenOptions::new().write(true).create_new(true).open(pad)?;
             self.attributen.lock().unwrap().insert(pad.to_path_buf(), placeholder::OFFLINE | placeholder::OPHALEN_BIJ_OPENEN);
-            self.zet(pad, grootte)
+            self.zet(pad, grootte, identiteit)
         }
-        fn werk_bij(&self, pad: &Path, grootte: u64, _bestand: &str) -> anyhow::Result<(u64, u128)> {
+        fn werk_bij(&self, pad: &Path, grootte: u64, identiteit: &str) -> anyhow::Result<(u64, u128)> {
             let alleen_online = self.attributen.lock().unwrap().get(pad).is_some_and(|a| a & placeholder::OFFLINE != 0);
             if !alleen_online {
                 return Err(anyhow::anyhow!("niet in sync"));
             }
-            self.zet(pad, grootte)
+            self.zet(pad, grootte, identiteit)
         }
     }
 
@@ -548,6 +576,91 @@ mod tests {
             "B staat als versie op de server"
         );
         assert_eq!(std::fs::read_to_string(&pad).unwrap(), "C van een collega");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Een server voor de ophaler: `download` geeft een link naar `/inhoud/<versie>` (zonder versie: de nieuwste), en
+    /// die link geeft de inhoud van die versie. Elk verzoek op een eigen verbinding.
+    fn nepserver(versies: Vec<Vec<u8>>) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let luisteraar = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let basis = format!("http://{}", luisteraar.local_addr().unwrap());
+        let adres = basis.clone();
+        std::thread::spawn(move || {
+            for mut verbinding in luisteraar.incoming().flatten() {
+                let mut lezer = BufReader::new(verbinding.try_clone().unwrap());
+                let (mut regel, mut lengte) = (String::new(), 0);
+                lezer.read_line(&mut regel).unwrap();
+                loop {
+                    let mut kop = String::new();
+                    lezer.read_line(&mut kop).unwrap();
+                    if kop.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(w) = kop.to_ascii_lowercase().strip_prefix("content-length:") {
+                        lengte = w.trim().parse().unwrap();
+                    }
+                }
+                let mut lichaam = vec![0; lengte];
+                lezer.read_exact(&mut lichaam).unwrap();
+                let antwoord = match regel.split_whitespace().nth(1).unwrap_or("").strip_prefix("/inhoud/") {
+                    Some(v) => versies[v.parse::<usize>().unwrap() - 1].clone(),
+                    None => {
+                        let verzoek: serde_json::Value = serde_json::from_slice(&lichaam).unwrap();
+                        let v = verzoek["versie"].as_u64().unwrap_or(versies.len() as u64);
+                        serde_json::json!({"message": {"url": format!("{adres}/inhoud/{v}")}}).to_string().into_bytes()
+                    }
+                };
+                write!(verbinding, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", antwoord.len()).unwrap();
+                verbinding.write_all(&antwoord).unwrap();
+            }
+        });
+        basis
+    }
+
+    fn api(_basis: &str, stuur: &dyn Fn(&str) -> reqwest::Result<reqwest::blocking::Response>) -> Result<reqwest::blocking::Response, String> {
+        stuur("token proef").map_err(|e| e.to_string())
+    }
+
+    /// Proef (review Sol ronde 3 op f0d144c, punt 1): de toestand kent versie 1 (A=1;B=1). Een collega schrijft versie 2
+    /// (A=2;B=1); de sync werkt de placeholder bij naar versie 2. De gebruiker opent het bestand vóór de ronde bewaard
+    /// is: de ophaler moet versie 2 leveren (die van de placeholder), niet versie 1 uit de toestand.
+    #[tokio::test]
+    async fn ophaler_levert_de_versie_van_de_placeholder_ook_voor_het_bewaren_van_de_ronde() {
+        let dir = proefmap("ophaler-versie");
+        let server = Server::default();
+        server.zet("a.txt", b"A=1;B=1");
+        let wolk = NepWolk::default();
+        let schil = Verkenneropslag::new(&server, &dir, true, NieuweMappen::Automatisch, &[]).met_placeholders(&wolk);
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        assert_eq!(openaec_sync::motor::bekend_bestand(&dir, "a.txt"), Some(("id-a.txt".to_string(), 1)));
+
+        server.zet("a.txt", b"A=2;B=1");
+        let basis = nepserver(vec![b"A=1;B=1".to_vec(), b"A=2;B=1".to_vec()]);
+        let geopend = std::sync::Arc::new(Mutex::new(None));
+        let (pad, map, uit) = (dir.join("a.txt"), dir.clone(), geopend.clone());
+        *wolk.na_bewerking.lock().unwrap() = Some(Box::new(move |w: &NepWolk| {
+            // Openen terwijl de ronde nog loopt: de toestand op schijf kent nog versie 1.
+            assert_eq!(openaec_sync::motor::bekend_bestand(&map, "a.txt").map(|b| b.1), Some(1));
+            let identiteit = w.identiteiten.lock().unwrap().get(&pad).cloned();
+            let wortel = map.to_string_lossy().to_string();
+            let ophaler = ophaler(move || Some(basis.clone()), move || vec![wortel.clone()], api, move |_| identiteit.clone());
+            // De ophaler is blocking (een callback-thread van Windows): niet op de thread van de runtime.
+            let inhoud = std::thread::spawn(move || {
+                let mut inhoud = Vec::new();
+                ophaler(&pad, 0, 7, &mut |stuk| {
+                    inhoud.extend_from_slice(stuk);
+                    true
+                })
+                .map(|()| inhoud)
+            })
+            .join()
+            .unwrap();
+            *uit.lock().unwrap() = Some(inhoud);
+        }));
+        openaec_sync::motor::sync_eenmalig(&schil, &dir).await.unwrap();
+        let geopend = geopend.lock().unwrap().take().expect("de gebruiker opende het bestand tijdens de ronde");
+        assert_eq!(geopend.unwrap(), b"A=2;B=1", "de versie van de placeholder, niet die uit de oude toestand");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

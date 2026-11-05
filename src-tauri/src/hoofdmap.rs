@@ -71,6 +71,7 @@ mod echt {
                     inst.koppelingen.iter().filter(|k| inst.in_hoofdmap(k)).map(|k| k.lokaal.clone()).collect()
                 },
                 move |basis, verstuur| crate::api_blocking(&a3, basis, verstuur),
+                cloudfilter::bestandsidentiteit,
             ));
             cloudfilter::verbind_hoofdmap(pad).map_err(|e| e.to_string())
         })();

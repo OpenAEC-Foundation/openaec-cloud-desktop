@@ -638,3 +638,37 @@ async fn werk_in_een_verwijderde_bron_komt_ook_offline_terug() {
     assert_eq!(r.geupload, 1);
     assert_eq!(opslag.nep.inhoud("a.txt").unwrap(), b"een + werk");
 }
+
+/// Proef (review Sol ronde 3 op f0d144c, punt 2): een programma houdt versie 1 open. De sync vervangt het bestand door
+/// versie 2; de oude bron blijft bewaakt. Daarna komt versie 3 binnen en wordt bewaard. Het oude journaal mag versie 2
+/// niet terugboeken: zonder wijziging van de gebruiker geen upload, geen download en geen conflict.
+#[tokio::test]
+async fn oude_vervangingsbron_boekt_een_nieuwere_versie_niet_terug() {
+    let opslag = NepOpslag::default();
+    let dir = tempfile::tempdir().unwrap();
+    opslag.zet("a.txt", b"versie 1");
+    sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    let programma = std::fs::File::open(dir.path().join("a.txt")).unwrap();
+
+    opslag.zet("a.txt", b"versie 2");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.gedownload, 1);
+    assert_eq!(bronnen(dir.path()), 1, "het programma heeft versie 1 open");
+
+    opslag.zet("a.txt", b"versie 3");
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!(r.gedownload, 1);
+    assert_eq!(lees(dir.path(), "a.txt").as_deref(), Some("versie 3"));
+
+    for _ in 0..2 {
+        let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+        assert_eq!((r.geupload, r.gedownload, r.conflicten, r.verwijderd), (0, 0, 0, 0), "{r:?}");
+    }
+    assert_eq!(opslag.paden(), vec!["a.txt".to_string()], "geen conflictkopie");
+    assert_eq!(opslag.inhoud("a.txt").unwrap(), b"versie 3");
+    drop(programma);
+    let r = sync_eenmalig(&opslag, dir.path()).await.unwrap();
+    assert_eq!((r.geupload, r.gedownload, r.conflicten, r.verwijderd), (0, 0, 0, 0));
+    assert_eq!((bronnen(dir.path()), journaal(dir.path())), (0, 0));
+    assert_eq!(lees(dir.path(), "a.txt").as_deref(), Some("versie 3"));
+}

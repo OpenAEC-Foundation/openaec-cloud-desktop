@@ -474,8 +474,28 @@ fn markeer(root: &Path, pad: &Path, staat: CF_IN_SYNC_STATE, vastzetten: bool) -
         zet_vast_handle(h, pad)?;
     }
     if lees_placeholder(h)?.map(|p| p.in_sync) != Some(in_sync) {
-        unsafe { CfSetInSyncState(h, staat, CF_SET_IN_SYNC_FLAG_NONE, None) }
-            .map_err(|e| anyhow!("CfSetInSyncState({}): {e}", pad.display()))?;
+        if in_sync && !vastzetten && voor.is_some() {
+            // Op aanvraag: een placeholder die niet in sync was (opgehaald en gewijzigd) is nu verwerkt. Zijn identiteit
+            // noemt nog de versie die de schil ooit neerzette (`<bestand>@<versie>`); de ophaler zou die na het
+            // vrijmaken ophalen. Vanaf nu geldt de toestand van de motor: het merkteken [`IDENTITEIT_LOKAAL`].
+            let ident = wide(IDENTITEIT_LOKAAL);
+            unsafe {
+                CfUpdatePlaceholder(
+                    h,
+                    None,
+                    Some(ident.as_ptr() as *const c_void),
+                    (ident.len() * 2) as u32,
+                    None,
+                    CF_UPDATE_FLAG_MARK_IN_SYNC,
+                    None,
+                    None,
+                )
+            }
+            .map_err(|e| anyhow!("CfUpdatePlaceholder({}): {e}", pad.display()))?;
+        } else {
+            unsafe { CfSetInSyncState(h, staat, CF_SET_IN_SYNC_FLAG_NONE, None) }
+                .map_err(|e| anyhow!("CfSetInSyncState({}): {e}", pad.display()))?;
+        }
     }
     Ok(true)
 }
@@ -769,15 +789,16 @@ fn nu_filetime() -> (i64, u128) {
 }
 
 /// Maak een bestand dat alleen online staat (placeholder, in sync, wolkje) op `pad`, met de grootte van de versie op
-/// de server en als bestandsidentiteit het bestand-id op de server. De map erboven moet bestaan. Staat er al iets op
+/// de server en als bestandsidentiteit `identiteit` (het bestand-id en de versie op de server, zie
+/// `opaanvraag::placeholder::identiteit`). De map erboven moet bestaan. Staat er al iets op
 /// `pad` (bijv. een bestand dat de gebruiker net opsloeg), dan een fout: nooit vervangen. Geeft de grootte en de
 /// wijzigingstijd (ns sinds 1970) die de placeholder kreeg.
-pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<(u64, u128)> {
+pub fn maak_alleen_online(pad: &Path, grootte: u64, identiteit: &str) -> Result<(u64, u128)> {
     let map = pad.parent().ok_or_else(|| anyhow!("{} heeft geen map", pad.display()))?;
     let naam = pad.file_name().ok_or_else(|| anyhow!("{} heeft geen naam", pad.display()))?.to_string_lossy().to_string();
     let wmap = wide(&map.to_string_lossy());
     let wnaam = wide(&naam);
-    let ident = wide(bestand_id);
+    let ident = wide(identiteit);
     let (nu, mtime_ns) = nu_filetime();
     unsafe {
         let mut info: CF_PLACEHOLDER_CREATE_INFO = zeroed();
@@ -802,13 +823,13 @@ pub fn maak_alleen_online(pad: &Path, grootte: u64, bestand_id: &str) -> Result<
     Ok((grootte, mtime_ns))
 }
 
-/// Werk een bestand dat alleen online staat bij naar een nieuwe versie op de server: nieuwe grootte en
-/// wijzigingstijd, blijft alleen online en in sync. Er wordt niets gedownload. Is het bestand niet meer in sync (de
+/// Werk een bestand dat alleen online staat bij naar een nieuwe versie op de server: nieuwe grootte, wijzigingstijd en
+/// identiteit (zie [`maak_alleen_online`]), blijft alleen online en in sync. Er wordt niets gedownload. Is het bestand niet meer in sync (de
 /// gebruiker haalde het op en wijzigde het), dan een fout (`CF_UPDATE_FLAG_VERIFY_IN_SYNC`): nooit ontwateren. Geeft
 /// de grootte en de wijzigingstijd (ns sinds 1970) die de placeholder kreeg.
-pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, bestand_id: &str) -> Result<(u64, u128)> {
+pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, identiteit: &str) -> Result<(u64, u128)> {
     let f = open(pad)?;
-    let ident = wide(bestand_id);
+    let ident = wide(identiteit);
     let (nu, mtime_ns) = nu_filetime();
     let mut meta: CF_FS_METADATA = unsafe { zeroed() };
     meta.BasicInfo.LastWriteTime = nu;
@@ -830,7 +851,8 @@ pub fn werk_alleen_online_bij(pad: &Path, grootte: u64, bestand_id: &str) -> Res
     Ok((grootte, mtime_ns))
 }
 
-/// Bestandsidentiteit van een placeholder (het bestand-id op de server, zie [`maak_alleen_online`]).
+/// Bestandsidentiteit van een placeholder (het bestand-id en de versie op de server, zie [`maak_alleen_online`]); None
+/// zonder identiteit of met het merkteken [`IDENTITEIT_LOKAAL`].
 pub fn bestandsidentiteit(pad: &Path) -> Option<String> {
     let f = open(pad).ok()?;
     let mut buf = [0u64; (size_of::<CF_PLACEHOLDER_BASIC_INFO>() + 4096) / 8 + 1];

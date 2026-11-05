@@ -18,9 +18,11 @@
 //! het eerste verzoek aan de server. Een bron valt nooit onder opruimen. De motor bekijkt de bronnen elke ronde
 //! ([`rond_af`]); een wijziging die alleen in een bron gebeurt, komt zo ook mee.
 //!
-//! Een verwijdering geldt één keer voor de toestand van de motor: hij vergeet het bestand, en pas als die toestand op
-//! schijf staat ([`leg_vast`]), mag haar journaal weg. Een bestand dat daarna weer op het pad komt (bijv. een map die
-//! opnieuw is aangevinkt), is gewoon bekend; een oude bron die nog bewaakt wordt, verandert daar niets aan. Is de bron
+//! Elk journaal past zijn toestand één keer toe. Een verwijdering: de motor vergeet het bestand, en pas als die toestand
+//! op schijf staat ([`leg_vast`]), mag haar journaal weg. Een bestand dat daarna weer op het pad komt (bijv. een map die
+//! opnieuw is aangevinkt), is gewoon bekend; een oude bron die nog bewaakt wordt, verandert daar niets aan. Een
+//! vervanging: zodra de bewaarde toestand de nieuwe versie kent, boekt [`herstel`] haar nooit meer, ook niet als er
+//! intussen een nieuwere versie staat. Is de bron
 //! van een verwijdering anders dan de verwerkte inhoud, dan komt ze terug op het pad; dat kan zonder de server, dus ook
 //! offline. De volgende vergelijking ziet haar dan als nieuw lokaal bestand.
 //!
@@ -79,7 +81,8 @@ pub(crate) struct Vervanging {
     pub basis: Versie,
     /// De nieuwe inhoud; None bij een verwijdering.
     pub nieuw: Option<Versie>,
-    /// Bij een verwijdering: de bewaarde toestand kent het bestand niet meer (zie [`leg_vast`]).
+    /// De bewaarde toestand kent het gevolg: bij een verwijdering staat het bestand er niet meer in, bij een geplaatste
+    /// vervanging staat de nieuwe versie erin (zie [`leg_vast`]). Daarna boekt [`herstel`] niets meer.
     #[serde(default)]
     pub in_toestand: bool,
     pub stap: Stap,
@@ -373,6 +376,11 @@ pub(crate) fn herstel(
             }
             continue;
         };
+        if v.in_toestand {
+            // De toestand kende de nieuwe versie al eens duurzaam. Is hij intussen verder (een nieuwere versie), dan
+            // mag deze oude vervanging dat niet terugboeken; de bron wacht op [`rond_af`].
+            continue;
+        }
         let bewaard = kent(&v.sleutel, nieuw);
         match v.stap {
             Stap::Geplaatst { grootte, mtime_ns } if !bewaard && pad_er => {
@@ -394,12 +402,18 @@ pub(crate) fn herstel(
     Ok(uit)
 }
 
-/// Leg vast dat de toestand die net op schijf kwam, de verwijderingen uit het journaal kent: elke verwijdering waarvan
-/// het bestand niet in die toestand staat (`kent(sleutel)` false). Pas daarna mag haar journaal weg ([`rond_af`]), en
-/// vergeet [`herstel`] het bestand niet nog eens.
-pub(crate) fn leg_vast(root: &Path, kent: impl Fn(&str) -> bool) -> io::Result<()> {
+/// Leg vast welke journalen de toestand die net op schijf kwam, verwerkt: een verwijdering waarvan het bestand niet in
+/// die toestand staat, en een geplaatste vervanging waarvan precies de nieuwe versie erin staat. `bekend(sleutel)`:
+/// (bestand-id, versie) in die toestand. Daarna past [`herstel`] zo'n journaal nooit meer toe (ook niet als de toestand
+/// later verder is), en mag het journaal van een verwijdering weg ([`rond_af`]).
+pub(crate) fn leg_vast(root: &Path, bekend: impl Fn(&str) -> Option<(String, u64)>) -> io::Result<()> {
     for mut v in lees(root)? {
-        if v.nieuw.is_none() && !v.in_toestand && !kent(&v.sleutel) {
+        let verwerkt = match (&v.nieuw, bekend(&v.sleutel)) {
+            (None, b) => b.is_none(),
+            (Some(n), Some((bestand, versie))) => matches!(v.stap, Stap::Geplaatst { .. }) && bestand == n.bestand && versie == n.versie,
+            (Some(_), None) => false,
+        };
+        if verwerkt && !v.in_toestand {
             v.in_toestand = true;
             schrijf(root, &v)?;
         }
@@ -823,7 +837,7 @@ pub(crate) mod proeven {
         /// De toestand zonder a.txt staat op schijf (zoals de motor na het bewaren doet); een onderbreking is voorbij.
         fn leg_vast(&self) {
             NA_STAP.with(|n| *n.borrow_mut() = None);
-            leg_vast(&self.root, |_| false).unwrap();
+            leg_vast(&self.root, |_| None).unwrap();
         }
 
         fn aantal(&self, naam: &str) -> usize {

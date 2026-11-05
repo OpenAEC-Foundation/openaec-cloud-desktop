@@ -29,3 +29,11 @@ code), **S** = afgeleid, niet getoetst.
    die waarden teruggeeft (ook na `CF_UPDATE_FLAG_DEHYDRATE`), is niet nagegaan. Wijkt het af, dan ziet de volgende
    ronde een lokale wijziging: het bestand wordt opgehaald en als nieuwe versie met dezelfde inhoud geüpload. Er gaat
    niets verloren. Alleen op een echte Windows-machine te bewijzen. — S
+6. **Windows: de versie in de identiteit van een placeholder is niet op Windows getoetst** (eigen bevinding bij
+   fixronde 3, 5 november 2026). Sinds fixronde 3 krijgt een placeholder als identiteit `<bestand>@<versie>`, en de
+   ophaler vraagt die versie. Na het verwerken van een opgehaald en gewijzigd bestand zet `cloudfilter::markeer` de
+   identiteit op het merkteken `lokaal` (`CfUpdatePlaceholder` met `CF_UPDATE_FLAG_MARK_IN_SYNC`), zodat de ophaler na
+   "ruimte vrijmaken" de versie uit de toestand neemt. De regels zijn getest met de nagebootste Cloud Filter API; de
+   echte aanroepen zijn alleen gecompileerd. Bewaart Windows de nieuwe identiteit anders dan de documentatie van
+   Microsoft zegt, dan kan de ophaler na "ruimte vrijmaken" een oudere versie ophalen. Alleen op een echte
+   Windows-machine te bewijzen. — S
