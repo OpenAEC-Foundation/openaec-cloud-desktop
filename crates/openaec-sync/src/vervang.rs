@@ -133,7 +133,7 @@ pub(crate) fn nieuw_pad(root: &Path) -> io::Result<PathBuf> {
     Ok(map.join(nieuw_id()))
 }
 
-fn nieuw_id() -> String {
+pub(crate) fn nieuw_id() -> String {
     let nu = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     format!("{:x}{:08x}", nu, rand::random::<u32>())
 }

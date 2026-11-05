@@ -522,6 +522,12 @@ impl Opslag for ClientOpslag {
         let b = self.client.blokken_van(&versie.bestand, versie.versie).await?;
         Ok(b.hashes.filter(|_| b.versie == versie.versie).map(|h| (b.blokgrootte, h)))
     }
+
+    async fn verplaats(&self, bestand: &str, naar: &str) -> Result<(), Fout> {
+        let (mappad, naam) = splits(naar);
+        let map = self.zorg_voor_map(mappad).await?;
+        self.client.verplaats(bestand, naam, map.as_deref(), false).await.map(|_| ())
+    }
 }
 
 /// Een klein gedownload bestand controleren (BLAKE3 als de server hem kent) en atomair op zijn plek zetten.

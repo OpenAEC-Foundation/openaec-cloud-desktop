@@ -29,3 +29,45 @@ code), **S** = afgeleid, niet getoetst.
    die waarden teruggeeft (ook na `CF_UPDATE_FLAG_DEHYDRATE`), is niet nagegaan. Wijkt het af, dan ziet de volgende
    ronde een lokale wijziging: het bestand wordt opgehaald en als nieuwe versie met dezelfde inhoud geüpload. Er gaat
    niets verloren. Alleen op een echte Windows-machine te bewijzen. — S
+
+De punten 20 tot en met 29 horen bij de offline wachtrij (werkstroom 6, `docs/samenwerken/offline.md`).
+
+20. **Een conflictkopie die aankwam, komt na een verloren antwoord nog eens** (eigen bevinding, 5 november 2026). De
+    herkenning van een eigen upload (`motor::eigen_upload`) kijkt alleen naar het eigen pad. Kwam de upload als
+    conflictkopie aan ("naam (conflict …)") en ging het antwoord verloren, dan stuurt de volgende ronde het werk nog eens:
+    een tweede conflictkopie met dezelfde inhoud. Geen verlies. Optie B of C uit `offline.md` lost het op. — S
+21. **Een eigen upload waarna een ander alweer schreef, wordt niet herkend** (eigen bevinding, 5 november 2026). Alleen
+    de huidige versie telt. Kwam de upload aan (versie 2) en schreef een ander versie 3 vóór de volgende ronde, dan
+    gaat het werk nog eens: bij IFC een samenvoeging met dezelfde wijzigingen (een versie te veel, of een conflictkopie
+    als de ander dezelfde attributen terugdraaide), anders een conflictkopie. Geen verlies. Kan met `versies(bestand)`
+    en de blokhashes per versie, of met optie C. — S
+22. **Hernoemen wordt alleen herkend als een ronde het zag vóór de volgende wijziging** (eigen bevinding, 5 november
+    2026). De herkenning vergelijkt grootte en wijzigingstijd. Draaide de app niet, of hernoemde en wijzigde de gebruiker
+    binnen de 2 s van de bestandswachter, dan blijft het zoals vóór deze stap: het nieuwe pad een nieuw bestand, het oude
+    naar de prullenbak (of terug als een ander het wijzigde). Ook een lastige naam (een veilige naam, een spatie vooraan)
+    valt erbuiten. Geen verlies, wel een nieuw bestand-id en geen samenvoeging. — S
+23. **Een hernoeming op de server door een ander wordt niet gevolgd** (eigen bevinding, 5 november 2026). Wijzigde ik
+    offline `a.ifc` en hernoemde een ander het naar `b.ifc`, dan komt mijn werk als nieuw bestand op `a.ifc`, en komt
+    `b.ifc` erbij. Geen verlies, wel twee bestanden en geen samenvoeging. Kan door in de lijst het bestand-id te volgen
+    en het lokale bestand mee te hernoemen. — S
+24. **Twee hernoemingen tegelijk: de onze wint** (eigen bevinding, 5 november 2026). `verplaats` heeft geen basis.
+    Hernoemde een ander het bestand intussen ook, dan zet onze hernoeming het naar ons pad. Geen verlies van inhoud.
+    Optie D uit `offline.md`. — S
+25. **Een opslaan-patroon met een tijdelijke hernoeming kan als hernoeming gelden** (eigen bevinding, 5 november 2026).
+    Een programma dat bij opslaan `a` hernoemt naar `a.bak`, een nieuwe `a` schrijft en `a.bak` wist: valt een ronde
+    precies tussen de eerste twee stappen, dan gaat `a` op de server naar `a.bak`, wordt de nieuwe `a` een nieuw bestand
+    en gaat `a.bak` daarna naar de prullenbak. Geen verlies (de geschiedenis staat in de prullenbak), wel een nieuw
+    bestand-id. Staat `*.bak` op de negeerlijst, dan speelt het niet. — S
+26. **Een afwijkende bron (5a) kan na een crash nog eens naar de server** (eigen bevinding, 5 november 2026).
+    `Ronde::lever_in` legt de upload wel vast als onderweg, maar kijkt bij een volgende ronde niet in de toestand: crasht
+    het programma na die upload en vóór het afronden van de bron, dan gaat de bron nog eens (een tweede conflictkopie of
+    nieuw bestand). Zeldzaam (een programma schreef na een vervanging in de bron) en zonder verlies. — S
+27. **Elke upload kost een extra lezing en een fsync** (eigen bevinding, 5 november 2026). Vóór elke upload hasht de
+    motor het bestand en schrijft hij een klein bestand met fsync. Bij duizenden kleine bestanden kost dat tijd; niet
+    gemeten. — S
+28. **Verwijderen op de server is nog niet voorwaardelijk** (ontwerp §5.5, review Sol over het geheel, 5 november
+    2026). Een verwijdering gaat alleen als de lijst van deze ronde nog de basis toont. Slaat een ander op tussen die
+    lijst en de verwijdering, dan gaat zijn nieuwe versie naar de prullenbak op de server (terug te halen, maar weg uit
+    het actieve dossier). Proef `gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen` staat op `#[ignore]` en faalt
+    nu (`cargo test --test offline -- --ignored`: `verwijderd` is 1). Stap 5b bouwt de controle vlak vóór het
+    verwijderen; daarna gaat de `#[ignore]` eraf. Dicht pas met optie E uit `offline.md`. — B
