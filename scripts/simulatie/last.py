@@ -12,7 +12,9 @@ Drie metingen, per aantal clients (--aantallen):
               werk dat nog niemand las): hoe lang de veger over een achterstand doet, en wat wijzigingen() kost bij
               een lange lijst, ook voor een stille ruimte die met cursor 0 begint.
 
-  bench.sh python last.py --aantallen 100,200,300 --duur 45 --werk <map>
+  bench.sh python last.py --aantallen 100,200,300 --duur 45 [--fasen doorvoer] --werk <map>
+Per fase meet hij ook de CPU van gunicorn, moto en MariaDB (systemd-units van bench.sh, /proc), zodat te zien is of
+de server of de lastgever de grens is.
 Het verslag komt als JSON op stdout. Exitcode 0 als de meting liep (de grenzen staan in het verslag), 1 bij een fout
 in de meting zelf.
 """
@@ -26,6 +28,7 @@ import os
 import random
 import resource
 import statistics
+import subprocess
 import sys
 import time
 
@@ -42,6 +45,39 @@ def pct(waarden: list[float], p: float) -> float | None:
 		return None
 	w = sorted(waarden)
 	return round(w[min(len(w) - 1, int(p / 100 * len(w)))], 3)
+
+
+def cpu_server() -> dict:
+	"""CPU-seconden tot nu toe van gunicorn en moto (de user-units van bench.sh) en van MariaDB (gedeeld met de
+	eerste bench, dus ook werk van anderen telt mee)."""
+	uit = {}
+	for naam, unit in (("web", "bench-proef-web"), ("s3", "bench-proef-s3")):
+		try:
+			w = subprocess.run(["systemctl", "--user", "show", unit, "-p", "CPUUsageNSec", "--value"],
+							   capture_output=True, text=True, timeout=10).stdout.strip()
+			uit[naam] = int(w) / 1e9 if w.isdigit() else None
+		except (OSError, subprocess.SubprocessError):
+			uit[naam] = None
+	try:
+		pid = subprocess.run(["pgrep", "-o", "mariadbd"], capture_output=True, text=True, timeout=10).stdout.strip()
+		velden = open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()
+		uit["mariadb"] = (int(velden[11]) + int(velden[12])) / os.sysconf("SC_CLK_TCK")
+	except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+		uit["mariadb"] = None
+	uit["lastgever"] = resource.getrusage(resource.RUSAGE_SELF).ru_utime + resource.getrusage(resource.RUSAGE_SELF).ru_stime
+	return uit
+
+
+def cpu_verschil(voor: dict, na: dict, looptijd: float, verzoeken: int) -> dict:
+	"""CPU per onderdeel tijdens een fase: seconden, gemiddeld aantal kernen bezig, ms per API-verzoek."""
+	uit = {}
+	for k in na:
+		if voor.get(k) is None or na.get(k) is None:
+			continue
+		d = na[k] - voor[k]
+		uit[k] = {"s": round(d, 1), "kernen": round(d / looptijd, 2), "ms_per_verzoek": round(1000 * d / max(1, verzoeken), 2)}
+	uit["load_1min_na"] = round(os.getloadavg()[0], 1)
+	return uit
 
 
 def samenvatting(waarden: list[float]) -> dict:
@@ -154,12 +190,14 @@ class Client:
 				await asyncio.sleep(0.5)
 				await self.lees_huidige(bestand)
 
-	async def poller(self, tot: float, schrijft: bool, rng: random.Random) -> None:
+	async def poller(self, tot: float, eigen: str | None, rng: random.Random) -> None:
+		"""Lees de lijst vanaf de cursor; met `eigen` schrijft de client soms ook dat bestand (per fase een nieuwe naam:
+		zonder basis op een bestaande naam maakt de server een conflictkopie)."""
 		n = 0
 		while time.perf_counter() < tot:
-			if schrijft and rng.random() < 0.3:
+			if eigen and rng.random() < 0.3:
 				n += 1
-				uitkomst, l = await self.schrijf(f"eigen-{self.i}.txt", f"{self.i} {n}\n".encode() * 32, self.basis)
+				uitkomst, l = await self.schrijf(eigen, f"{self.i} {n}\n".encode() * 32, self.basis)
 				self.tel[f"eigen_{uitkomst}"] += 1
 				if uitkomst == "ok":
 					self.basis = (l["bestand"], l["versie"], l["versie_id"])
@@ -205,7 +243,10 @@ async def doorvoer(clients: list[Client], duur: float, zaad: int) -> dict:
 	meter = clients[0].meter
 	tot = time.perf_counter() + duur
 	begin, cpu = time.perf_counter(), resource.getrusage(resource.RUSAGE_SELF).ru_utime
-	await asyncio.gather(*(c.poller(tot, c.i % 10 == 0, random.Random(f"{zaad}-p{c.i}")) for c in clients))
+	await asyncio.gather(*(
+		c.poller(tot, f"eigen-{len(clients)}-{c.i}.txt" if c.i % 10 == 0 else None, random.Random(f"{zaad}-p{c.i}"))
+		for c in clients
+	))
 	looptijd = time.perf_counter() - begin
 	polls = sum(c.tel["polls"] for c in clients)
 	verzoeken = sum(meter.status.values())
@@ -354,6 +395,7 @@ def opzet(frappe, n: int) -> tuple[str, str, list[str]]:
 
 async def hoofd(args) -> dict:
 	aantallen = [int(a) for a in args.aantallen.split(",")]
+	fasen = set(args.fasen.split(","))
 	frappe = verbind()
 	t = time.perf_counter()
 	ruimte, stil, sleutels = opzet(frappe, max(aantallen))
@@ -367,18 +409,25 @@ async def hoofd(args) -> dict:
 			raise RuntimeError(f"gedeeld.txt niet aan te maken: {uitkomst} {l}")
 		bestand = l["bestand"]
 		for n in aantallen:
-			meter = Meter()
-			clients = [Client(i, sleutels[i], ruimte, http, meter) for i in range(n)]
-			r = await schrijvers(clients, bestand, "gedeeld.txt", args.duur, args.denktijd, args.zaad)
-			log(f"schrijvers {n}: {r['geslaagd']} geslaagd, {r['pogingen_per_geslaagde']} pogingen per opslag, "
-				f"{r['verhongerd']} verhongerd, {r['fouten']} fouten")
-			verslag["schrijvers"].append(r)
-			meter = Meter()
-			clients = [Client(i, sleutels[i], ruimte, http, meter) for i in range(n)]
-			r = await doorvoer(clients, args.duur, args.zaad)
-			log(f"doorvoer {n}: {r['verzoeken_per_s']} verzoeken/s, {r['polls_per_s']} polls/s")
-			verslag["doorvoer"].append(r)
-		if args.lijst:
+			if "schrijvers" in fasen:
+				meter = Meter()
+				clients = [Client(i, sleutels[i], ruimte, http, meter) for i in range(n)]
+				voor = cpu_server()
+				r = await schrijvers(clients, bestand, "gedeeld.txt", args.duur, args.denktijd, args.zaad)
+				r["cpu"] = cpu_verschil(voor, cpu_server(), r["looptijd_s"], sum(meter.status.values()))
+				log(f"schrijvers {n}: {r['geslaagd']} geslaagd, {r['pogingen_per_geslaagde']} pogingen per opslag, "
+					f"{r['verhongerd']} verhongerd, {r['fouten']} fouten; cpu {r['cpu']}")
+				verslag["schrijvers"].append(r)
+			if "doorvoer" in fasen:
+				meter = Meter()
+				clients = [Client(i, sleutels[i], ruimte, http, meter) for i in range(n)]
+				voor = cpu_server()
+				r = await doorvoer(clients, args.duur, args.zaad)
+				r["cpu"] = cpu_verschil(voor, cpu_server(), r["looptijd_s"], sum(meter.status.values()))
+				log(f"doorvoer {n}: {r['verzoeken_per_s']} verzoeken/s, {r['polls_per_s']} polls/s, "
+					f"{r['eigen_opslagen_fout']} eigen opslagen fout; cpu {r['cpu']}")
+				verslag["doorvoer"].append(r)
+		if args.lijst and "lijst" in fasen:
 			c = Client(0, sleutels[0], ruimte, http, Meter())
 			anderen = [Client(i, sleutels[i], stil, http, Meter()) for i in range(1, min(len(sleutels), 21))]
 			try:
@@ -397,6 +446,7 @@ def main() -> int:
 	p.add_argument("--duur", type=float, default=45)
 	p.add_argument("--denktijd", type=float, default=1.0, help="na een geslaagde opslag hoogstens zoveel s wachten")
 	p.add_argument("--lijst", default="10000,50000,200000", help="stappen voor de lengte van de wijzigingenlijst")
+	p.add_argument("--fasen", default="schrijvers,doorvoer,lijst", help="welke metingen (komma's ertussen)")
 	p.add_argument("--zaad", type=int, default=1)
 	p.add_argument("--werk", required=True)
 	args = p.parse_args()
