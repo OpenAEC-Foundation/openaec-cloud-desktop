@@ -1,0 +1,27 @@
+zwaar.sh: plek .zwaar.lock voor: bash scripts/scenario-m365/06-opslaan-lus.sh
+
+== Tests van de opslaan-lus (tests/samenwerken.rs)
+running 8 tests
+test ander_bestand_op_dezelfde_plek ... ok
+test basis_niet_te_lezen ... ok
+test onbekende_basis ... ok
+test verouderd_maar_een_ander_bestand ... ok
+test vergrendeld_door_een_ander ... ok
+test te_vaak_verouderd ... ok
+test conflict_in_de_lus ... ok
+test acht_klanten_tegelijk ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+== Samenvoegen op echte bestanden (tests/samenvoegen.rs)
+running 4 tests
+test hetzelfde_attribuut_anders_is_een_conflict ... ok
+test verwijderd_en_gewijzigd ... ok
+test taakdatum_en_taaknaam_in_een_planning ... ok
+test verschillende_objecten_op_echte_bestanden ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.18s
+
+== Wat Microsoft 365 hierover zegt
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/sharepoint/governance/configure-the-maximum-number-of-co-authoring-authors):
+  "The CoauthoringMaxAuthors property lets you specify the maximum number of users who can co-author a Word document or PowerPoint presentation at the same time in SharePoint Server 2013."
+Voor Microsoft 365 zelf vonden we geen getal voor het aantal schrijvers tegelijk.
+EXIT:0
