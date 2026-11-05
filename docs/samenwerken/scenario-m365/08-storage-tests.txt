@@ -1,0 +1,22 @@
+openaec-storage: 9393365 Ontwerp: Nextcloud eruit, §9 kleinere aannames met opties (besluiten Ethan, 5 november)
+
+== openaec_storage.tests.test_api
+Ran 14 tests in 6.483s
+OK
+exitcode 0
+
+== openaec_storage.tests.test_vergrendelen_delen
+Ran 19 tests in 8.923s
+OK
+exitcode 0
+
+== openaec_storage.tests.test_delta
+Ran 5 tests in 5.369s
+OK
+exitcode 0
+
+== openaec_storage.tests.test_gedeeld_met_mij
+Ran 34 tests in 37.805s
+OK
+exitcode 0
+EXIT:0
