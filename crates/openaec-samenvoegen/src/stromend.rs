@@ -58,8 +58,8 @@ const NUL: Hash = [0; 32];
 /// De identiteit van een ankerknoop die we niet uitrekenden: geen verwijzing van een knoop en niet gedeeld (zie
 /// [`Versie::nodig`]). Geen regel gebruikt dan de waarde, alleen dát het een ankerknoop is.
 const NIET_NODIG: Hash = [0xA5; 32];
-/// Zoveel knoophashes onthouden we hoogstens (ongeveer 50 MB); daarboven beginnen we opnieuw.
-const MAX_ONTHOUDEN: usize = 1 << 20;
+/// Zoveel knoophashes onthouden we hoogstens (ongeveer 12 MB per versie); daarboven beginnen we opnieuw.
+const MAX_ONTHOUDEN: usize = 1 << 18;
 
 /// Het verschil tussen twee versies, zoals [`crate::verschil`], maar met begrensd geheugen: ongeveer 5 bytes per
 /// instantie en 64 per object, plus wat voor de gewijzigde objecten nodig is. Bedoeld voor bestanden van vele GB (ook
@@ -308,8 +308,8 @@ pub(crate) struct Versie<'d> {
     typen: HashMap<Vec<u8>, u32>,
     namen: Vec<String>,
     type_entiteit: Vec<Option<&'static Entiteit>>,
-    /// Knopen die naar een knoop verderop in de tekst verwijzen, of naar zichzelf: elke kring gaat door zo'n knoop.
-    vooruit: Vec<u64>,
+    /// Verwijst een knoop naar een knoop verderop in de tekst, of naar zichzelf? Alleen dan kan er een kring zijn.
+    kan_kring: bool,
     /// De sleutel van een gekoppelde relatie: de GlobalId in de basis.
     gekoppeld: HashMap<u32, String>,
     ankers: HashMap<u64, AnkerInfo>,
@@ -342,7 +342,7 @@ impl<'d> Versie<'d> {
         let mut gekozen: Option<Option<&'static schema::Schema>> = None;
         let mut aantal = 0usize;
         let mut dubbel: Option<(usize, u64)> = None;
-        let mut vooruit: Vec<u64> = Vec::new();
+        let mut kan_kring = false;
         let mut doelen: Vec<u64> = Vec::new();
         let kop = doorloop(data, &mut |kop, g| {
             let schema = *gekozen.get_or_insert_with(|| schema::kies(&kop.schema));
@@ -384,9 +384,7 @@ impl<'d> Versie<'d> {
             let nieuw = VERWEZEN | if object { ANKER } else { DOOR_KNOOP };
             let mut later = false;
             for &d in &doelen {
-                if d == g.id && !object {
-                    vooruit.push(g.id);
-                }
+                kan_kring |= d == g.id && !object;
                 // Een nummer dat we nog niet zagen: in de tweede doorloop.
                 later |= !plekken.pas_aan(d, |v| verwezen(v, nieuw));
             }
@@ -422,9 +420,7 @@ impl<'d> Versie<'d> {
                     }
                     Some(b) if b > begin => {
                         plekken.pas_aan(d, |x| verwezen(x, nieuw));
-                        if !object && plekken.vlag(d) & OBJECT == 0 {
-                            vooruit.push(n);
-                        }
+                        kan_kring |= !object && plekken.vlag(d) & OBJECT == 0;
                     }
                     Some(_) => {}
                 }
@@ -440,8 +436,6 @@ impl<'d> Versie<'d> {
                 melding: format!("#{n} verwijst naar #{d}, maar die bestaat niet"),
             });
         }
-        vooruit.sort_unstable();
-        vooruit.dedup();
         let schema = schema::kies(&kop.schema);
         statistiek.schema = kop.schema.clone();
         statistiek.schema_tabel = schema.map(|s| s.naam.to_string()).unwrap_or_default();
@@ -464,7 +458,7 @@ impl<'d> Versie<'d> {
             typen,
             namen,
             type_entiteit,
-            vooruit,
+            kan_kring,
             gekoppeld: HashMap::new(),
             ankers: HashMap::new(),
             kring: None,
@@ -535,12 +529,12 @@ impl<'d> Versie<'d> {
         Some(self.op_nummer[p])
     }
 
-    /// Kringen tussen knopen, ook via ankerknopen, zoals [`Model`] ze vindt: het aantal verwijzingen terug en de eerste
-    /// knoop waar we er een vonden. Elke kring gaat door een knoop uit [`Versie::vooruit`]; zoeken vanaf die knopen is
-    /// dus genoeg om te weten óf er een kring is. Is er een, dan zoeken we opnieuw zoals [`Model`] (vanaf elke knoop
-    /// in de volgorde van de tekst), voor dezelfde eerste knoop in de foutmelding.
+    /// Kringen tussen knopen, ook via ankerknopen, zoals [`Model`] ze vindt (vanaf elke knoop in de volgorde van de
+    /// tekst): het aantal verwijzingen terug en de eerste knoop waar we er een vonden. Een kring gaat altijd door een
+    /// verwijzing naar verderop in de tekst (of naar zichzelf); is die er niet ([`Versie::kan_kring`]), dan zoeken we
+    /// niet.
     fn kringen(&self) -> (usize, Option<u64>) {
-        if self.vooruit.is_empty() || self.zoek_kringen(self.vooruit.iter().copied()).0 == 0 {
+        if !self.kan_kring {
             return (0, None);
         }
         self.zoek_kringen(self.plekken.op_volgorde().filter(|x| x.1 & OBJECT == 0).map(|x| x.0))
@@ -755,9 +749,10 @@ impl<'d> Versie<'d> {
     }
 
     /// Per knoop in `doelen` de eigenaar ([`Model::eigenaar`]): het enige object dat er komt (via een rechtstreekse
-    /// verwijzing en daarna knopen zonder anker), of [`MEER_EIGENAARS`]. Net als bij [`Model`] lopen we verder in een
-    /// knoop met meer verwijzers alleen als zijn eigenaar verandert. Een andere knoop heeft één verwijzer; die komen we
-    /// dus hoogstens zo vaak tegen als die verwijzer (we nemen elke verwijzing per instantie één keer).
+    /// verwijzing en daarna knopen zonder anker), of [`MEER_EIGENAARS`]. Net als bij [`Model`] lopen we in een knoop
+    /// alleen verder als zijn eigenaar verandert: we nemen de objecten één voor één, dus een knoop die een eerder object
+    /// al bezocht (de bit [`TIJDELIJK`]), heeft nu meer eigenaars. Alleen de knopen van het huidige object en die met
+    /// meer eigenaars houden we in een set.
     fn eigenaars(&self, doelen: &HashSet<u64>) -> HashMap<u64, u32> {
         let kinderen = |n: u64, masker: u8| {
             let mut uit: Vec<u64> =
@@ -767,10 +762,12 @@ impl<'d> Versie<'d> {
             uit
         };
         let mut uit: HashMap<u64, u32> = HashMap::new();
-        let mut gedeeld: HashMap<u64, u32> = HashMap::new();
+        let mut meer: HashSet<u64> = HashSet::new();
+        let mut huidig: HashSet<u64> = HashSet::new();
         let mut stapel: Vec<u64> = Vec::new();
         for (o, object) in self.objecten.iter().enumerate() {
             let o = o as u32;
+            huidig.clear();
             stapel.extend(kinderen(object.n, OBJECT));
             while let Some(x) = stapel.pop() {
                 if doelen.contains(&x) {
@@ -781,17 +778,21 @@ impl<'d> Versie<'d> {
                         _ => MEER_EIGENAARS,
                     };
                 }
-                if self.vlag(x) & MEER_VERWEZEN != 0 {
-                    let e = gedeeld.entry(x).or_insert(GEEN_EIGENAAR);
-                    match *e {
-                        GEEN_EIGENAAR => *e = o,
-                        y if y == o || y == MEER_EIGENAARS => continue,
-                        _ => *e = MEER_EIGENAARS,
-                    }
+                // Dezelfde eigenaar, of al meer eigenaars (toen liepen we al verder): niet nog eens.
+                if huidig.contains(&x) || meer.contains(&x) {
+                    continue;
+                }
+                if self.vlag(x) & TIJDELIJK != 0 {
+                    // Een eerder object kwam hier al: nu meer eigenaars, en nog één keer verder.
+                    meer.insert(x);
+                } else {
+                    self.plekken.pas_aan(x, |v| v | TIJDELIJK);
+                    huidig.insert(x);
                 }
                 stapel.extend(kinderen(x, OBJECT | ANKER));
             }
         }
+        self.plekken.wis(TIJDELIJK);
         uit
     }
 

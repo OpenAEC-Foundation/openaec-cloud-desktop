@@ -88,9 +88,10 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
      einde van het lezen. In het SketchUp-model van de meting wijst 45 % van de verwijzingen naar verderop (een
      plaatsing naar haar assenstelsel, een vlak naar zijn rand); op 1,2 GB was dat ongeveer 1,2 GB. Nu krijgt zo'n
      instantie een bit, en een tweede doorloop leest alleen die instanties opnieuw. — B
-102. **Een kring zoekt een tweede keer door alle knopen** (eigen bevinding, 5 november 2026). Is er een kring, dan
-     zoeken we opnieuw zoals `Model`, voor dezelfde eerste knoop in de foutmelding. Dat kost een doorloop extra (tijd,
-     geen geheugen: "bezocht" is een bit). Het resultaat is altijd een fout. — S
+102. **Kan er een kring zijn, dan zoeken we door alle knopen** (eigen bevinding, 5 november 2026). Een kring gaat
+     altijd door een verwijzing naar verderop in de tekst. Is die er, dan zoeken we zoals `Model` vanaf elke knoop:
+     een doorloop extra (tijd, geen geheugen: "bezocht" is een bit). In het SketchUp-model van de meting is dat altijd
+     zo, ook zonder kring. — B
 103. **De verwijzende objecten van een gedeeld lid van een SET doorzoeken het hele bestand** (eigen bevinding,
      5 november 2026). `koppel_leden` vraagt welke objecten naar een lid verwijzen. Heeft het lid één verwijzer, dan
      is dat het object zelf. Anders lezen we het hele bestand, per laag van knopen, per lid (met een geheugen per
@@ -103,5 +104,6 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
 105. **Samenvoegen op GB-schaal is er nog niet** (eigen bevinding, 5 november 2026). `voeg_samen` gebruikt nog drie
      keer `Model`. Het plan staat in `docs/samenwerken/gb-schaal.md`. — B
 106. **Losse knopen met verwijzingen zoeken een eigenaar door het hele model** (eigen bevinding, 5 november 2026).
-     Verwijst een losse knoop naar een knoop, dan zoeken we per object welke knopen erbij horen, met een tabel van
-     alle gedeelde knopen die we tegenkomen. Dat kost tijd en geheugen naar de grootte van het model. — S
+     Verwijst een losse knoop naar een knoop, dan lopen we vanaf elk object door zijn knopen, zoals `Model`: een
+     doorloop extra (tijd). Het geheugen is een bit per instantie, de knopen van één object en de knopen met meer
+     eigenaars. In het SketchUp-model van de meting zijn er 60 losse knopen per kopie (stijlen op geometrie). — B

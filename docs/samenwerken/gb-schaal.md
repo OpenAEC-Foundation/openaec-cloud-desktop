@@ -41,9 +41,9 @@ gedood (knownbug 90 van PR #16).
    bit; een tweede doorloop leest alleen die instanties opnieuw. Dezelfde fouten als `verschil`, in dezelfde
    volgorde: kapotte tekst, een nummer dat twee keer voorkomt, een verwijzing naar een nummer dat niet bestaat, een
    dubbele GlobalId.
-2. **Kringen tussen knopen** (beide versies tegelijk). Elke kring gaat door een knoop die naar een knoop verderop in
-   de tekst verwijst. We zoeken alleen vanaf die knopen; "bezocht" is een bit per instantie. Is er een kring, dan
-   zoeken we opnieuw zoals `Model`, voor dezelfde foutmelding.
+2. **Kringen tussen knopen** (beide versies tegelijk). Een kring gaat altijd door een verwijzing naar verderop in de
+   tekst. Is die er niet, dan zoeken we niet; anders zoals `Model`, vanaf elke knoop. "Bezocht" is een bit per
+   instantie.
 3. **Relaties koppelen en gemeen markeren**, op de sleutels.
 4. **Ankers.** Alleen de identiteit van ankerknopen waar een regel naar kijkt: een knoop verwijst ernaar (`A` in de
    canonieke vorm), of meer objecten delen hem en dat telt (`D`, niet bij IfcOwnerHistory). Van alle andere
@@ -79,11 +79,13 @@ GETALLEN VOLGEN
 - **Verwijzingen naar verderop in de tekst** kosten een tweede doorloop over de instanties die zo verwijzen. In het
   SketchUp-model van de meting is dat 45 % van de verwijzingen. (De eerste versie onthield ze in een lijst: op
   1,2 GB was dat 1,2 GB. Zie knownbug 101.)
-- **Een kring** is een fout. Voor dezelfde foutmelding als `verschil` zoeken we dan nog een keer door alle knopen.
+- **Kringen zoeken** kost een doorloop over alle knopen als er een verwijzing naar verderop is (in het
+  SketchUp-model altijd).
 - **De tijd.** Een gedeelde knoop die we vergaten, rekenen we opnieuw uit. Elke knoop lezen we minstens twee keer:
   bij het lezen en bij de hash. De hashes per object rekenen we in één thread per versie uit.
-- **Losse knopen met verwijzingen** (bijv. een losse IfcShapeRepresentation): dan zoeken we per object welke knopen
-  erbij horen, met een tabel van alle gedeelde knopen.
+- **Losse knopen met verwijzingen** (bijv. een losse IfcStyledItem op geometrie): dan lopen we vanaf elk object door
+  zijn knopen om de eigenaar te vinden, zoals `Model`. Dat is een doorloop extra; het geheugen is een bit per
+  instantie, de knopen van één object en de knopen met meer eigenaars.
 
 ## Samenvoegen op GB-schaal: het plan
 
