@@ -2,6 +2,7 @@
 //!
 //! Exitcode: 0 = gelukt, 1 = conflicten (bij `voeg-samen`), 2 = fout.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -42,8 +43,33 @@ enum Opdracht {
     },
 }
 
+/// Zo groot mag een bestand zijn voor `voeg-samen`: dezelfde grens als `Fout::TeGroot` (de lezer nummert plekken
+/// met 32 bits).
+const MAX_GROOTTE: u64 = u32::MAX as u64 - 1;
+
+/// Leest het hele bestand, maar eerst de grootte: een te groot bestand geeft meteen een fout met de grootte en de
+/// grens, voordat er iets in het geheugen staat. Het lezen zelf stopt ook bij de grens (het bestand kan groeien
+/// tussen de controle en het lezen).
 fn lees(pad: &Path) -> Result<Vec<u8>, String> {
-    std::fs::read(pad).map_err(|e| format!("{}: {e}", pad.display()))
+    let fout = |e: std::io::Error| format!("{}: {e}", pad.display());
+    let te_groot = |grootte: u64| {
+        format!(
+            "{}: het bestand is {grootte} bytes; `voeg-samen` leest hoogstens {MAX_GROOTTE} bytes (4 GiB). \
+             `verschil` werkt wel op grotere bestanden.",
+            pad.display()
+        )
+    };
+    let bestand = std::fs::File::open(pad).map_err(fout)?;
+    let grootte = bestand.metadata().map_err(fout)?.len();
+    if grootte > MAX_GROOTTE {
+        return Err(te_groot(grootte));
+    }
+    let mut inhoud = Vec::with_capacity(grootte as usize);
+    bestand.take(MAX_GROOTTE + 1).read_to_end(&mut inhoud).map_err(fout)?;
+    if inhoud.len() as u64 > MAX_GROOTTE {
+        return Err(te_groot(inhoud.len() as u64));
+    }
+    Ok(inhoud)
 }
 
 /// Het bestand via mmap: het besturingssysteem leest de delen die we nodig hebben, het bestand staat niet in het
