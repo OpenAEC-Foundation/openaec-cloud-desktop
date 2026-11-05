@@ -1,0 +1,52 @@
+a-twee-benches: 2026-11-05 17:15:38, server 197d55b
+zwaar.sh: plek .zwaar.lock voor: bash -c 
+    export PYTHONPATH=/home/aia09/worktrees/storage-proef PYTHONPYCACHEPREFIX=/home/aia09/bench-proef/pycache FRAPPE_BENCH_ROOT=$FB
+    ( echo "bench-samenwerken start $(date +%T)"
+      /home/aia09/bench-samenwerken/test.sh /home/aia09/worktrees/storage-proef openaec_storage.tests.test_zoek_pad
+      echo "EXIT:$?"; echo "bench-samenwerken eind $(date +%T)" ) > "$E" 2>&1 &
+    n=0
+    while ! grep -q "^EXIT:" "$E" && [ $n -lt 40 ]; do
+      n=$((n + 1))
+      echo "proefbench ronde $n start $(date +%T); bench-samenwerken: $(grep -m1 -o "run-tests\|apps/openaec_storage -> [^ ]*" "$E" || echo wacht nog)"
+      (cd "$FB/sites" && "$FB/env/bin/python" -m frappe.utils.bench_helper frappe --site proeftest.localhost run-tests \
+        --app openaec_storage --module openaec_storage.tests.test_namen 2>&1 | grep -E "^Ran |^OK|FAILED|Error")
+      echo "proefbench ronde $n eind $(date +%T)"
+    done
+    wait
+    echo "--- test.sh op bench-samenwerken:"
+    tr "\r" "\n" < "$E" | grep -E "start|eind|EXIT|test.sh:|^Ran |^OK|FAILED"
+    grep -q "^EXIT:0" "$E"
+  
+proefbench ronde 1 start 17:15:38; bench-samenwerken: wacht nog
+Ran 5 tests in 0.002s
+OK
+Ran 5 tests in 3.112s
+OK
+proefbench ronde 1 eind 17:15:47
+proefbench ronde 2 start 17:15:47; bench-samenwerken: apps/openaec_storage -> /home/aia09/worktrees/storage-proef
+Ran 5 tests in 0.002s
+OK
+Ran 5 tests in 2.739s
+OK
+proefbench ronde 2 eind 17:15:51
+proefbench ronde 3 start 17:15:51; bench-samenwerken: apps/openaec_storage -> /home/aia09/worktrees/storage-proef
+Ran 5 tests in 0.002s
+OK
+Ran 5 tests in 2.679s
+OK
+proefbench ronde 3 eind 17:15:56
+proefbench ronde 4 start 17:15:56; bench-samenwerken: apps/openaec_storage -> /home/aia09/worktrees/storage-proef
+Ran 5 tests in 0.002s
+OK
+Ran 5 tests in 2.927s
+OK
+proefbench ronde 4 eind 17:16:01
+--- test.sh op bench-samenwerken:
+bench-samenwerken start 17:15:38
+test.sh: apps/openaec_storage -> /home/aia09/worktrees/storage-proef (197d55b)
+Ran 11 tests in 8.557s
+OK
+test.sh: run-tests EXIT:0
+EXIT:0
+bench-samenwerken eind 17:16:00
+EXIT:0

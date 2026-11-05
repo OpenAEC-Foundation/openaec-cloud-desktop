@@ -1,0 +1,191 @@
+draai.sh: b-zaad1, 2026-11-05 14:38:03, desktop 1b451e1, server 197d55b (integratie-4-4b)
+draai.sh: simulatie.py --clients 8 --beurten 20 --zaad 1
+zwaar.sh: plek .zwaar.2 voor: bash -c '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/simulatie.py' --werk '/home/aia09/bench-proef/werk/b-zaad1' --clients 8 --beurten 20 --zaad 1
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+14:39:30 ruimte hlouil8o4c, 8 clients, 20 beurten, zaad 1, chaos 0.0, kill 0.0
+14:39:34 startbestanden staan bij iedereen; nu de beurten
+14:41:03 beurten klaar in 89 s; nu de rustige periode, zonder chaos
+14:41:16 rustige periode: alles staat stil
+{
+ "fouten": {},
+ "s3": {
+  "versies": 265,
+  "objecten": 265,
+  "zonder_object": [],
+  "zonder_versie": [],
+  "onafgemaakte_multipart": 0
+ },
+ "gelijk": {
+  "bestanden_op_server": 59,
+  "verschillen": {}
+ },
+ "verloren_werk": {
+  "opslagen_gezien": 254,
+  "op_server": 254,
+  "alleen_in_eigen": [],
+  "nergens": [],
+  "aantal_nergens": 0
+ },
+ "wijzigingenlijst": {
+  "regels": 299,
+  "uniek": true,
+  "zonder_nummer": 0,
+  "per_client": {
+   "0": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "1": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "2": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "3": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "4": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "5": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "6": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "7": {
+    "gezien": 299,
+    "cursor": 319,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   }
+  }
+ },
+ "server": {
+  "bestanden": 90,
+  "verwijderd": 31,
+  "conflictkopieen": 16,
+  "samenvoegrapporten": 4,
+  "versies_samengevoegd_uit": 92,
+  "opeenvolgende_versies_met_gelijke_inhoud": 0
+ },
+ "rondes": {
+  "totaal": 191,
+  "gedood": 0,
+  "opslag_tijdens_ronde": 29,
+  "exitcode_niet_0": 0,
+  "met_fouten": 0,
+  "samengevoegd": 93,
+  "niet_samengevoegd": {
+   "conflicten": 4
+  },
+  "conflicten_volgens_rapport": 16,
+  "duur_gemiddeld_s": 2.96,
+  "fouten_soorten": {}
+ },
+ "proxy_api": {
+  "verzoeken": {
+   "upload_start": 335,
+   "download": 262,
+   "blokken": 262,
+   "upload_klaar": 218,
+   "wijzigingen": 200,
+   "mogelijkheden": 191,
+   "boom": 191,
+   "download_klein": 161,
+   "verwijder": 31,
+   "upload_klein": 29,
+   "maak_mappen": 1
+  },
+  "upload_klaar_status": {
+   "200": 196,
+   "409": 22
+  },
+  "foutcodes": {
+   "upload_klaar verouderde_basis": 22,
+   "upload_start verouderde_basis": 117
+  },
+  "chaos": {}
+ },
+ "proxy_s3": {
+  "verzoeken": {
+   "/sim/v/a6f86fa0ed54d595d105155135d805f0": 8,
+   "/sim/v/ad282d8f68da6b5697ebe43448b48e86": 7,
+   "/sim/v/8234099eb73745cb86a6495d84f82c60": 7,
+   "/sim/v/020424ca77ffd657efd6f25c44da2baf": 6,
+   "/sim/v/387f2c82a39f07a3bbd70f37abc36a3b": 6,
+   "/sim/v/325681bcd43e61646b6381572dafacba": 6,
+   "/sim/v/8cbcaa9a16c9dd4ef132acb428d48e85": 5,
+   "/sim/v/3ac738824a2a4392e899dca0dd901300": 5,
+   "/sim/v/89e773b9778a05d7ac2612abc26efd3e": 5,
+   "/sim/v/b896972fc050a8fbabaf816c14181621": 5,
+   "/sim/v/3f4e71a663cf176b080efbf29637b4c6": 5,
+   "/sim/v/d11a8e6b5b138cff2ff12b6740a2bc7f": 5,
+   "/sim/v/7980d55af9878dd22540d84aafcd0dfe": 5,
+   "/sim/v/a4e8fa4af75243783e4dee9bbcb040ea": 5,
+   "/sim/v/84a03a9ea05ded305986f0ae457385bd": 5,
+   "/sim/v/642f7145cabb686a098a97f25c4ab457": 4,
+   "/sim/v/0536214c2ab3d436f387d72c2ea03aaf": 4,
+   "/sim/v/40a36e7eb43b9639b0b7d38982c5cc81": 4,
+   "/sim/v/074f4d59951105d47daade41571a72f8": 4,
+   "/sim/v/9706d81ce5d117f9cbee4f46041df5e7": 4,
+   "/sim/v/cfbddc5064a01f669442b84ab2b1e1bd": 4,
+   "/sim/v/eb76058f7f837f9d325a208f928e9b0f": 4,
+   "/sim/v/5812acbb2653432dd418f2fcbfacce1f": 4,
+   "/sim/v/163c5149c4eaf5a59f98e772142ca70c": 4,
+   "/sim/v/fbcd3cfb5d3007a484941c6bc20eb54a": 4
+  },
+  "upload_klaar_status": {},
+  "foutcodes": {},
+  "chaos": {}
+ },
+ "args": {
+  "clients": 8,
+  "beurten": 20,
+  "zaad": 1,
+  "chaos": 0.0,
+  "kill": 0.0,
+  "tegelijk": 0.15,
+  "pauze": 1.5,
+  "rustig": 1800,
+  "werk": "/home/aia09/bench-proef/werk/b-zaad1"
+ }
+}
+14:41:19 alle controles geslaagd
+EXIT:0

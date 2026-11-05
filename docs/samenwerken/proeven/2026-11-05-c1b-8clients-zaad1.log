@@ -1,0 +1,254 @@
+draai.sh: c1b-8clients-zaad1, 2026-11-05 16:48:38, desktop 415f895, server 197d55b (integratie-4-4b)
+draai.sh: simulatie.py --clients 8 --beurten 20 --zaad 1 --chaos 0.08 --kill 0.15
+zwaar.sh: plek .zwaar.2 voor: bash -c echo "draai.sh: start $(date +%T), desktop $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' rev-parse --short HEAD), $(git -C '/home/aia09/worktrees/desktop-p2-simulatie' status --short | wc -l) bestanden niet gecommit" && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/simulatie.py' --werk '/home/aia09/bench-proef/werk/c1b-8clients-zaad1' --clients 8 --beurten 20 --zaad 1 --chaos 0.08 --kill 0.15
+draai.sh: start 16:48:38, desktop 415f895, 2 bestanden niet gecommit
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+16:48:44 ruimte tcseghjmcg, 8 clients, 20 beurten, zaad 1, chaos 0.08, kill 0.15
+16:48:47 startbestanden staan bij iedereen; nu de beurten
+16:49:43 beurten klaar in 55 s; nu de rustige periode, zonder chaos
+16:49:52 rustig: clients wachten op een nieuwe poging; 63 s wachten
+16:50:57 rustig: clients wachten op een nieuwe poging; 11 s wachten
+16:51:09 rustig: clients wachten op een nieuwe poging; 4 s wachten
+16:51:16 rustig: clients wachten op een nieuwe poging; 8 s wachten
+16:51:26 rustig: clients wachten op een nieuwe poging; 10 s wachten
+16:51:38 rustig: clients wachten op een nieuwe poging; 3 s wachten
+16:51:46 rustige periode: alles staat stil
+{
+ "fouten": {},
+ "s3": {
+  "versies": 275,
+  "objecten": 275,
+  "zonder_object": [],
+  "zonder_versie": [],
+  "onafgemaakte_multipart": 16
+ },
+ "gelijk": {
+  "bestanden_op_server": 111,
+  "verschillen": {}
+ },
+ "verloren_werk": {
+  "opslagen_gezien": 245,
+  "op_server": 245,
+  "alleen_in_eigen": [],
+  "door_gebruiker_weggehaald": [],
+  "nergens": [],
+  "aantal_nergens": 0
+ },
+ "wijzigingenlijst": {
+  "regels": 306,
+  "uniek": true,
+  "zonder_nummer": 0,
+  "per_client": {
+   "0": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "1": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "2": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "3": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "4": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "5": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "6": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "7": {
+    "gezien": 306,
+    "cursor": 8333,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   }
+  }
+ },
+ "server": {
+  "conflictkopieen_overbodig": 41,
+  "voorbeelden_overbodig": [
+   "gebouw (conflict Sim0 2026-11-05 2119).ifc.samenvoegrapport (conflict Sim4 2026-11-05 2119) (conflict Sim6 2026-11-05 2119).json",
+   "gebouw (conflict Sim0 2026-11-05 2119).ifc.samenvoegrapport (conflict Sim4 2026-11-05 2119).json",
+   "gebouw (conflict Sim0 2026-11-05 2119).ifc.samenvoegrapport.json",
+   "gebouw (conflict Sim7 2026-11-05 2119) (conflict Sim4 2026-11-05 2119) (conflict Sim6 2026-11-05 2119).ifc",
+   "gebouw (conflict Sim7 2026-11-05 2119) (conflict Sim4 2026-11-05 2119).ifc"
+  ],
+  "bestanden": 139,
+  "verwijderd": 28,
+  "conflictkopieen": 67,
+  "samenvoegrapporten": 6,
+  "versies_samengevoegd_uit": 58,
+  "opeenvolgende_versies_met_gelijke_inhoud": 3
+ },
+ "rondes": {
+  "totaal": 277,
+  "gedood": 10,
+  "opslag_tijdens_ronde": 34,
+  "exitcode_niet_0": 5,
+  "met_fouten": 64,
+  "samengevoegd": 56,
+  "niet_samengevoegd": {
+   "conflicten": 10,
+   "onbekende_basis": 1
+  },
+  "conflicten_volgens_rapport": 54,
+  "duur_gemiddeld_s": 1.12,
+  "fouten_soorten": {
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.download)": 29,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.blokken)": 20,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_start)": 20,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.verwijder)": 4,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_klaar)": 4,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/f8d6a2cdaeed117c4c409a6465362bea?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/ef549e61626302df4585461071c53818?response-conte": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/1007399f8af61b63fd074ce24d503cf3?uploadId=ftPoi": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/b370ea4fe1104186bcc5b669d0a94132?response-conte": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/2d669a92d3234a9aaa5bfa86b108733b?uploadId=f92SN": 1
+  }
+ },
+ "proxy_api": {
+  "verzoeken": {
+   "download": 493,
+   "blokken": 469,
+   "upload_start": 359,
+   "wijzigingen": 328,
+   "mogelijkheden": 277,
+   "boom": 264,
+   "upload_klaar": 191,
+   "download_klein": 162,
+   "bladeren": 69,
+   "upload_klein": 36,
+   "verwijder": 31,
+   "maak_mappen": 1
+  },
+  "upload_klaar_status": {
+   "200": 173,
+   "409": 14,
+   "None": 4
+  },
+  "foutcodes": {
+   "upload_klaar verouderde_basis": 14,
+   "upload_start verouderde_basis": 139,
+   "upload_start onbekende_basis": 1
+  },
+  "chaos": {
+   "stil wijzigingen": 5,
+   "stil download": 12,
+   "stil upload_start": 5,
+   "stil verwijder": 2,
+   "knip download_klein": 1,
+   "traag upload_start": 9,
+   "knip mogelijkheden": 5,
+   "knip download": 11,
+   "stil blokken": 12,
+   "knip blokken": 5,
+   "traag blokken": 12,
+   "traag wijzigingen": 6,
+   "knip upload_start": 11,
+   "traag download": 10,
+   "reset mogelijkheden": 4,
+   "reset upload_start": 5,
+   "reset boom": 2,
+   "reset upload_klaar": 2,
+   "reset bladeren": 2,
+   "knip boom": 2,
+   "knip bladeren": 3,
+   "reset verwijder": 2,
+   "reset wijzigingen": 3,
+   "traag bladeren": 1,
+   "traag boom": 2,
+   "stil boom": 1,
+   "traag mogelijkheden": 1,
+   "traag upload_klaar": 1,
+   "stil mogelijkheden": 4,
+   "knip upload_klaar": 2,
+   "reset blokken": 4,
+   "reset download": 6,
+   "knip wijzigingen": 2,
+   "stil upload_klaar": 3
+  }
+ },
+ "proxy_s3": {
+  "verzoeken": {
+   "GET": 439,
+   "PUT": 199
+  },
+  "upload_klaar_status": {},
+  "foutcodes": {},
+  "chaos": {
+   "knip PUT": 3,
+   "knip GET": 6,
+   "traag GET": 7,
+   "stil GET": 10,
+   "stil PUT": 2,
+   "reset GET": 8,
+   "reset PUT": 6,
+   "traag PUT": 5
+  }
+ },
+ "na_verloren_upload_klaar": {
+  "stil_bij_upload_klaar": 3,
+  "daarna": {
+   "bladeren 200 -> blokken 200 -> wijzigingen 200": 1,
+   "download 200 -> blokken 200 -> bladeren 200": 1,
+   "bladeren 200 -> blokken 200 -> verwijder 200": 1
+  },
+  "upload_klaar_403": 0,
+  "upload_start_200": 203,
+  "upload_klaar_verzoeken": 191
+ },
+ "args": {
+  "clients": 8,
+  "beurten": 20,
+  "zaad": 1,
+  "chaos": 0.08,
+  "kill": 0.15,
+  "tegelijk": 0.15,
+  "pauze": 1.5,
+  "rustig": 1800,
+  "werk": "/home/aia09/bench-proef/werk/c1b-8clients-zaad1"
+ }
+}
+16:51:48 alle controles geslaagd
+EXIT:0

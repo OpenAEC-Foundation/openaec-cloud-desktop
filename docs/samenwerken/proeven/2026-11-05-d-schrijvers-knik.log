@@ -1,0 +1,2 @@
+draai.sh: d-schrijvers-knik, 2026-11-05 18:05:44, desktop 54c4015, server 197d55b (integratie-4-4b)
+draai.sh: last.py --aantallen 5,10,25,50 --duur 45 --fasen schrijvers
