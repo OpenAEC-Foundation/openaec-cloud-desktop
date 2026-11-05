@@ -57,8 +57,9 @@ reproductie.
     upload die na `upload_start` stopt (verbinding weg, client gestopt, een deel naar S3 mislukt), laat een
     multipart-upload in de bucket achter. Bij een gewone upload breekt de server die nooit af: `s3.afbreken` komt
     alleen voor bij een overdracht (`overdracht.py` r. 415), en een lifecycle-regel op de bucket
-    (`AbortIncompleteMultipartUpload`) staat nergens beschreven. Na run c1 stonden er 29. Er gaat niets verloren, maar
-    bij AWS kosten de delen opslag tot iemand ze afbreekt. Reproductie: `upload_start` zonder `upload_klaar`, dan
+    (`AbortIncompleteMultipartUpload`) staat nergens beschreven. Na de chaosruns stonden er 16 tot 65 (c1: 29, c1b: 16,
+    c2: 57, c2b: 65); zonder chaos 0. Er gaat niets verloren, maar bij AWS kosten de delen opslag tot iemand ze
+    afbreekt. Reproductie: `upload_start` zonder `upload_klaar`, dan
     `list_multipart_uploads` op de bucket (`simulatie.py` telt ze als `onafgemaakte_multipart`). — B
 61. **Na kill -9 midden in een ronde worden opgehaalde bestanden overbodige conflictkopieën** (eigen bevinding,
     chaosproef c2, 5 november 2026). De motor schrijft zijn toestand pas aan het eind van een ronde weg (`motor.rs`,
@@ -87,3 +88,19 @@ reproductie.
     met nummer 0 direct in de tabel, dan één lezing; log `2026-11-05-d-last-4werkers.log`). Een mogelijke richting: in
     stukken nummeren (een vast aantal per transactie), of met één `UPDATE` in volgorde van `name`. Dit is servercode;
     niet gerepareerd. — B
+63. **Veel schrijvers op één bestand: bijna niemand slaat op, en de laatste winnaar wint weer** (eigen bevinding,
+    lastproef d, 5 november 2026). Een grens, geen fout in de code. In de lastproef schrijven 100, 200 of 300 lichte
+    clients ongeveer 46 s lang hetzelfde bestand via vergelijk-en-schrijf (`bij_conflict` "weiger", zoals de
+    opslaan-lus), met hoogstens 1 s pauze na een opslag. Bij 100 clients lukten 20 opslagen (0,43 per s), en 96
+    clients kregen geen enkele opslag; één client had er 7. Bij 200: 11 opslagen, 199 clients zonder opslag, en één
+    client had alle 11. Bij 300: 7 opslagen, 299 zonder, en één client had alle 7. Bijna elke poging trof een nieuwere
+    versie: bij 100 clients weigerde de server 1 535 van de 1 855 pogingen al bij `upload_start`, en 300 bij
+    `upload_klaar`. Er zijn twee oorzaken. Ten eerste groeit de tijd tussen lezen en vastleggen met de last: de
+    mediaan van `upload_klaar` ging van 1,1 s (100 clients) naar 5,7 s (300). Ten tweede kent de winnaar zijn nieuwe
+    versie al en schrijft hij meteen weer, terwijl de anderen eerst `versies` en de inhoud moeten lezen. De server
+    kent geen volgorde of beurt. De echte opslaan-lus stopt na 5 pogingen (`LusOpties`) en maakt dan een
+    conflictkopie; bij deze last wordt dus bijna elke opslag een conflictkopie. Er gaat niets verloren. Een echte
+    gebruiker slaat niet elke seconde op; de proef is een bovengrens van de druk. Bij 10 echte clients (b2) gaf de
+    lus 2 keer op in 239 rondes. Een mogelijke richting voor een bestand met veel schrijvers: het slot
+    (`bestand_vergrendeld` bestaat al), samenvoegen op de server, of een beurt per schrijver. Reproductie:
+    `last.py --fasen schrijvers --aantallen 100,200,300` (log `2026-11-05-d-last-4werkers.log`). — B
