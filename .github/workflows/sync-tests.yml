@@ -29,6 +29,8 @@ jobs:
       - name: openaec-sync
         working-directory: crates/openaec-sync
         run: cargo test
+      # Ook als de stap hierboven faalt: een fout in de ene crate mag de uitkomst van de andere niet verbergen.
       - name: openaec-samenvoegen
+        if: ${{ !cancelled() }}
         working-directory: crates/openaec-samenvoegen
         run: cargo test --features cli
