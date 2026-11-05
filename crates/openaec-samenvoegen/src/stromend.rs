@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::model::{
     anker_identiteit, eerste_token, enkele_verwijzing, herken, koppel_leden, posities, set_leden, wortel_sleutel,
@@ -265,7 +265,7 @@ struct Geparst {
 /// De laatst gelezen instanties; een paar is genoeg, want de canonieke vorm vraagt één instantie vaak na elkaar.
 #[derive(Default)]
 struct Cache {
-    plekken: Vec<Rc<Geparst>>,
+    plekken: Vec<Arc<Geparst>>,
     volgende: usize,
 }
 
@@ -454,10 +454,10 @@ impl<'d> Versie<'d> {
     }
 
     /// De instantie met nummer `n`, opnieuw gelezen (of uit de cache).
-    fn geparst(&self, n: u64) -> Rc<Geparst> {
+    fn geparst(&self, n: u64) -> Arc<Geparst> {
         let mut cache = self.cache.borrow_mut();
         if let Some(g) = cache.plekken.iter().find(|g| g.n == n) {
-            return Rc::clone(g);
+            return Arc::clone(g);
         }
         let mut delen = Delen::default();
         let begin = self.begin(n) as usize;
@@ -465,7 +465,7 @@ impl<'d> Versie<'d> {
             Some((_, complex, type_bereik, _)) => (complex, type_bereik),
             None => (false, (begin, begin)),
         };
-        let g = Rc::new(Geparst {
+        let g = Arc::new(Geparst {
             n,
             type_id: self.typen.get(&delen.naam).copied().unwrap_or(0),
             complex,
@@ -474,10 +474,10 @@ impl<'d> Versie<'d> {
             refs: delen.refs,
         });
         if cache.plekken.len() < CACHE {
-            cache.plekken.push(Rc::clone(&g));
+            cache.plekken.push(Arc::clone(&g));
         } else {
             let plek = cache.volgende;
-            cache.plekken[plek] = Rc::clone(&g);
+            cache.plekken[plek] = Arc::clone(&g);
             cache.volgende = (plek + 1) % CACHE;
         }
         g
@@ -509,7 +509,7 @@ impl<'d> Versie<'d> {
                 continue;
             }
             op_stapel.insert(start);
-            let mut stapel: Vec<(Rc<Geparst>, usize)> = vec![(self.geparst(start), 0)];
+            let mut stapel: Vec<(Arc<Geparst>, usize)> = vec![(self.geparst(start), 0)];
             while let Some((g, volgende)) = stapel.last_mut() {
                 if *volgende < g.refs.len() {
                     let c = g.refs[*volgende];
@@ -624,7 +624,7 @@ impl<'d> Versie<'d> {
         };
         let mut bezig: HashSet<u64> = HashSet::from([k]);
         let mut klaar: HashMap<u64, Hash> = HashMap::new();
-        let mut stapel: Vec<(Rc<Geparst>, usize)> = vec![(self.geparst(k), 0)];
+        let mut stapel: Vec<(Arc<Geparst>, usize)> = vec![(self.geparst(k), 0)];
         let mut buffer = Vec::new();
         while let Some((g, volgende)) = stapel.last_mut() {
             if *volgende < g.refs.len() {
