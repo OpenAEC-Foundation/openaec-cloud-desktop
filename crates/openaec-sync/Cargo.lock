@@ -1012,6 +1012,8 @@ dependencies = [
  "clap",
  "dirs",
  "futures-util",
+ "libc",
+ "log",
  "notify",
  "rand 0.8.8",
  "reqwest",
@@ -1021,6 +1023,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "windows-sys 0.61.2",
  "wiremock",
  "zip",
 ]

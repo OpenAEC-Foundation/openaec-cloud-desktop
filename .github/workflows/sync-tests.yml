@@ -1,0 +1,36 @@
+name: Sync-tests
+
+# De proeven van de sync-motor en van de samenvoegbibliotheek, op de drie platforms van de desktop-app, bij elke PR die
+# een crate raakt. Zonder geheimen en alleen lezen: de repo is openbaar, en een PR van buiten draait dit ook.
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - ".github/workflows/sync-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            crates/openaec-sync
+            crates/openaec-samenvoegen
+      - name: openaec-sync
+        working-directory: crates/openaec-sync
+        run: cargo test
+      # Ook als de stap hierboven faalt: een fout in de ene crate mag de uitkomst van de andere niet verbergen.
+      - name: openaec-samenvoegen
+        if: ${{ !cancelled() }}
+        working-directory: crates/openaec-samenvoegen
+        run: cargo test --features cli
