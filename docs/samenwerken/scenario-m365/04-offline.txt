@@ -1,0 +1,30 @@
+
+== Invoer
+showcase-appartementencomplex.ifc: 481752 bytes, sha256 640148841af81215
+
+== Anna gaat offline met versie 12. Ze slaat twee keer lokaal op.
+
+== Piet werkt online: versie 13 (keldervloer toren C 8 dagen) en versie 14 (dak toren B 3 dagen later).
+
+== Anna is weer online. Haar basis is 12, de server staat op 14: samenvoegen met basis 12, ons Anna, hun 14.
+Samengevoegd naar v15.ifc: 2580 objecten van ons, 2 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 0 nieuw, 2 herschreven, 0 weggehaald.
+tijd: 102 ms (exitcode 0)
+
+== Controle: versie 15 bevat alle vier de wijzigingen, en verder niets
+controle: het verschil noemt precies {'gewijzigd': ['0AOKES1U_N1S7hr$6tCHXH', '0_4IdJo_cQzpN_Ek772XwL', '1FPwlytwv2VWjV9PVP_VP4', '3Lz$0hQ_JxtHXIVlnG3JSI'], 'toegevoegd': [], 'verwijderd': []}
+controle: het verschil noemt precies {'gewijzigd': ['0AOKES1U_N1S7hr$6tCHXH', '3Lz$0hQ_JxtHXIVlnG3JSI'], 'toegevoegd': [], 'verwijderd': []}
+
+== Wat Microsoft 365 in dit geval doet
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-gb/sharepoint/get-started-with-sharepoint/document-collaboration-and-co-authoring):
+  "If there are others editing the same document, they won't be able to see your changes while you're offline. When you go back online, you'll be notified of any changes that are available, and others will see that you have changes."
+  "When you go offline with Word, it's possible to work on the same paragraph as someone else in your group. When you save your changes, you'll get a pop-up message saying there's a conflict."
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues):
+  "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+Dus: voor Word een melding en een conflict per alinea; voor een .ifc twee bestanden naast elkaar.
+
+== Uitkomst
+Onze onderlaag: één versie (15) met de twee wijzigingen van Anna en de twee van Piet.
+Wat hier niet getoetst is: de desktop-sync die dit tegen de server doet. Die hangt aan stap 4 op de server
+(storage-PR #9, een voorstel; de server ligt stil tot de kern gelezen is).
+EXIT:0

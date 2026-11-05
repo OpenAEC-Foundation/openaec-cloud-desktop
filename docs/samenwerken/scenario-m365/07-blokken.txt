@@ -1,0 +1,37 @@
+zwaar.sh: plek .zwaar.2 voor: bash scripts/scenario-m365/07-blokken.sh
+
+== Het grote bestand maken (meettest van de bibliotheek)
+bestand: 92 MB, 200000 elementen
+verschil(basis, ons): 4.52 s, 200 gewijzigd, piek 963 MB
+
+== Invoer
+basis.ifc: 91536771 bytes, sha256 d9fefdda4652d4d7
+
+== Anna (vanaf versie 12): de naam van element 199500 (vlak bij het einde). Ze slaat als eerste op: versie 13.
+Een gewone upload van versie 13 op basis 12:
+10 van 11 blokken van 8 MiB gelijk op dezelfde plek; 1 gaan over het netwerk
+
+== Piet (ook vanaf versie 12): element 10 schuift op (vlak bij het begin).
+Zonder Anna zou Piets upload op basis 12 dit versturen:
+0 van 11 blokken van 8 MiB gelijk op dezelfde plek; 11 gaan over het netwerk
+
+== Piet slaat op. Zijn basis (12) is verouderd: samenvoegen met basis 12, ons Piet, hun 13.
+Samengevoegd naar v14.ifc: 200003 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 0 nieuw, 1 herschreven, 0 weggehaald.
+tijd: 12529 ms (exitcode 0)
+De upload van versie 14 op basis 13 (de versie van hun):
+0 van 11 blokken van 8 MiB gelijk op dezelfde plek; 11 gaan over het netwerk
+
+== Andersom: Anna slaat als tweede op (ons Anna, hun Piet als versie 13).
+Samengevoegd naar v14b.ifc: 200003 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 2 nieuw, 1 herschreven, 2 weggehaald.
+tijd: 12790 ms (exitcode 0)
+De upload van versie 14 op basis 13 (de versie van Piet):
+0 van 11 blokken van 8 MiB gelijk op dezelfde plek; 11 gaan over het netwerk
+
+== Wat Microsoft 365 hierover zegt
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/onedrive/restrictions-and-limitations-in-onedrive-and-sharepoint):
+  "Differential sync works for Microsoft Office files in the new file format, .docx, .pptx, and .xlsx."
+  "For other file types, differential sync is available globally."
+De bron noemt geen blokgrootte en geen meting. Een vergelijking in cijfers kan dus niet.
+EXIT:0

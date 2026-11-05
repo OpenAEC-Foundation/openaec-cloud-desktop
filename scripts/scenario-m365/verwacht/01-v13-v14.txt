@@ -1,0 +1,6 @@
+# Scenario 01, verschil 13 -> 14: alleen de wijziging van Piet (duur 5 -> 8 dagen, einde +3 dagen).
+# Een regel per gewijzigde waarde: GLOBALID | ATTRIBUUT | OUD | NIEUW. ifc.py controleer eist precies deze regels.
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.EarlyFinish | '2027-05-27T15:00:00' | '2027-05-30T15:00:00'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.LateFinish | '2027-05-27T15:00:00' | '2027-05-30T15:00:00'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.ScheduleDuration | 'P0Y0M5D' | 'P0Y0M8D'
+1FPwlytwv2VWjV9PVP_VP4 | TaskTime.ScheduleFinish | '2027-03-05T15:00:00' | '2027-03-08T15:00:00'

@@ -1,0 +1,50 @@
+
+== Invoer
+showcase-appartementencomplex.ifc: 481752 bytes, sha256 640148841af81215
+
+== Anna (vanaf versie 12): de funderingsbalken schuiven 2 weken op. Ze slaat als eerste op: versie 13.
+
+== Piet (ook vanaf versie 12): de keldervloer van toren C duurt 8 dagen in plaats van 5.
+
+== Piet slaat op. Zijn basis (12) is verouderd: de opslaan-lus voegt samen met basis 12, ons Piet, hun 13.
+Samengevoegd naar v14.ifc: 2581 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 0 nieuw, 1 herschreven, 0 weggehaald.
+tijd: 99 ms (exitcode 0)
+
+== Controle: versie 14 bevat beide wijzigingen, en verder niets
+Gewijzigd (2):
+  ~ IfcTask 'Pour basement floor — Tower C' [1FPwlytwv2VWjV9PVP_VP4]
+      TaskTime.ScheduleDuration: 'P0Y0M5D' -> 'P0Y0M8D'
+      TaskTime.ScheduleFinish: '2027-03-05T15:00:00' -> '2027-03-08T15:00:00'
+      TaskTime.EarlyFinish: '2027-05-27T15:00:00' -> '2027-05-30T15:00:00'
+      TaskTime.LateFinish: '2027-05-27T15:00:00' -> '2027-05-30T15:00:00'
+  ~ IfcTask 'Pour foundation beams (shared)' [3Lz$0hQ_JxtHXIVlnG3JSI]
+      TaskTime.ScheduleStart: '2027-03-01T07:00:00' -> '2027-03-15T07:00:00'
+      TaskTime.ScheduleFinish: '2027-03-04T16:00:00' -> '2027-03-18T16:00:00'
+      TaskTime.EarlyStart: '2027-04-30T07:00:00' -> '2027-05-14T07:00:00'
+      TaskTime.EarlyFinish: '2027-05-07T16:00:00' -> '2027-05-21T16:00:00'
+      TaskTime.LateStart: '2027-04-30T07:00:00' -> '2027-05-14T07:00:00'
+      TaskTime.LateFinish: '2027-05-07T16:00:00' -> '2027-05-21T16:00:00'
+a: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+b: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+controle: het verschil noemt precies {'gewijzigd': ['1FPwlytwv2VWjV9PVP_VP4', '3Lz$0hQ_JxtHXIVlnG3JSI'], 'toegevoegd': [], 'verwijderd': []}
+Gewijzigd (1):
+  ~ IfcTask 'Pour basement floor — Tower C' [1FPwlytwv2VWjV9PVP_VP4]
+      TaskTime.ScheduleDuration: 'P0Y0M5D' -> 'P0Y0M8D'
+      TaskTime.ScheduleFinish: '2027-03-05T15:00:00' -> '2027-03-08T15:00:00'
+      TaskTime.EarlyFinish: '2027-05-27T15:00:00' -> '2027-05-30T15:00:00'
+      TaskTime.LateFinish: '2027-05-27T15:00:00' -> '2027-05-30T15:00:00'
+a: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+b: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+controle: het verschil noemt precies {'gewijzigd': ['1FPwlytwv2VWjV9PVP_VP4'], 'toegevoegd': [], 'verwijderd': []}
+
+== Wat Microsoft 365 in dit geval doet (een .ifc is geen Office-bestand)
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-gb/sharepoint/get-started-with-sharepoint/document-collaboration-and-co-authoring):
+  "Co-authoring is only supported on modern file formats including: .docx (Word), .pptx (PowerPoint), and .xlsx (Excel)."
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues):
+  "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions. The online version keeps the original file name and is downloaded, and the copy on your computer has your device name appended to the file name such as Report-JOHNS-SURFACE.txt."
+Dus: twee bestanden naast elkaar, en iemand voegt de taken met de hand samen.
+
+== Uitkomst
+Onze onderlaag: één versie (14) met beide wijzigingen. Geen conflictkopie.
+EXIT:0

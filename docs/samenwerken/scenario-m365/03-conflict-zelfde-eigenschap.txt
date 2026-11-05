@@ -1,0 +1,35 @@
+
+== Invoer
+ifc2x3-building-architecture.ifc: 92542 bytes, sha256 c4db65ba847f6b36
+
+== Anna (vanaf versie 12): de vloer wordt REI60, en de voorgevelwand schuift 250 mm op. Versie 13.
+
+== Piet (ook vanaf versie 12): de vloer wordt REI90.
+
+== Piet slaat op. Zijn basis (12) is verouderd: samenvoegen met basis 12, ons Piet, hun 13.
+Conflicten (1):
+  ! beide_gewijzigd IfcPropertySet 'Pset_SlabCommon' [3IPHMao9vAlQSQdn4mt1Bm]: beide kanten wijzigden 'FireRating' in HasProperties anders
+      HasProperties[FireRating]: basis IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $), ons IfcPropertySingleValue('FireRating', $, IFCLABEL('REI90'), $), hun IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $)
+Niet samengevoegd; er is geen uitvoerbestand geschreven.
+tijd: 17 ms (exitcode 1)
+
+== Controle: een conflict, geen uitvoerbestand, en het rapport noemt de drie waarden
+conflict: beide_gewijzigd op IfcPropertySet [3IPHMao9vAlQSQdn4mt1Bm], attribuut HasProperties[FireRating]
+  basis IfcPropertySingleValue('FireRating', $, IFCLABEL('REI30'), $), ons (Piet) IfcPropertySingleValue('FireRating', $, IFCLABEL('REI90'), $), hun (Anna) IfcPropertySingleValue('FireRating', $, IFCLABEL('REI60'), $)
+Daarna: de client slaat Piets versie op als conflictkopie, zoals openaec-storage nu doet
+(test_api.py: test_verouderde_basisversie_geeft_conflictkopie). Anna's versie 13 blijft de huidige.
+
+== Wat Microsoft 365 in dit geval doet
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues):
+  "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/excel/get-started/collaborate-on-excel-workbooks-at-the-same-time-with-co-authoring):
+  "In general, the last change that is saved, either with the Save button or automatically with AutoSave, is the one that "wins.""
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/word/troubleshoot-common-coauthoring-errors):
+  "Why this error happened: Your document can't be saved to the server because your edits conflict with edits from others."
+  "Accept or reject each change."
+Dus: bij een .ifc twee bestanden zonder uitleg wat er botst; in Excel wint de laatste opslag; in Word kiest de gebruiker per wijziging.
+
+== Uitkomst
+Onze onderlaag: geen stille keuze. Het rapport noemt het object, het attribuut en de drie waarden.
+Een scherm om per conflict te kiezen (zoals Word) is er nog niet (§8 van het ontwerp).
+EXIT:0

@@ -1,0 +1,44 @@
+
+== Invoer
+showcase-appartementencomplex.ifc: 481752 bytes, sha256 640148841af81215
+
+== Piet maakt versie 13: de keldervloer van toren C duurt 8 dagen.
+
+== Anna haalt versie 13 op en schuift de funderingsbalken 2 weken op (nog niet opgeslagen).
+
+== Piet zet versie 12 terug: versie 14 heeft precies de inhoud van versie 12.
+versie 14 is byte voor byte gelijk aan versie 12
+
+== Anna slaat op. Haar basis (13) is verouderd: samenvoegen met basis 13, ons Anna, hun 14.
+Samengevoegd naar v15.ifc: 2581 objecten van ons, 1 van hun, 0 per attribuut samengevoegd, 0 verwijderd.
+Regels: 0 nieuw, 1 herschreven, 0 weggehaald.
+tijd: 110 ms (exitcode 0)
+
+== Controle: versie 15 is versie 12 plus de wijziging van Anna
+Gewijzigd (1):
+  ~ IfcTask 'Pour foundation beams (shared)' [3Lz$0hQ_JxtHXIVlnG3JSI]
+      TaskTime.ScheduleStart: '2027-03-01T07:00:00' -> '2027-03-15T07:00:00'
+      TaskTime.ScheduleFinish: '2027-03-04T16:00:00' -> '2027-03-18T16:00:00'
+      TaskTime.EarlyStart: '2027-04-30T07:00:00' -> '2027-05-14T07:00:00'
+      TaskTime.EarlyFinish: '2027-05-07T16:00:00' -> '2027-05-21T16:00:00'
+      TaskTime.LateStart: '2027-04-30T07:00:00' -> '2027-05-14T07:00:00'
+      TaskTime.LateFinish: '2027-05-07T16:00:00' -> '2027-05-21T16:00:00'
+a: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+b: IFC4X3_ADD2, 2582 objecten, 1682 knopen
+controle: het verschil noemt precies {'gewijzigd': ['3Lz$0hQ_JxtHXIVlnG3JSI'], 'toegevoegd': [], 'verwijderd': []}
+
+== Wat Microsoft 365 in dit geval doet
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/onedrive/restore-a-previous-version-of-a-file-stored-in-onedrive):
+  "The document version you selected becomes the current version. The previous current version becomes the previous version in the list."
+Microsoft 365 volgens de bron (https://support.microsoft.com/en-us/sharepoint/documents-and-library/restore-a-previous-version-of-an-item-or-file-in-sharepoint):
+  "SharePoint doesn't remove the earlier version you just restored. It creates a copy and makes it the latest version."
+Microsoft 365 volgens de bron (https://learn.microsoft.com/en-us/troubleshoot/sharepoint/sync/troubleshoot-sync-issues):
+  "If a conflict occurred with a non-Office file type, OneDrive automatically keeps both versions."
+Dus (afgeleid, niet zo beschreven): slaat Anna daarna een .ifc op via de sync-app, dan komt er een tweede
+bestand naast het teruggezette.
+
+== Uitkomst
+Onze onderlaag: het terugzetten van Piet en de wijziging van Anna staan allebei in versie 15.
+Nog niet gebouwd: terugzetten in één stap op de server (zet_terug, §5.5). Nu: de oude versie downloaden en
+opnieuw uploaden.
+EXIT:0
