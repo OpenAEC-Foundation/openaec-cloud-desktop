@@ -61,6 +61,10 @@ impl Default for Index {
 
 const GEEN: u32 = u32::MAX;
 
+/// Zo diep mogen lijsten en getypte waarden in één attribuut in elkaar zitten. Echte IFC komt niet verder dan een
+/// paar niveaus. De canonisatie en de weergave werken recursief; dieper is daarom een fout en geen stack overflow.
+pub(crate) const MAX_DIEPTE: usize = 256;
+
 impl Index {
     fn nieuw(hoogste: u64, aantal: usize) -> Self {
         if hoogste <= (aantal as u64).saturating_mul(4).saturating_add(1024) {
@@ -514,7 +518,7 @@ impl<'a> Lezer<'a> {
         self.waarde(refs)
     }
 
-    /// Eén waarde, met geneste lijsten. Zonder recursie: de diepte telt in `diepte`.
+    /// Eén waarde, met geneste lijsten. Zonder recursie: de diepte telt in `diepte`, hoogstens [`MAX_DIEPTE`].
     fn waarde(&mut self, refs: &mut Vec<u64>) -> Result<(), Fout> {
         let mut diepte: usize = 0;
         // Na een '(' mag direct een ')' komen (lege lijst).
@@ -525,6 +529,9 @@ impl<'a> Lezer<'a> {
                 Some(b'(') => {
                     self.pos += 1;
                     diepte += 1;
+                    if diepte > MAX_DIEPTE {
+                        return Err(ongeldig(self.data, begin, format!("waarde dieper dan {MAX_DIEPTE} niveaus")));
+                    }
                     self.spatie()?;
                     if self.kijk() == Some(b')') {
                         self.pos += 1;
@@ -897,9 +904,16 @@ mod tests {
     }
 
     #[test]
-    fn diepe_lijst_geeft_geen_stack_overflow() {
-        let diep = format!("#1=IFCX({}1{});", "(".repeat(100_000), ")".repeat(100_000));
-        assert!(lees(ifc(&diep).as_bytes()).is_ok());
+    fn diepe_lijst_is_een_fout() {
+        let diep = |n: usize| format!("#1=IFCX(\n{}1{});", "(".repeat(n), ")".repeat(n));
+        assert!(lees(ifc(&diep(MAX_DIEPTE)).as_bytes()).is_ok());
+        let regel = ifc("").lines().position(|r| r == "DATA;").unwrap() + 3;
+        for n in [MAX_DIEPTE + 1, 100_000] {
+            match lees(ifc(&diep(n)).as_bytes()) {
+                Err(Fout::Ongeldig { regel: r, melding }) => assert_eq!((r, melding.contains("dieper")), (regel, true)),
+                andere => panic!("{n}: {:?}", andere.map(|_| ())),
+            }
+        }
     }
 
     #[test]
