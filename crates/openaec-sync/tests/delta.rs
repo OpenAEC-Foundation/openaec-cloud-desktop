@@ -255,3 +255,55 @@ async fn delen_van_een_groot_bestand_gaan_parallel_binnen_de_rem() {
     assert!(upload_drie_delen(3).await < std::time::Duration::from_millis(800), "drie delen tegelijk");
     assert!(upload_drie_delen(1).await >= std::time::Duration::from_millis(900), "één plek: na elkaar");
 }
+
+/// Een upload van één deel; `upload_klaar` geeft 502 (het antwoord ging onderweg verloren). Daarna staat op de server
+/// `op_server` als huidige versie (3) van het bestand op die plek.
+async fn upload_zonder_antwoord(op_server: &[u8]) -> Result<openaec_sync::api::UploadResultaat, openaec_sync::Fout> {
+    let server = MockServer::start().await;
+    let inhoud = b"planning met mijn wijziging".to_vec();
+    let dir = tempfile::tempdir().unwrap();
+    let pad = dir.path().join("planning.ifc");
+    std::fs::write(&pad, &inhoud).unwrap();
+    let api = |m: &str| path(format!("/api/method/openaec_storage.api.{m}"));
+    Mock::given(method("POST"))
+        .and(api("upload_start"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "upload": "tok", "deelgrootte": BLOK, "hergebruik": [], "delen": [{"nummer": 1, "url": format!("{}/s3/deel1", server.uri())}]
+        }})))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT")).and(path("/s3/deel1")).respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"e1\"")).mount(&server).await;
+    Mock::given(method("POST")).and(api("upload_klaar")).respond_with(ResponseTemplate::new(502)).expect(1).mount(&server).await;
+    Mock::given(method("POST"))
+        .and(api("bladeren"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {"mappen": [], "bestanden": [
+            {"name": "b1", "naam": "planning.ifc", "grootte": op_server.len(), "huidige_versie": 3, "versie_id": "r3"}
+        ]}})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(api("blokken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": {
+            "versie": 3, "grootte": op_server.len(), "blokgrootte": BLOK, "hashes": hash_bytes(op_server, BLOK)
+        }})))
+        .mount(&server)
+        .await;
+    let client = Client::new(&server.uri(), "token sleutel:geheim");
+    upload_met_voortgang(&client, "r1", None, "planning.ifc", &pad, Some(2), &|_, _| {}).await
+}
+
+/// Proef (Sol, terloops bij review #9): na een verloren antwoord op het afronden staat de eigen inhoud op de server.
+/// Dan is de upload gelukt; anders uploadt de volgende ronde opnieuw vanuit de oude basis (een overbodige
+/// conflictkopie).
+#[tokio::test]
+async fn verloren_antwoord_op_het_afronden_met_de_eigen_inhoud_op_de_server_is_gelukt() {
+    let r = upload_zonder_antwoord(b"planning met mijn wijziging").await.unwrap();
+    assert_eq!((r.bestand.as_str(), r.versie, r.conflict, r.versie_id.as_deref()), ("b1", 3, false, Some("r3")));
+}
+
+/// Staat er een andere inhoud, dan blijft het de fout: de volgende ronde probeert het opnieuw.
+#[tokio::test]
+async fn verloren_antwoord_op_het_afronden_met_andere_inhoud_blijft_een_fout() {
+    let fout = upload_zonder_antwoord(b"planning van een ander").await.unwrap_err();
+    assert_eq!(fout.status(), Some(502));
+}

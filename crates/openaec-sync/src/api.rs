@@ -77,8 +77,6 @@ pub struct Blokken {
 pub struct DownloadLink {
     pub url: String,
     pub versie: u64,
-    #[serde(default)]
-    pub versie_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,12 +257,6 @@ pub struct BestandInfo {
     pub map: Option<String>,
     #[serde(default)]
     pub huidige_versie: u64,
-    /// Het id van de versieregel van de huidige versie (een nieuwere server).
-    #[serde(default)]
-    pub versie_id: Option<String>,
-    /// In de prullenbak.
-    #[serde(default)]
-    pub verwijderd: bool,
     #[serde(default)]
     pub vergrendeling: Option<Vergrendeling>,
 }
@@ -426,7 +418,6 @@ pub struct KleinBestand {
 pub struct KleinInhoud {
     pub bestand: String,
     pub versie: u64,
-    pub versie_id: Option<String>,
     /// BLAKE3 van de inhoud, als de server die kent.
     pub blokhash: Option<String>,
     pub inhoud: Vec<u8>,
@@ -727,7 +718,6 @@ impl Client {
                 Ok(KleinInhoud {
                     bestand: b.bestand.unwrap_or_default(),
                     versie: b.versie.unwrap_or_default(),
-                    versie_id: b.versie_id,
                     blokhash: b.blokhash,
                     inhoud,
                 })

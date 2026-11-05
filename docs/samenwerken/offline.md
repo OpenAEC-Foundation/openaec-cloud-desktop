@@ -68,8 +68,11 @@ maar de verbinding valt weg vóór het antwoord. Of de client stuurt `upload_kla
 403 "Upload onbekend of verlopen". Zonder herkenning zou de volgende ronde de inhoud nog eens versturen. Bij een gewoon
 bestand wordt dat een conflictkopie van het eigen werk, bij een nieuw bestand ook, en bij IFC een tweede versie.
 
-De motor kijkt niet naar de soort fout. Na elke fout blijft het bestand in `.openaec/onderweg/` staan, en stap 5 van
-de volgende ronde beslist op inhoud. Sloeg de gebruiker intussen opnieuw op, dan is dat een gewone wijziging op de
+Stap 5b kijkt direct na een fout bij het afronden (geen antwoord, of 5xx) of precies de eigen inhoud nu op de plek
+staat (`lib.rs`, `vastgelegd`). Dat vangt het gewone geval in dezelfde ronde. De bestanden onderweg vangen de rest: een
+crash na de upload, een weigering zoals de 403 hierboven, en een controle die zelf faalt omdat de verbinding nog weg
+is. De motor kijkt daarbij niet naar de soort fout. Na elke fout blijft het bestand in `.openaec/onderweg/` staan, en
+stap 5 van de volgende ronde beslist op inhoud. Sloeg de gebruiker intussen opnieuw op, dan is dat een gewone wijziging op de
 versie die al aankwam (geen conflictkopie). Kwam de upload niet aan, dan gaat hij gewoon opnieuw.
 
 Dezelfde inhoud is genoeg om de versie over te nemen. Ook als een ander toevallig precies dit opsloeg, is het lokale
@@ -97,12 +100,12 @@ bestand gelijk aan die versie. Er gaat dus niets verloren.
 | Een ander wijzigde het bestand | Gewijzigd | IFC: samengevoegd, of een conflictkopie met rapport. Anders: een conflictkopie |
 | Een ander wiste het bestand | Gewijzigd | Het werk komt terug als nieuw bestand (proef `de_server_wiste_het_bestand_intussen`) |
 | Een ander sloeg een nieuwe versie op | Gewist | De verwijdering gaat niet; de nieuwe versie komt terug (`offline_gewist_terwijl_een_ander_opsloeg`; ook bij hetzelfde volgnummer met een andere versieregel) |
-| Een ander sloeg op tussen onze lijst en onze verwijdering | Gewist | Nog een gat: de versie van de ander gaat naar de prullenbak (knownbugs 28). Stap 5b haalt vlak vóór het verwijderen de huidige versie op; dicht pas met optie E |
+| Een ander sloeg op tussen onze lijst en onze verwijdering | Gewist | Nog een gat: de versie van de ander gaat naar de prullenbak (knownbugs 27). Stap 5b haalt vlak vóór het verwijderen de huidige versie op; dicht pas met optie E |
 | Een ander wiste het en maakte een nieuw met dezelfde naam | Gewijzigd | `onbekende_basis`: een conflictkopie met rapport; hier het nieuwe bestand van de ander (`dezelfde_naam_opnieuw_gemaakt_op_de_server`) |
-| Een ander hernoemde het bestand | Gewijzigd | Het werk komt als nieuw bestand op het oude pad, het hernoemde bestand komt erbij. Geen verlies, wel twee bestanden (knownbugs 23) |
+| Een ander hernoemde het bestand | Gewijzigd | Het werk komt als nieuw bestand op het oude pad, het hernoemde bestand komt erbij. Geen verlies, wel twee bestanden (knownbugs 22) |
 | Op het nieuwe pad staat al een ander bestand | Hernoemd | De server weigert `verplaats`: zoals vóór deze stap een nieuw bestand (conflictkopie) en het oude pad naar de prullenbak (`hernoemen_naar_een_bezet_pad_wordt_een_nieuw_bestand`) |
 | Een ander wiste het bestand | Hernoemd | De server weigert `verplaats`: het hernoemde bestand komt terug als nieuw bestand |
-| Een ander hernoemde het ook | Hernoemd | Onze hernoeming wint; `verplaats` heeft geen basis (knownbugs 24) |
+| Een ander hernoemde het ook | Hernoemd | Onze hernoeming wint; `verplaats` heeft geen basis (knownbugs 23) |
 | Een ander vergrendelde het | Gewijzigd of hernoemd | Zoals altijd: een conflictkopie, of `verplaats` geweigerd en dan een nieuw bestand |
 
 ## Keuzes die van de server afhangen (opties)
@@ -112,15 +115,15 @@ alleen wat de trait `Opslag` al vraagt, en legt geen vorm vast die alleen bij PR
 
 - **A. Herkennen op inhoud (gekozen).** Nodig: de lijst geeft per bestand de huidige versie (`versie_id`), en de opslag
   geeft de blokhashes van een versie (`Opslag::blokhashes`). Beide bestaan al. Werkt na elke soort fout. Grens: alleen
-  het eigen pad en alleen de huidige versie (knownbugs 20 en 21).
+  het eigen pad en alleen de huidige versie (knownbugs 12 en 20).
 - **B. Een herhaalbare afronding op de server.** `upload_klaar` met hetzelfde token geeft een tijd lang hetzelfde
   antwoord, in plaats van 403. Dan kan de client na een netwerkfout `upload_klaar` gewoon herhalen, zonder de delen
-  opnieuw te sturen. Lost ook knownbugs 20 op. Vraagt een wijziging op de server.
+  opnieuw te sturen. Lost ook knownbugs 12 op. Vraagt een wijziging op de server.
 - **C. Een sleutel per upload van de client.** De client geeft bij `upload_start` een eigen id mee; de server geeft bij
   een tweede upload met dezelfde sleutel de uitkomst van de eerste. Werkt ook over een herstart heen, en ook voor een
   conflictkopie. Het id staat dan in het bestand onderweg. Vraagt een wijziging op de server.
 - **D. Verplaatsen met een basis.** `verplaats` alleen als het bestand nog op het oude pad staat. Dan wint een
-  hernoeming door een ander, en wordt de onze een nieuw bestand of een keuze (knownbugs 24). Vraagt een wijziging op de
+  hernoeming door een ander, en wordt de onze een nieuw bestand of een keuze (knownbugs 23). Vraagt een wijziging op de
   server.
 
 - **E. Verwijderen met een basis.** `verwijder(bestand, basis_versie_id)` (ontwerp §5.5): de server wist alleen als de
@@ -135,7 +138,7 @@ zie hieronder). B of C maakt het afspelen ook voor conflictkopieën herhaalbaar.
 - Bestanden onderweg schrijft de motor alleen bij een opslag met vergelijk-en-schrijf (`Opslag::vergelijk_en_schrijf`):
   alleen dan geeft de lijst een `versie_id` om de eigen upload aan terug te vinden. Bij een oudere server blijft alles
   zoals het was.
-- Een hernoeming herkent de motor alleen als een ronde haar zag vóór het bestand daarna veranderde. Zie knownbugs 22.
+- Een hernoeming herkent de motor alleen als een ronde haar zag vóór het bestand daarna veranderde. Zie knownbugs 21.
 - Aanwezigheid en meldingen zijn er offline niet (§5.13). Uitgecheckte objecten offline bewaren hoort bij §5.7 en is hier
   niet gebouwd.
 - De punten die bewust open blijven, staan in `crates/openaec-sync/knownbugs.md` (20 en verder).

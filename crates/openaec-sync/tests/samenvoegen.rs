@@ -201,14 +201,6 @@ impl Opslag for Versies {
         .ok_or_else(|| Versies::weiger("onbekende_basis", None))
     }
 
-    async fn huidige_versie(&self, bestand: &str) -> Result<Option<Versieregel>, Fout> {
-        Ok(self.zoek(bestand, |f| Versieregel {
-            bestand: f.id.clone(),
-            versie: f.versies.len() as u64,
-            versie_id: f.versies.last().unwrap().0.clone(),
-        }))
-    }
-
     async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
         Ok(self
             .zoek(&versie.bestand, |f| f.versies.iter().find(|(r, _)| *r == versie.versie_id).map(|(_, i)| (BLOK, hash_bytes(i, BLOK))))

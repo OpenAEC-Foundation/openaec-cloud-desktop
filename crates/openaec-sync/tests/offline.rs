@@ -538,8 +538,9 @@ async fn dezelfde_naam_opnieuw_gemaakt_op_de_server() {
 
 /// Met de echte client tegen een nagebootste API: `upload_klaar` legt de upload vast, maar het antwoord komt niet goed
 /// terug. De volgende ronde ziet het bestand in de lijst, vraagt de blokhashes van die versie, herkent de eigen inhoud
-/// en verstuurt niets opnieuw (`upload_start` precies één keer).
-async fn upload_zonder_goed_antwoord_wordt_herkend(klaar: ResponseTemplate) {
+/// en verstuurt niets opnieuw (`upload_start` precies één keer). `controle_faalt`: de controle die de client direct na
+/// geen antwoord doet (stap 5b, `vastgelegd`), faalt ook, omdat de verbinding nog weg is.
+async fn upload_zonder_goed_antwoord_wordt_herkend(klaar: ResponseTemplate, controle_faalt: bool) {
     const API: &str = "/api/method/openaec_storage.api.";
     let antwoord = |message: Value| ResponseTemplate::new(200).set_body_json(json!({ "message": message }));
     let server = MockServer::start().await;
@@ -554,6 +555,15 @@ async fn upload_zonder_goed_antwoord_wordt_herkend(klaar: ResponseTemplate) {
         .with_priority(1)
         .mount(&server)
         .await;
+    if controle_faalt {
+        Mock::given(method("POST"))
+            .and(path(format!("{API}bladeren")))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+    }
     let bestand = json!({"name": "B1", "naam": "notities.txt", "grootte": inhoud.len(), "huidige_versie": 1, "versie_id": "V1"});
     Mock::given(method("POST"))
         .and(path(format!("{API}bladeren")))
@@ -589,10 +599,11 @@ async fn upload_zonder_goed_antwoord_wordt_herkend(klaar: ResponseTemplate) {
     server.verify().await;
 }
 
-/// Het antwoord van `upload_klaar` is kapot of afgebroken (de verbinding viel weg).
+/// Het antwoord van `upload_klaar` is kapot of afgebroken (de verbinding viel weg), en de controle direct daarna lukt
+/// ook niet.
 #[tokio::test]
 async fn verloren_antwoord_op_upload_klaar() {
-    upload_zonder_goed_antwoord_wordt_herkend(ResponseTemplate::new(200).set_body_string("{\"message\": {\"bestand\"")).await;
+    upload_zonder_goed_antwoord_wordt_herkend(ResponseTemplate::new(200).set_body_string("{\"message\": {\"bestand\""), true).await;
 }
 
 /// `upload_klaar` geeft 403 "Upload onbekend of verlopen", zoals een herhaalde afronding op storage-PR #9 doet nadat de
@@ -600,7 +611,7 @@ async fn verloren_antwoord_op_upload_klaar() {
 #[tokio::test]
 async fn geweigerde_afronding_na_vastleggen() {
     let tekst = json!({"exc_type": "PermissionError", "_server_messages": "[\"{\\\"message\\\": \\\"Upload onbekend of verlopen\\\"}\"]"});
-    upload_zonder_goed_antwoord_wordt_herkend(ResponseTemplate::new(403).set_body_json(tekst)).await;
+    upload_zonder_goed_antwoord_wordt_herkend(ResponseTemplate::new(403).set_body_json(tekst), false).await;
 }
 
 /// Het scenario van Sol (ontwerp §5.5, "Ook verwijderen is voorwaardelijk"), offline: B wist F1 terwijl zijn toestand
@@ -642,7 +653,7 @@ async fn offline_gewist_en_dezelfde_versie_met_een_andere_regel() {
 /// Als hierboven, maar A slaat op tussen de lijst van B en zijn verwijdering. Dicht pas als de sync vlak voor het
 /// verwijderen de huidige versie opnieuw ophaalt (stap 5b) of de server de basis controleert (ontwerp §5.5).
 #[tokio::test]
-#[ignore = "wacht op de controle vlak voor het verwijderen uit stap 5b (knownbugs 28)"]
+#[ignore = "wacht op de controle vlak voor het verwijderen uit stap 5b (knownbugs 27)"]
 async fn gewist_en_een_ander_slaat_op_vlak_voor_het_verwijderen() {
     let (server, dir) = begin("f1.txt", b"versie 1").await;
     std::fs::remove_file(dir.path().join("f1.txt")).unwrap();
