@@ -65,7 +65,7 @@ def main():
                 else:
                     piek = float(r["piek_mb"])
                     cellen.append(f"{float(r['seconden']):.2f} s, {piek:.0f} MB ({piek / float(mb):.1f}/MB)")
-                    fit[kol].append(((float(mb), kk / 1e6, o / 1e6, 1.0), piek))
+                    fit[kol].append(((float(mb), kk / 1e6, o / 1e6, 1.0), piek, float(r["seconden"])))
             print(f"| {mb} | {n} | " + " | ".join(cellen) + " |")
     print("\n### Fit: piek = a*S + b*K + c*O + d\n")
     print("| opdracht | a (MB per MB) | b (bytes per knoop) | c (bytes per object) | d (MB) | grootste afwijking boven 50 MB |")
@@ -73,11 +73,20 @@ def main():
     for kol in KOLOMMEN:
         if len(fit[kol]) < 4:
             continue
-        x, y = [r for r, _ in fit[kol]], [p for _, p in fit[kol]]
+        x, y = [r for r, _, _ in fit[kol]], [p for _, p, _ in fit[kol]]
         co = los_op(x, y)
-        afw = max(abs(sum(c * v for c, v in zip(co, r)) - p) / p for r, p in fit[kol] if p > 50)
+        afw = max(abs(sum(c * v for c, v in zip(co, r)) - p) / p for r, p, _ in fit[kol] if p > 50)
         a, b, c, d = co
         print(f"| {kol[0]} {kol[1]} | {a:.2f} | {b * 1.048576:.0f} | {c * 1.048576:.0f} | {d:.0f} | {afw * 100:.0f} % |")
+
+    print("\n### Fit van de tijd: seconden = a*S + b*K + c*O (zonder vaste term; ruw, de machine was druk)\n")
+    print("| opdracht | a (s per 100 MB) | b (µs per knoop) | c (µs per object) |")
+    print("|---|---|---|---|")
+    for kol in KOLOMMEN:
+        if len(fit[kol]) < 4:
+            continue
+        a, b, c = los_op([r[:3] for r, _, _ in fit[kol]], [t for _, _, t in fit[kol]])
+        print(f"| {kol[0]} {kol[1]} | {a * 100:.2f} | {b:.2f} | {c:.1f} |")
 
 
 if __name__ == "__main__":

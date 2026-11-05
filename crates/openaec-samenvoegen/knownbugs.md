@@ -2,8 +2,9 @@
 
 Punten uit reviews die geen nieuwe fixronde vragen (VERVOLG): zeldzaam, alleen tekst, een ontbrekende test of
 opruimen. Elk punt heeft een vast nummer; nummers worden nooit hergebruikt. De punten 1 tot en met 9 horen bij
-PR #6 (verschil), de punten vanaf 10 bij PR #7 (samenvoegen). Zekerheid: **B** = bevestigd (met een test, een
-script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
+PR #6 (verschil), de punten vanaf 10 bij PR #7 (samenvoegen), de punten 90 tot en met 99 bij de metingen
+(`docs/samenwerken/metingen.md`). Zekerheid: **B** = bevestigd (met een test, een script of door de reviewer in de
+code), **S** = afgeleid, niet getoetst.
 
 1. **De voorwaarden voor de IFC2X3-tabel zijn niet uitgezocht** (review PR #6, bevinding 8, 5 november 2026). De kop
    van `IFC2X3_TC1.exp` zegt: "All rights reserved. No part of this documentation may be reproduced ... without the
@@ -76,3 +77,24 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
     Een deel van de tests in `tests/samenvoegen.rs` controleert het resultaat met `zelfde`, dus met `verschil` uit
     deze bibliotheek. Een fout die in het verschil en in het samenvoegen samen zit, zien die tests niet. De tests
     uit de reviews gaan na met `Feiten` (een losse lezer). Die oudere tests kunnen ook naar `Feiten` over. — B
+90. **Een bestand van 4 GiB of groter loopt eerst het geheugen vol** (meting PR p4, 5 november 2026). De
+    bibliotheek krijgt de inhoud als `&[u8]` en geeft bij 4 GiB of meer `Fout::TeGroot`. De opdrachtregel leest het
+    bestand eerst helemaal in (`std::fs::read`). Met een grens van 2 GB stopte het proces op een bestand van 6,3 GB
+    tijdens het inlezen (exit 137); de fout kwam nooit. Zonder grens vraagt dat eerst 6,3 GB. Een controle op de
+    grootte vóór het lezen (`metadata().len()`) lost het op, ook in de client. Zie `docs/samenwerken/metingen.md`. — B
+91. **Samenvoegen houdt vier versies helemaal in het geheugen** (meting PR p4, 5 november 2026). Gemeten tot 174 MB:
+    het geheugen is ongeveer 3,9 × de bestandsgrootte + 670 bytes per knoop + 2,8 kB per object. Een dicht model van
+    1 GB (zoals een gewone BIM-export) vraagt dan ongeveer 19 GB, een verschil ongeveer 9 GB. Op een laptop met 8 GB
+    vrij ligt de grens voor samenvoegen rond 430 MB (dicht) tot 1,8 GB (veel geometrie). De getallen boven 174 MB zijn
+    een schatting. Dat is het werk van de versie die streamt. — B (gemeten), S (geschat boven 174 MB)
+92. **De tijden komen van een drukke machine** (meting PR p4, 5 november 2026). Tijdens de reeks draaiden zo'n 16
+    andere agents (load 10 tot 60). Drie keer dezelfde samenvoeging gaf 5,0, 6,8 en 6,3 s; in de reeks staan
+    uitschieters tot 9 s voor 21 MB. Het geheugen herhaalt zich binnen 1 %. Op een rustige machine opnieuw meten
+    geeft betere tijden, maar geen andere conclusie. — B
+93. **Het profiel is per fase, niet per functie** (meting PR p4, 5 november 2026). `perf` werkt hier niet zonder sudo
+    (`kernel.perf_event_paranoid = 4`). De meetkopie meet daarom tijd en geheugen aan het eind van elke fase. Waar
+    de tijd binnen een fase heen gaat (bijv. binnen "ankers en hashes"), is niet gemeten. — B
+94. **Een planning van OPS wordt iets meer dan lineair trager** (meting PR p4, 5 november 2026). Samenvoegen kostte
+    0,15 s per MB bij 11 MB en 0,19 s per MB bij 88 MB (5,8 miljoen objecten). Bij de andere modellen bleef de tijd
+    per MB gelijk of daalde hij. Oorzaak niet nagegaan; vermoeden: de tabellen op GlobalId. Planningen van OPS zijn
+    in de praktijk kleiner dan 1 MB. — S
