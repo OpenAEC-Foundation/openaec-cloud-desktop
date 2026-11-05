@@ -14,11 +14,24 @@ fn voeg_met(b: &str, o: &str, h: &str, bij_conflict: BijConflict) -> Samenvoegin
     voeg_samen(b.as_bytes(), o.as_bytes(), h.as_bytes(), &Opties { bij_conflict }).unwrap()
 }
 
-/// Het resultaat; de samenvoeging moet zonder conflict lukken.
+/// Het resultaat; de samenvoeging moet zonder conflict lukken. Met `SAMENVOEGEN_UITVOER=<map>` schrijven we elk
+/// resultaat ook naar die map, voor `scripts/valideer_met_ifcopenshell.py`.
 fn gelukt(b: &str, o: &str, h: &str) -> String {
     let s = voeg(b, o, h);
     assert!(s.gelukt && s.conflicten.is_empty(), "conflicten: {:#?}", s.conflicten);
-    String::from_utf8(s.inhoud.unwrap()).unwrap()
+    let r = String::from_utf8(s.inhoud.unwrap()).unwrap();
+    bewaar(&r);
+    r
+}
+
+fn bewaar(r: &str) {
+    static TELLER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if let Some(map) = std::env::var_os("SAMENVOEGEN_UITVOER") {
+        let n = TELLER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let test = std::thread::current().name().unwrap_or("test").replace("::", "-");
+        std::fs::create_dir_all(&map).unwrap();
+        std::fs::write(std::path::Path::new(&map).join(format!("{test}-{n}.ifc")), r).unwrap();
+    }
 }
 
 /// De soorten conflicten; de samenvoeging moet mislukken.
@@ -812,4 +825,24 @@ fn schrijven_houdt_ons_en_nummert_hun_achteraan() {
     // V zelf blijft dezelfde tekst; alleen #45 is herschreven.
     assert_eq!((st.objecten_van_hun, st.instanties_verwijderd, st.instanties_herschreven), (2, 2, 1), "{st:?}");
     assert!(r.contains("#44=IFCBUILDINGELEMENTPROXY('0WandV0000000000000000',#5,'V',$,$,#45,$,$,$);"));
+}
+
+/// Sommige programma's geven relaties bij elk opslaan een nieuwe GlobalId. Ons en hun doen dat allebei, elk
+/// anders, en wijzigen elk een ander object.
+#[test]
+fn relaties_met_een_nieuwe_globalid_aan_beide_kanten() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let nieuw = |t: &str, kant: &str| {
+            let t = vervang(t, &format!("'{}'", gid("Aggr")), &format!("'{}'", gid(&format!("Aggr{kant}"))));
+            vervang(&t, &format!("'{}'", gid("BevatP")), &format!("'{}'", gid(&format!("BevatP{kant}"))))
+        };
+        let o = nieuw(&vervang(&b, "#5,'W',$", "#5,'W-ons',$"), "Ons");
+        let h = nieuw(&vervang(&b, "#5,'V',$", "#5,'V-hun',$"), "Hun");
+        let verwacht = vervang(&o, "#5,'V',$", "#5,'V-hun',$");
+        let s = voeg(&b, &o, &hernummer(&h, 15));
+        assert!(s.gelukt, "{schema}: {:#?}", s.conflicten);
+        assert_eq!(s.statistiek.relaties_gekoppeld, 4);
+        zelfde(&String::from_utf8(s.inhoud.unwrap()).unwrap(), &verwacht);
+    }
 }
