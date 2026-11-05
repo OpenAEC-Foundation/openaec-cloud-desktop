@@ -2,8 +2,9 @@
 
     python3 -I tabel.py <resultaten.csv>
 
-Per bron: tijd en piek per grootte, en het geheugen per MB invoer. Daarna een fit van het piekgeheugen op de grootte
-S (MB), het aantal knopen K en het aantal objecten O (miljoen): piek = a*S + b*K + c*O + d, per opdracht, met de
+Per bron: tijd en piek per grootte, en het geheugen per MB invoer. Het piekgeheugen staat in MiB (de kB van
+`/usr/bin/time -v` gedeeld door 1024), de invoer in MB (10^6 bytes). Daarna een fit van het piekgeheugen (MiB) op de
+grootte S (MB), het aantal knopen K en het aantal objecten O (miljoen): piek = a*S + b*K + c*O + d, per opdracht, met de
 kleinste kwadraten. K = k * knopen van de bron, O = k * objecten van de bron - (k-1) (het IfcProject staat er maar
 één keer in). Tel ze per bron met de meetkopie (`openaec-samenvoegen tel <bron>`) en geef ze hieronder op.
 """
@@ -49,7 +50,7 @@ def main():
     for bron, per_k in per_bron.items():
         obj, kn = TELLING[bron]
         print(f"\n### {bron} ({schema[bron]}, {obj} objecten en {kn} knopen per kopie)\n")
-        print("| MB | instanties | " + " | ".join(f"{o} {s}" for o, s in KOLOMMEN) + " |")
+        print("| invoer (MB) | instanties | " + " | ".join(f"{o} {s}" for o, s in KOLOMMEN) + " |")
         print("|---" * (2 + len(KOLOMMEN)) + "|")
         for k in sorted(per_k):
             mb = next(iter(per_k[k].values()))["mb"]
@@ -64,12 +65,12 @@ def main():
                     cellen.append(f"gestopt (exit {r['exit']})")
                 else:
                     piek = float(r["piek_mb"])
-                    cellen.append(f"{float(r['seconden']):.2f} s, {piek:.0f} MB ({piek / float(mb):.1f}/MB)")
+                    cellen.append(f"{float(r['seconden']):.2f} s, {piek:.0f} MiB ({piek / float(mb):.1f} MiB/MB)")
                     fit[kol].append(((float(mb), kk / 1e6, o / 1e6, 1.0), piek, float(r["seconden"])))
             print(f"| {mb} | {n} | " + " | ".join(cellen) + " |")
-    print("\n### Fit: piek = a*S + b*K + c*O + d\n")
-    print("| opdracht | punten | a (MB per MB) | b (bytes per knoop) | c (bytes per object) | d (MB) "
-          "| grootste afwijking, punten boven 50 MB | grootste afwijking, alle punten |")
+    print("\n### Fit: piek (MiB) = a*S + b*K + c*O + d\n")
+    print("| opdracht | punten | a (MiB per MB) | b (bytes per knoop) | c (bytes per object) | d (MiB) "
+          "| grootste afwijking, punten boven 50 MiB | grootste afwijking, alle punten |")
     print("|---|---|---|---|---|---|---|---|")
     for kol in KOLOMMEN:
         if len(fit[kol]) < 4:

@@ -87,9 +87,9 @@ PR #7 (samenvoegen), de punten 90 tot en met 99 bij de metingen (`docs/samenwerk
     of het neemt het geheugen van de machine. De fix (de grootte toetsen vóór het lezen, en begrensd lezen) hoort in
     de PR voor de GB-schaal (`samenvoegen/gb-schaal`, nu #20), niet in deze meet-PR. — B
 91. **Samenvoegen houdt vier versies helemaal in het geheugen** (meting PR #16, 5 november 2026). Gemeten tot 174 MB
-    op vijf vermenigvuldigde modellen: het geheugen past op ongeveer 3,9 × de bestandsgrootte + 670 bytes per knoop
-    + 2,8 kB per object (hoogstens 9 % afwijking boven 50 MB, tot 32,3 % over alle punten). Doorgetrokken vraagt een
-    dicht model van 1 GB ongeveer 19 GB, een verschil ongeveer 9 GB. Dat is een schatting voor modellen die op deze
+    op vijf vermenigvuldigde modellen: het geheugen past op ongeveer 4,1 × de bestandsgrootte + 670 bytes per knoop
+    + 2,8 kB per object (hoogstens 9 % afwijking boven 50 MiB piek, tot 32,3 % over alle punten). Doorgetrokken
+    vraagt een dicht model van 1 GB ongeveer 20 GB, een verschil ongeveer 10 GB. Dat is een schatting voor modellen die op deze
     lijken, geen gemeten grens voor echte modellen. Dat is het werk van de versie die streamt. — B (gemeten tot
     174 MB), S (alles daarboven)
 92. **De tijden komen van een drukke machine** (meting PR #16, 5 november 2026). Tijdens de reeks draaiden zo'n 16
@@ -111,3 +111,9 @@ PR #7 (samenvoegen), de punten 90 tot en met 99 bij de metingen (`docs/samenwerk
     schijf-I/O met rekentijd, naast de belasting door andere agents. Het geheugen hangt er niet van af. Voor een
     volgende vergelijking: één vast protocol (eerst één keer opwarmen, dan drie keer meten) en de I/O-tellers in de
     CSV. — B
+96. **`meet.py` vertrouwt het bestand `klaar` zonder controle** (review Sol ronde 2, 5 november 2026). Staat `klaar`
+    in een invoermap, dan hergebruikt `meet.py` de invoer zonder na te gaan of `basis.ifc`, `ons.ifc` en `hun.ifc`
+    er nog zijn en compleet zijn, en of ze uit dezelfde bron, met dezelfde `k` en dezelfde soort wijziging komen.
+    Wordt een bestand achteraf veranderd, of de bron vervangen, dan meet de reeks ongemerkt iets anders. Richting:
+    zet in `klaar` de vingerafdruk van de bron (bijv. BLAKE3 of SHA-256), `k`, de soort en de grootte van de drie
+    bestanden, en laat `meet.py` dat controleren voordat het meet. Niet gebouwd. — B
