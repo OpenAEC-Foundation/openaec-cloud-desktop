@@ -94,7 +94,7 @@ async fn verwijderen_accepteert_een_leeg_antwoord() {
         .mount(&server)
         .await;
     let opslag = ClientOpslag::new(Client::new(&server.uri(), "token a:b"), "R1");
-    let b = openaec_sync::motor::OpslagBestand { pad: "a".into(), bestand: "B1".into(), versie: 1, grootte: 1 };
+    let b = openaec_sync::motor::OpslagBestand { pad: "a".into(), bestand: "B1".into(), versie: 1, grootte: 1, versie_id: None };
     opslag.verwijder(&b).await.unwrap();
 }
 
@@ -227,7 +227,7 @@ async fn kleine_downloads_worden_gecontroleerd_en_weggeschreven() {
         .await;
     let dir = tempfile::tempdir().unwrap();
     let opslag = ClientOpslag::new(Client::new(&server.uri(), "token a:b"), "R1");
-    let bestand = |id: &str| openaec_sync::motor::OpslagBestand { pad: id.into(), bestand: id.into(), versie: 1, grootte: 13 };
+    let bestand = |id: &str| openaec_sync::motor::OpslagBestand { pad: id.into(), bestand: id.into(), versie: 1, grootte: 13, versie_id: None };
     let (b1, b2, b3) = (bestand("B1"), bestand("B2"), bestand("B3"));
     let (p1, p2, p3) = (dir.path().join("diep/een.txt"), dir.path().join("twee.txt"), dir.path().join("drie.txt"));
     let r = opslag.download_klein(&[(&b1, &p1), (&b2, &p2), (&b3, &p3)]).await.unwrap();

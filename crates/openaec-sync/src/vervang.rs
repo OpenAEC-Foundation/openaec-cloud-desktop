@@ -46,6 +46,9 @@ const NIEUW: &str = "nieuw";
 pub(crate) struct Versie {
     pub bestand: String,
     pub versie: u64,
+    /// Het id van de versieregel, als de server het kent (zie `motor::Versieregel`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub versie_id: Option<String>,
 }
 
 /// Hoe ver een vervanging is.
@@ -797,14 +800,14 @@ pub(crate) mod proeven {
             let nieuw = nieuw.map(|inhoud| {
                 let p = nieuw_pad(&self.root).unwrap();
                 fs::write(&p, inhoud).unwrap();
-                (p, Versie { bestand: "b1".into(), versie: 2 })
+                (p, Versie { bestand: "b1".into(), versie: 2, versie_id: None })
             });
             Opdracht {
                 root: self.root.clone(),
                 pad: "a.txt".into(),
                 sleutel: "a.txt".into(),
                 lokaal: self.a(),
-                bekend: Some((Versie { bestand: "b1".into(), versie: 1 }, self.oud)),
+                bekend: Some((Versie { bestand: "b1".into(), versie: 1, versie_id: None }, self.oud)),
                 nieuw,
             }
         }
@@ -884,7 +887,7 @@ pub(crate) mod proeven {
         let nieuw = kenmerk(&p.a()).unwrap();
         // De toestand was nog niet bewaard: herstel geeft versie 2 met het kenmerk van het geplaatste bestand.
         let h = p.herstel(false);
-        assert_eq!(h.bijwerken, vec![("a.txt".to_string(), Versie { bestand: "b1".into(), versie: 2 }, nieuw)]);
+        assert_eq!(h.bijwerken, vec![("a.txt".to_string(), Versie { bestand: "b1".into(), versie: 2, versie_id: None }, nieuw)]);
         assert_eq!(p.aantal(BRON), 1, "de bron wacht op afronden");
         assert!(p.rond_af().is_empty());
         assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));

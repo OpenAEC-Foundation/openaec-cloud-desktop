@@ -13,10 +13,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::api::{Batchgrenzen, KleinBestand, Mogelijkheden};
+use crate::api::{Batchgrenzen, KleinBestand, Mogelijkheden, SchrijfAls};
 use crate::blokken::{hash_bytes, BLOK};
-use crate::motor::{KleinUpload, Opslag, OpslagBestand, Upload, Voortgang};
-use crate::{download_met_rem, rem, upload_met_rem, Client, Fout, Rem, STANDAARD_GELIJKTIJDIG};
+use crate::motor::{KleinUpload, Opslag, OpslagBestand, Upload, Versieregel, Voortgang};
+use crate::{download_versie_met_rem, rem, schrijf_als_met_rem, upload_met_rem, Client, Fout, Rem, STANDAARD_GELIJKTIJDIG};
 
 /// Bestanden per pagina van `api.boom`.
 const BOOMPAGINA: usize = 10_000;
@@ -283,6 +283,7 @@ impl ClientOpslag {
                     bestand: b.name,
                     versie: b.huidige_versie,
                     grootte: b.grootte,
+                    versie_id: b.versie_id,
                 });
             }
         }
@@ -337,7 +338,13 @@ impl ClientOpslag {
                     None => return None,
                     Some(id) => paden.get(id).cloned().flatten()?,
                 };
-                Some(OpslagBestand { pad: samen(&map, &b.naam), bestand: b.name, versie: b.huidige_versie, grootte: b.grootte })
+                Some(OpslagBestand {
+                    pad: samen(&map, &b.naam),
+                    bestand: b.name,
+                    versie: b.huidige_versie,
+                    grootte: b.grootte,
+                    versie_id: b.versie_id,
+                })
             })
             .collect();
         Ok((uit, mappen))
@@ -379,14 +386,16 @@ impl Opslag for ClientOpslag {
         let (mappad, naam) = splits(pad);
         let map = self.zorg_voor_map(mappad).await?;
         let r = upload_met_rem(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis_versie, voortgang, &self.rem).await?;
-        Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict })
+        Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict, versie_id: r.versie_id })
     }
 
     async fn download_met_voortgang(&self, bestand: &OpslagBestand, lokaal: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
         if let Some(map) = lokaal.parent() {
             tokio::fs::create_dir_all(map).await?;
         }
-        download_met_rem(&self.client, &bestand.bestand, lokaal, voortgang, &self.rem).await
+        // Met een versieregel precies de versie uit de lijst: dan hoort het id dat de motor onthoudt bij deze inhoud.
+        let versie = bestand.versie_id.as_deref().map(|id| (bestand.versie, id));
+        download_versie_met_rem(&self.client, &bestand.bestand, versie, lokaal, voortgang, &self.rem).await
     }
 
     async fn verwijder(&self, bestand: &OpslagBestand) -> Result<(), Fout> {
@@ -466,17 +475,17 @@ impl Opslag for ClientOpslag {
                     if let (Some(map), false) = (map, mappad.is_empty()) {
                         self.mappen.lock().unwrap().entry(mappad.to_string()).or_insert(map);
                     }
-                    Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict }
+                    Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict, versie_id: r.versie_id }
                 })
             })
             .collect())
     }
 
     async fn download_klein(&self, bestanden: &[(&OpslagBestand, &Path)]) -> Result<Vec<Result<(), Fout>>, Fout> {
-        let ids: Vec<String> = bestanden.iter().map(|(b, _)| b.bestand.clone()).collect();
+        let ids: Vec<(String, Option<String>)> = bestanden.iter().map(|(b, _)| (b.bestand.clone(), b.versie_id.clone())).collect();
         let inhoud = {
             let _plek = self.rem.acquire().await.map_err(|_| Fout::Controle("de overdracht is gestopt".into()))?;
-            self.client.download_klein(&ids).await?
+            self.client.download_klein_versies(&ids).await?
         };
         let mut uit = Vec::with_capacity(bestanden.len());
         for (r, (_, lokaal)) in inhoud.into_iter().zip(bestanden) {
@@ -486,6 +495,27 @@ impl Opslag for ClientOpslag {
             });
         }
         Ok(uit)
+    }
+
+    async fn vergelijk_en_schrijf(&self) -> bool {
+        self.mogelijkheden().await.vergelijk_en_schrijf()
+    }
+
+    async fn schrijf_als(&self, pad: &str, lokaal: &Path, basis: &Versieregel, samengevoegd_uit: Option<(u64, u64)>) -> Result<Upload, Fout> {
+        let (mappad, naam) = splits(pad);
+        let map = self.zorg_voor_map(mappad).await?;
+        let als = SchrijfAls { basis_bestand: basis.bestand.clone(), basis_versie_id: basis.versie_id.clone(), samengevoegd_uit };
+        let r = schrijf_als_met_rem(&self.client, &self.ruimte, map.as_deref(), naam, lokaal, basis.versie, &als, &|_, _| {}, &self.rem).await?;
+        Ok(Upload { pad: samen(mappad, &r.naam), bestand: r.bestand, versie: r.versie, conflict: r.conflict, versie_id: r.versie_id })
+    }
+
+    async fn lees_versie(&self, versie: &Versieregel) -> Result<Vec<u8>, Fout> {
+        crate::lees_versie(&self.client, &versie.bestand, (versie.versie, &versie.versie_id), &self.rem).await
+    }
+
+    async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
+        let b = self.client.blokken_van(&versie.bestand, versie.versie).await?;
+        Ok(b.hashes.filter(|_| b.versie == versie.versie).map(|h| (b.blokgrootte, h)))
     }
 }
 

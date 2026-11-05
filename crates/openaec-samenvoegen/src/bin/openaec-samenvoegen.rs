@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
-use openaec_samenvoegen::{verschil, voeg_samen, BijConflict, Opties, Samenvoeging, Verschil, VersieStatistiek};
+use openaec_samenvoegen::{verschil, voeg_samen, Samenvoeging, Verschil, VersieStatistiek};
 
 #[derive(Parser)]
 #[command(name = "openaec-samenvoegen", version, about = "IFC-bestanden vergelijken en samenvoegen per object")]
@@ -26,7 +26,8 @@ enum Opdracht {
         #[arg(long)]
         json: bool,
     },
-    /// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen (three-way).
+    /// Voegt de wijzigingen van ons en hun ten opzichte van de basis samen (three-way). Bij een conflict komt er
+    /// geen uitvoerbestand.
     VoegSamen {
         basis: PathBuf,
         ons: PathBuf,
@@ -37,17 +38,7 @@ enum Opdracht {
         /// Schrijf het rapport (conflicten en cijfers) als JSON naar dit bestand.
         #[arg(long)]
         rapport: Option<PathBuf>,
-        /// Wat er gebeurt bij een conflict: weiger (geen resultaat), ons of hun (die kant wint per conflict).
-        #[arg(long, value_enum, default_value = "weiger")]
-        bij_conflict: Keuze,
     },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Keuze {
-    Weiger,
-    Ons,
-    Hun,
 }
 
 fn lees(pad: &Path) -> Result<Vec<u8>, String> {
@@ -78,14 +69,9 @@ fn voer_uit(opdracht: Opdracht) -> Result<ExitCode, String> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Opdracht::VoegSamen { basis, ons, hun, uit, rapport, bij_conflict } => {
+        Opdracht::VoegSamen { basis, ons, hun, uit, rapport } => {
             let (b, o, h) = (lees(&basis)?, lees(&ons)?, lees(&hun)?);
-            let bij_conflict = match bij_conflict {
-                Keuze::Weiger => BijConflict::Weiger,
-                Keuze::Ons => BijConflict::Ons,
-                Keuze::Hun => BijConflict::Hun,
-            };
-            let s = voeg_samen(&b, &o, &h, &Opties { bij_conflict }).map_err(|e| e.to_string())?;
+            let s = voeg_samen(&b, &o, &h).map_err(|e| e.to_string())?;
             if let Some(pad) = &rapport {
                 let json = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
                 std::fs::write(pad, json + "\n").map_err(|e| format!("{}: {e}", pad.display()))?;
@@ -116,10 +102,6 @@ fn rapport_tekst(s: &Samenvoeging, uit: &Path) -> String {
             if let Some(a) = &c.attribuut {
                 let w = |x: &Option<String>| x.clone().unwrap_or_else(|| "-".into());
                 tekst += &format!("      {a}: basis {}, ons {}, hun {}\n", w(&c.basis), w(&c.ons), w(&c.hun));
-            }
-            if let Some(k) = c.gekozen {
-                tekst +=
-                    &format!("      gekozen: {}\n", if k == openaec_samenvoegen::Kant::Ons { "ons" } else { "hun" });
             }
         }
     }
@@ -193,6 +175,12 @@ fn als_tekst(v: &Verschil) -> String {
         }
         for k in &losse.verwijderd {
             uit += &format!("  - {}\n", k.tekst);
+        }
+    }
+    if !v.vluchtig.is_empty() {
+        uit += &format!("Vluchtige velden (tellen niet als wijziging) ({}):\n", v.vluchtig.len());
+        for w in &v.vluchtig {
+            uit += &format!("  · {}: {}: {} -> {}\n", w.waar, w.attribuut, w.oud, w.nieuw);
         }
     }
     if v.is_leeg() {

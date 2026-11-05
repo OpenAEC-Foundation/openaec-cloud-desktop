@@ -11,7 +11,7 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use openaec_samenvoegen::{verschil, voeg_samen, Opties};
+use openaec_samenvoegen::{verschil, voeg_samen};
 
 /// Zoveel elementen, elk met een eigen plaatsing en geometrie (8 instanties per element).
 const AANTAL: usize = 200_000;
@@ -147,7 +147,7 @@ fn meet_samenvoegen() {
     std::fs::write(map.join("hun.ifc"), &hun).unwrap();
     println!("bestand: {:.0} MB, {} elementen", basis.len() as f64 / 1e6, AANTAL);
     let start = Instant::now();
-    let s = voeg_samen(basis.as_bytes(), ons.as_bytes(), hun.as_bytes(), &Opties::default()).unwrap();
+    let s = voeg_samen(basis.as_bytes(), ons.as_bytes(), hun.as_bytes()).unwrap();
     println!(
         "voeg_samen(basis, ons, hun): {:.2} s, {} conflicten, piek {}\n{:?}",
         start.elapsed().as_secs_f64(),

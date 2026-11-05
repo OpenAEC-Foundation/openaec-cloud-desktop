@@ -1,0 +1,80 @@
+wachten op het slot van test.sh (/home/aia09/bench-samenwerken/.testlock)...
+== proef 5b, 2026-11-05T16:37:16+01:00
+client: samenwerken/5b-samenvoegen d4d0355
+server: samenwerken/vergelijk-en-schrijf f76b6ab, schoon
+voorbeeld: /home/aia09/projects/open-planner-studio/examples/09-rioolvervanging-delft.ifc (26 taken)
+== site proef.localhost
+== moto (S3) en de server
+ruimte n5hp094ogq, gebruikers proef-a en proef-b (schrijver)
+Proef gekoppeld aan /tmp/proef-5b.ICialA/a/map
+Proef gekoppeld aan /tmp/proef-5b.ICialA/b/map
+
+== beginstand: A zet vijf planningen in de ruimte, B haalt ze op
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 5 geüpload 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 5 gedownload 
+  ok: B heeft de vijf bestanden
+
+== geval (a): A en B wijzigen tegelijk een andere taak
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 1 geüpload 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 geüpload 
+  versies: {"bestand": "n64olo7r0p", "versies": [{"volgnummer": 3, "versie_id": "n6ippo5c8i", "maker": "proef-b@proef.localhost", "samengevoegd_uit": {"basis": 1, "hun": 2}}, {"volgnummer": 2, "versie_id": "n6ckv3i2kd", "maker": "proef-a@proef.localhost", "samengevoegd_uit": null}, {"volgnummer": 1, "versie_id": "n65ncsa0o2", "maker": "proef-a@proef.localhost", "samengevoegd_uit": null}]}
+  ok: drie versies; de nieuwste is samengevoegd uit 1 en 2
+  ok: taak 1 heeft de naam van A
+  ok: taak 2 heeft de naam van B
+  ok: geen conflictkopie van a.ifc
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 1 gedownload 
+  ok: A heeft hier de samengevoegde versie
+  ok: B heeft hier de samengevoegde versie
+
+== geval (b): A en B geven dezelfde taak een andere naam
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 1 geüpload 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 gedownload, 1 conflict(en) 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 geüpload 
+  op de server: b (conflict Proef B 2026-11-05 2108).ifc|b (conflict Proef B 2026-11-05 2108).ifc.samenvoegrapport.json|
+  ok: op b.ifc de naam van A
+  ok: een conflictkopie met de naam van B
+  ok: het rapport staat naast de conflictkopie op de server
+  rapport: {'bestand': 'b.ifc', 'conflictkopie': 'b (conflict Proef B 2026-11-05 2108).ifc', 'reden': 'conflicten', 'basis': 1, 'huidige': 2}
+  ok: het rapport noemt de reden en het conflict
+
+== geval (c): B slaat op terwijl de sync samenvoegt
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 1 geüpload, 2 gedownload 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 geüpload 
+  wachter: wacht opgeslagen tijdens het schrijven naar de server 
+  ok: de sync zette het resultaat niet over het opgeslagen werk heen (afgeleid)
+  ok: het opgeslagen werk staat er nog
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 geüpload 
+  versies: {"bestand": "n66di8flpq", "versies": [{"volgnummer": 4, "versie_id": "n8g21eavoi", "maker": "proef-b@proef.localhost", "samengevoegd_uit": null}, {"volgnummer": 3, "versie_id": "n8bmju68qo", "maker": "proef-b@proef.localhost", "samengevoegd_uit": {"basis": 1, "hun": 2}}, {"volgnummer": 2, "versie_id": "n7t210fpfj", "maker": "proef-a@proef.localhost", "samengevoegd_uit": null}, {"volgnummer": 1, "versie_id": "n660v76j9l", "maker": "proef-a@proef.localhost", "samengevoegd_uit": null}]}
+  ok: vier versies
+  ok: taak 1: A
+  ok: taak 2: B
+  ok: taak 3: tijdens het samenvoegen opgeslagen
+  ok: geen conflictkopie van c.ifc
+  ok: B is daarna niet meer afgeleid
+
+== geval (d): 8 uploads tegelijk op dezelfde basis
+  race: 8 uploads op basis versie 1: 1 nieuwe versie, 3 geweigerd (verouderde_basis), 4 conflictkopie, 0 anders
+  race: OK; winnaar upload 6 (weiger) is versie 2, geen versie verdwenen
+
+== geval (e): A verwijdert e.ifc en maakt een nieuw; B werkte offline door
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 6 gedownload, 1 verwijderd 
+  sync a: Proef (/tmp/proef-5b.ICialA/a/map): 1 geüpload 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 6 gedownload, 1 conflict(en) 
+  sync b: Proef (/tmp/proef-5b.ICialA/b/map): 1 geüpload 
+  op de server: e (conflict Proef B 2026-11-05 2108).ifc|e (conflict Proef B 2026-11-05 2108).ifc.samenvoegrapport.json|
+  ok: op e.ifc het nieuwe bestand van A (één versie)
+  ok: het nieuwe bestand heeft de naam van A
+  ok: het offline werk van B staat in een conflictkopie
+  ok: het rapport zegt onbekende_basis
+  ok: het rapport staat ook op de server
+
+== uitkomst
+  (a) OK
+  (b) OK
+  (c) OK
+  (d) OK
+  (e) OK
+== opruimen
+site proef.localhost verwijderd
+apps/openaec_storage weer -> /home/aia09/worktrees/storage-proef
+EXIT:0

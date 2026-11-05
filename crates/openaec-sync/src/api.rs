@@ -59,6 +59,10 @@ pub struct UploadResultaat {
     pub naam: String,
     pub versie: u64,
     pub conflict: bool,
+    /// Het id van de nieuwe versieregel (een nieuwere server): de basis voor een volgende upload met
+    /// [`SchrijfAls`].
+    #[serde(default)]
+    pub versie_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +132,9 @@ pub struct BestandItem {
     pub grootte: u64,
     #[serde(default)]
     pub huidige_versie: u64,
+    /// Het id van de versieregel van de huidige versie (een nieuwere server).
+    #[serde(default)]
+    pub versie_id: Option<String>,
     #[serde(default)]
     pub modified: Option<String>,
 }
@@ -285,6 +292,26 @@ pub struct Mogelijkheden {
     /// `overdracht.voeg_toe_van_opslag` en `maak_van_opslag`: versturen wat al in de opslag staat, zonder upload.
     #[serde(default)]
     pub overdracht_van_opslag: bool,
+    /// `bij_conflict="weiger"` bij een upload: een weigering in plaats van een conflictkopie (vergelijk-en-schrijf).
+    #[serde(default)]
+    pub bij_conflict_weiger: bool,
+    /// Een upload kan zeggen dat hij een samenvoeging is van twee versies (`samengevoegd_uit`).
+    #[serde(default)]
+    pub samengevoegd_uit: bool,
+    /// Een upload kan zeggen op welk bestand hij gebaseerd is (`basis_bestand`).
+    #[serde(default)]
+    pub basis_bestand: bool,
+    /// De basis van een upload is het id van de versieregel (`basis_versie_id`), en `download` leest op `versie_id`.
+    #[serde(default)]
+    pub basis_versie_id: bool,
+}
+
+impl Mogelijkheden {
+    /// Alles wat de opslaan-lus nodig heeft (ontwerp §5.6): weigeren bij een verouderde basis, de basis als versieregel,
+    /// en een samenvoeging aanmelden. Een oudere server kent dat niet; dan blijft alles zoals het was.
+    pub fn vergelijk_en_schrijf(&self) -> bool {
+        self.bij_conflict_weiger && self.samengevoegd_uit && self.basis_bestand && self.basis_versie_id
+    }
 }
 
 /// Iets dat een ander met mij deelde (`gedeeld_met_mij`): een map (te koppelen) of een bestand (te openen).
@@ -349,6 +376,9 @@ pub struct BoomBestand {
     pub grootte: u64,
     #[serde(default)]
     pub huidige_versie: u64,
+    /// Het id van de versieregel van de huidige versie (een nieuwere server).
+    #[serde(default)]
+    pub versie_id: Option<String>,
 }
 
 /// Alle mappen en (een pagina) bestanden van een ruimte (`api.boom`).
@@ -358,6 +388,17 @@ pub struct Boom {
     pub bestanden: Vec<BoomBestand>,
     #[serde(default)]
     pub meer: bool,
+}
+
+/// Vergelijk-en-schrijf bij een upload (`bij_conflict="weiger"`, ontwerp §5.5): de basis is de versieregel waaruit de
+/// client werkte. Is die niet meer de huidige versie van dit bestand, dan weigert de server (`verouderde_basis` met de
+/// huidige versie, of `onbekende_basis`) in plaats van een conflictkopie te maken.
+#[derive(Debug, Clone)]
+pub struct SchrijfAls {
+    pub basis_bestand: String,
+    pub basis_versie_id: String,
+    /// (basis, hun): deze inhoud is een samenvoeging van die twee versies (volgnummers; `hun` is de basis van de upload).
+    pub samengevoegd_uit: Option<(u64, u64)>,
 }
 
 /// Eén klein bestand voor [`Client::upload_klein`].
@@ -392,6 +433,8 @@ struct PerBestand {
     naam: Option<String>,
     #[serde(default)]
     versie: Option<u64>,
+    #[serde(default)]
+    versie_id: Option<String>,
     #[serde(default)]
     conflict: Option<bool>,
     #[serde(default)]
@@ -622,7 +665,13 @@ impl Client {
         Ok(r.into_iter()
             .map(|b| match (b.ok, &b.bestand, &b.naam, b.versie) {
                 (true, Some(bestand), Some(naam), Some(versie)) => Ok((
-                    UploadResultaat { bestand: bestand.clone(), naam: naam.clone(), versie, conflict: b.conflict.unwrap_or(false) },
+                    UploadResultaat {
+                        bestand: bestand.clone(),
+                        naam: naam.clone(),
+                        versie,
+                        conflict: b.conflict.unwrap_or(false),
+                        versie_id: b.versie_id.clone(),
+                    },
                     b.map.clone(),
                 )),
                 _ => Err(b.weigering()),
@@ -632,12 +681,25 @@ impl Client {
 
     /// Kleine bestanden (bestand-id's) in één antwoord; per bestand de inhoud of de weigering, in dezelfde volgorde.
     pub async fn download_klein(&self, bestanden: &[String]) -> Result<Vec<Result<KleinInhoud, Fout>>, Fout> {
+        let vragen: Vec<(String, Option<String>)> = bestanden.iter().map(|b| (b.clone(), None)).collect();
+        self.download_klein_versies(&vragen).await
+    }
+
+    /// Als [`Client::download_klein`]; met een `versie_id` precies die versieregel (een nieuwere server).
+    pub async fn download_klein_versies(&self, bestanden: &[(String, Option<String>)]) -> Result<Vec<Result<KleinInhoud, Fout>>, Fout> {
         use base64::Engine;
         #[derive(Deserialize)]
         struct Inhoud {
             bestanden: Vec<PerBestand>,
         }
-        let r: Inhoud = self.roep("download_klein", json!({"bestanden": bestanden})).await?;
+        let vragen: Vec<Value> = bestanden
+            .iter()
+            .map(|(b, id)| match id {
+                Some(id) => json!({"bestand": b, "versie_id": id}),
+                None => json!(b),
+            })
+            .collect();
+        let r: Inhoud = self.roep("download_klein", json!({"bestanden": vragen})).await?;
         if r.bestanden.len() != bestanden.len() {
             return Err(Fout::Controle(format!("{} antwoorden voor {} bestanden", r.bestanden.len(), bestanden.len())));
         }
@@ -663,6 +725,8 @@ impl Client {
             .collect())
     }
 
+    /// Begin een upload. Met `als` vergelijk-en-schrijf (alleen op een server die dat kent: een oudere server weigert
+    /// onbekende parameters).
     #[allow(clippy::too_many_arguments)]
     pub async fn upload_start(
         &self,
@@ -673,13 +737,19 @@ impl Client {
         basis_versie: Option<u64>,
         blokhashes: &[String],
         bron: &str,
+        als: Option<&SchrijfAls>,
     ) -> Result<UploadStart, Fout> {
-        self.roep(
-            "upload_start",
-            json!({"ruimte": ruimte, "map": map, "naam": naam, "grootte": grootte,
-                   "basis_versie": basis_versie, "blokhashes": blokhashes, "bron": bron}),
-        )
-        .await
+        let mut gegevens = json!({"ruimte": ruimte, "map": map, "naam": naam, "grootte": grootte,
+                                  "basis_versie": basis_versie, "blokhashes": blokhashes, "bron": bron});
+        if let Some(als) = als {
+            gegevens["bij_conflict"] = json!("weiger");
+            gegevens["basis_bestand"] = json!(als.basis_bestand);
+            gegevens["basis_versie_id"] = json!(als.basis_versie_id);
+            if let Some((basis, hun)) = als.samengevoegd_uit {
+                gegevens["samengevoegd_uit"] = json!({"basis": basis, "hun": hun});
+            }
+        }
+        self.roep("upload_start", gegevens).await
     }
 
     pub async fn upload_klaar(&self, upload: &str, delen: &[Etag]) -> Result<UploadResultaat, Fout> {
@@ -690,8 +760,19 @@ impl Client {
         self.roep("blokken", json!({"bestand": bestand})).await
     }
 
+    /// Blokhashes van versie `versie` (een volgnummer) van een bestand.
+    pub async fn blokken_van(&self, bestand: &str, versie: u64) -> Result<Blokken, Fout> {
+        self.roep("blokken", json!({"bestand": bestand, "versie": versie})).await
+    }
+
     pub async fn download(&self, bestand: &str) -> Result<DownloadLink, Fout> {
         self.roep("download", json!({"bestand": bestand})).await
+    }
+
+    /// Downloadlink voor precies de versieregel `versie_id`; hoort die niet (meer) bij het bestand, dan een weigering
+    /// met de foutcode `onbekende_basis`.
+    pub async fn download_op_id(&self, bestand: &str, versie_id: &str) -> Result<DownloadLink, Fout> {
+        self.roep("download", json!({"bestand": bestand, "versie_id": versie_id})).await
     }
 
     pub async fn wijzigingen(&self, ruimte: &str, sinds: u64) -> Result<Wijzigingen, Fout> {
@@ -926,6 +1007,7 @@ impl Client {
             naam: r["naam"].as_str().unwrap_or_default().to_string(),
             versie: r["versie"].as_u64().unwrap_or_default(),
             conflict: false,
+            versie_id: r["versie_id"].as_str().map(str::to_string),
         })
     }
 

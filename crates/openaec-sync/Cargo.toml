@@ -16,6 +16,8 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 thiserror = "2"
+# IFC-bestanden samenvoegen bij gelijktijdig werk (ontwerp §5.6).
+openaec-samenvoegen = { path = "../openaec-samenvoegen" }
 tokio = { version = "1", features = ["fs", "io-util", "net", "rt-multi-thread", "macros", "time", "sync", "signal"] }
 # Een map versturen: als zip zonder compressie (overdracht.rs); geen extra compressiebibliotheken nodig.
 zip = { version = "4", default-features = false }

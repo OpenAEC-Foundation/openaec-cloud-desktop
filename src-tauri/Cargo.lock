@@ -3225,6 +3225,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "openaec-samenvoegen"
+version = "2026.45.1"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "openaec-shellmenu"
 version = "2026.44.10"
 dependencies = [
@@ -3241,6 +3251,7 @@ dependencies = [
  "futures-util",
  "libc",
  "log",
+ "openaec-samenvoegen",
  "rand 0.8.8",
  "reqwest 0.12.28",
  "serde",

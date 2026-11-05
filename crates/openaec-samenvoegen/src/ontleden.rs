@@ -61,6 +61,10 @@ impl Default for Index {
 
 const GEEN: u32 = u32::MAX;
 
+/// Zo diep mogen lijsten en getypte waarden in één attribuut in elkaar zitten. Echte IFC komt niet verder dan een
+/// paar niveaus. De canonisatie en de weergave werken recursief; dieper is daarom een fout en geen stack overflow.
+pub(crate) const MAX_DIEPTE: usize = 256;
+
 impl Index {
     fn nieuw(hoogste: u64, aantal: usize) -> Self {
         if hoogste <= (aantal as u64).saturating_mul(4).saturating_add(1024) {
@@ -514,7 +518,7 @@ impl<'a> Lezer<'a> {
         self.waarde(refs)
     }
 
-    /// Eén waarde, met geneste lijsten. Zonder recursie: de diepte telt in `diepte`.
+    /// Eén waarde, met geneste lijsten. Zonder recursie: de diepte telt in `diepte`, hoogstens [`MAX_DIEPTE`].
     fn waarde(&mut self, refs: &mut Vec<u64>) -> Result<(), Fout> {
         let mut diepte: usize = 0;
         // Na een '(' mag direct een ')' komen (lege lijst).
@@ -525,6 +529,9 @@ impl<'a> Lezer<'a> {
                 Some(b'(') => {
                     self.pos += 1;
                     diepte += 1;
+                    if diepte > MAX_DIEPTE {
+                        return Err(ongeldig(self.data, begin, format!("waarde dieper dan {MAX_DIEPTE} niveaus")));
+                    }
                     self.spatie()?;
                     if self.kijk() == Some(b')') {
                         self.pos += 1;
@@ -590,21 +597,14 @@ impl<'a> Lezer<'a> {
         }
     }
 
+    /// Een tekst `'...'`; de codes erin moeten kloppen ([`crate::tekst`]).
     fn tekst(&mut self) -> Result<(), Fout> {
-        let begin = self.pos;
-        self.pos += 1;
-        loop {
-            match zoek_byte(self.data, self.pos, b'\'') {
-                None => return Err(ongeldig(self.data, begin, "tekst zonder afsluitende '")),
-                Some(p) => {
-                    if self.data.get(p + 1) == Some(&b'\'') {
-                        self.pos = p + 2;
-                    } else {
-                        self.pos = p + 1;
-                        return Ok(());
-                    }
-                }
+        match crate::tekst::einde(self.data, self.pos + 1) {
+            Ok(eind) => {
+                self.pos = eind + 1;
+                Ok(())
             }
+            Err(f) => Err(ongeldig(self.data, f.positie, f.melding)),
         }
     }
 
@@ -634,11 +634,17 @@ impl<'a> Lezer<'a> {
                 self.pos += 1;
             }
             let start = self.pos;
-            while matches!(self.kijk(), Some(b) if b.is_ascii_digit()) {
+            let mut exponent: u64 = 0;
+            while let Some(b) = self.kijk().filter(u8::is_ascii_digit) {
+                exponent = (exponent * 10 + u64::from(b - b'0')).min(u64::from(u32::MAX));
                 self.pos += 1;
             }
             if self.pos == start {
                 return Err(ongeldig(self.data, begin, "ongeldig getal (exponent zonder cijfers)"));
+            }
+            // Zo vergelijken we getallen precies, zonder afronden (zie `model::getal`).
+            if exponent > i32::MAX as u64 {
+                return Err(ongeldig(self.data, begin, "getal met een te grote exponent"));
             }
         }
         Ok(())
@@ -783,22 +789,16 @@ impl<'a> Iterator for Tokens<'a> {
                 }
                 Token::Verwijzing(waarde)
             }
-            b'\'' => {
-                let mut p = begin + 1;
-                loop {
-                    match zoek_byte(data, p, b'\'') {
-                        None => {
-                            self.pos = data.len();
-                            return None;
-                        }
-                        Some(q) if data.get(q + 1) == Some(&b'\'') => p = q + 2,
-                        Some(q) => {
-                            self.pos = q + 1;
-                            break Token::Tekst(&data[begin + 1..q]);
-                        }
-                    }
+            b'\'' => match crate::tekst::einde(data, begin + 1) {
+                Ok(q) => {
+                    self.pos = q + 1;
+                    Token::Tekst(&data[begin + 1..q])
                 }
-            }
+                Err(_) => {
+                    self.pos = data.len();
+                    return None;
+                }
+            },
             b'"' => {
                 let eind = zoek_byte(data, begin + 1, b'"').unwrap_or(data.len());
                 self.pos = (eind + 1).min(data.len());
@@ -904,9 +904,16 @@ mod tests {
     }
 
     #[test]
-    fn diepe_lijst_geeft_geen_stack_overflow() {
-        let diep = format!("#1=IFCX({}1{});", "(".repeat(100_000), ")".repeat(100_000));
-        assert!(lees(ifc(&diep).as_bytes()).is_ok());
+    fn diepe_lijst_is_een_fout() {
+        let diep = |n: usize| format!("#1=IFCX(\n{}1{});", "(".repeat(n), ")".repeat(n));
+        assert!(lees(ifc(&diep(MAX_DIEPTE)).as_bytes()).is_ok());
+        let regel = ifc("").lines().position(|r| r == "DATA;").unwrap() + 3;
+        for n in [MAX_DIEPTE + 1, 100_000] {
+            match lees(ifc(&diep(n)).as_bytes()) {
+                Err(Fout::Ongeldig { regel: r, melding }) => assert_eq!((r, melding.contains("dieper")), (regel, true)),
+                andere => panic!("{n}: {:?}", andere.map(|_| ())),
+            }
+        }
     }
 
     #[test]

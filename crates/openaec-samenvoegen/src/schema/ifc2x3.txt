@@ -1,4 +1,5 @@
 !IFC2X3
+~
 Ifc2DCompositeCurve|IfcCompositeCurve||Segments:L1-?,SelfIntersect|
 IfcActionRequest|IfcControl|R|GlobalId,OwnerHistory,Name?,Description?,ObjectType?,RequestID|
 IfcActor|IfcObject|R|GlobalId,OwnerHistory,Name?,Description?,ObjectType?,TheActor|IsActingUpon=IfcRelAssignsToActor.RelatingActor[0:?]

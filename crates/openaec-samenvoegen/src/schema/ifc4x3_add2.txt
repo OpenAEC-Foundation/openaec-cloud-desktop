@@ -1,4 +1,5 @@
 !IFC4X3_ADD2
+~IfcPropertySetDefinitionSet
 IfcActionRequest|IfcControl|R|GlobalId,OwnerHistory?,Name?,Description?,ObjectType?,Identification?,PredefinedType?,Status?,LongDescription?|
 IfcActor|IfcObject|R|GlobalId,OwnerHistory?,Name?,Description?,ObjectType?,TheActor|IsActingUpon=IfcRelAssignsToActor.RelatingActor[0:?]
 IfcActorRole|-||Role,UserDefinedRole?,Description?|HasExternalReference=IfcExternalReferenceRelationship.RelatedResourceObjects[0:?]
