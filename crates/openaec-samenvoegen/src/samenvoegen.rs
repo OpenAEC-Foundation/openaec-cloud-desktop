@@ -27,7 +27,7 @@ use serde::Serialize;
 
 use crate::koppelregel::koppelregel;
 use crate::model::{
-    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, ongeordend_hash, op_sleutel,
+    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, ongeordend_hash, op_sleutel, Bron,
     stem_ankers_af, Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::ontleden::{elementen, Token, Tokens};

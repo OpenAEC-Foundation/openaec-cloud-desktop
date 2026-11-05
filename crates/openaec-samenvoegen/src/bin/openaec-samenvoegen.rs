@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use openaec_samenvoegen::{verschil, voeg_samen, Samenvoeging, Verschil, VersieStatistiek};
+use openaec_samenvoegen::{verschil_stromend, voeg_samen, Samenvoeging, Verschil, VersieStatistiek};
 
 #[derive(Parser)]
 #[command(name = "openaec-samenvoegen", version, about = "IFC-bestanden vergelijken en samenvoegen per object")]
@@ -18,7 +18,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Opdracht {
-    /// Het verschil tussen twee versies van een IFC-bestand.
+    /// Het verschil tussen twee versies van een IFC-bestand. Leest de bestanden via mmap en met begrensd geheugen
+    /// (`verschil_stromend`), dus ook voor bestanden van vele GB.
     Verschil {
         a: PathBuf,
         b: PathBuf,
@@ -45,6 +46,15 @@ fn lees(pad: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(pad).map_err(|e| format!("{}: {e}", pad.display()))
 }
 
+/// Het bestand via mmap: het besturingssysteem leest de delen die we nodig hebben, het bestand staat niet in het
+/// geheugen van het programma.
+fn kaart(pad: &Path) -> Result<memmap2::Mmap, String> {
+    let bestand = std::fs::File::open(pad).map_err(|e| format!("{}: {e}", pad.display()))?;
+    // SAFETY: we lezen alleen. Verandert een ander programma het bestand terwijl we lezen, dan kan de uitkomst niet
+    // kloppen; dat geldt ook voor gewoon lezen in delen.
+    unsafe { memmap2::Mmap::map(&bestand) }.map_err(|e| format!("{}: {e}", pad.display()))
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match voer_uit(cli.opdracht) {
@@ -59,9 +69,8 @@ fn main() -> ExitCode {
 fn voer_uit(opdracht: Opdracht) -> Result<ExitCode, String> {
     match opdracht {
         Opdracht::Verschil { a, b, json } => {
-            let inhoud_a = lees(&a)?;
-            let inhoud_b = lees(&b)?;
-            let v = verschil(&inhoud_a, &inhoud_b).map_err(|e| e.to_string())?;
+            let (inhoud_a, inhoud_b) = (kaart(&a)?, kaart(&b)?);
+            let v = verschil_stromend(&inhoud_a, &inhoud_b).map_err(|e| e.to_string())?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?);
             } else {

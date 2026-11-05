@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Barrier, Mutex};
 
 use gemeen::*;
-use openaec_samenvoegen::{sla_op, verschil, Basis, LusFout, LusOpties, Opslag, Reden, Uitkomst, Weigering};
+use openaec_samenvoegen::{sla_op, Basis, LusFout, LusOpties, Opslag, Reden, Uitkomst, Weigering};
 
 /// Een opslag in het geheugen, zoals openaec-storage of Nextcloud. Op de plek staat één bestand met een eigen
 /// identiteit; elke versie heeft een id dat nooit terugkomt (één teller voor alle bestanden, als tekst zoals een

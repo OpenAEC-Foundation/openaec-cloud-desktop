@@ -152,30 +152,56 @@ fn ongeldig(data: &[u8], positie: usize, melding: impl Into<String>) -> Fout {
     Fout::Ongeldig { regel: regel(data, positie), melding: melding.into() }
 }
 
-/// Leest een STEP-bestand.
-pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
-    if data.len() >= u32::MAX as usize {
-        return Err(Fout::TeGroot);
-    }
+/// Eén instantie uit de DATA-sectie, zoals de lezer haar doorgeeft aan [`doorloop`].
+pub(crate) struct Gelezen<'t> {
+    pub id: u64,
+    /// De type-naam in hoofdletters; bij een complexe instantie de delen met `+` ertussen.
+    pub naam: &'t [u8],
+    pub complex: bool,
+    /// Van `#` tot en met `;`.
+    pub bereik: (usize, usize),
+    pub type_bereik: (usize, usize),
+    /// Per attribuut op het hoogste niveau (bij een complexe instantie: per deel `NAAM(...)`).
+    pub attributen: &'t [(usize, usize)],
+    /// De nummers waar de instantie naar verwijst, in tekstvolgorde.
+    pub refs: &'t [u64],
+}
+
+/// De delen van een instantie die de lezer verzamelt (hergebruikt tussen instanties).
+#[derive(Default)]
+pub(crate) struct Delen {
+    /// De type-naam in hoofdletters (bij een complexe instantie de delen met `+` ertussen).
+    pub naam: Vec<u8>,
+    pub attributen: Vec<(usize, usize)>,
+    pub refs: Vec<u64>,
+}
+
+/// Leest opnieuw de instantie die op `begin` begint (bij de `#`), in een bestand dat [`doorloop`] al goedkeurde.
+/// Geeft het nummer, of ze complex is, het bereik van de type-naam en het einde (na de `;`).
+pub(crate) fn instantie_op(data: &[u8], begin: usize, delen: &mut Delen) -> Option<(u64, bool, (usize, usize), usize)> {
+    let mut lezer = Lezer { data, pos: begin };
+    let (id, complex, type_bereik) = lezer.instantie(delen).ok()?;
+    Some((id, complex, type_bereik, lezer.pos))
+}
+
+/// Wat [`doorloop`] naast de instanties vindt.
+pub(crate) struct Kop {
+    /// Eerste naam uit FILE_SCHEMA, in hoofdletters; leeg als die ontbreekt.
+    pub schema: String,
+    pub header: Vec<HeaderRegel>,
+    /// Begin van de `ENDSEC;` van de laatste DATA-sectie.
+    pub data_einde: usize,
+}
+
+/// Loopt een STEP-bestand door en geeft elke instantie aan `f`, in de volgorde van de tekst, met de HEADER erbij.
+/// Het bestand mag groter zijn dan 4 GiB; [`lees`] heeft die grens wel. Of verwijzingen bestaan, controleert de
+/// aanroeper.
+pub(crate) fn doorloop(data: &[u8], f: &mut dyn FnMut(&Kop, &Gelezen) -> Result<(), Fout>) -> Result<Kop, Fout> {
     let mut lezer = Lezer { data, pos: 0 };
     if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
         lezer.pos = 3;
     }
-    let mut bestand = Bestand {
-        data,
-        schema: String::new(),
-        typen: Vec::new(),
-        instanties: Vec::new(),
-        attributen: Vec::new(),
-        verwijzingen: Vec::new(),
-        index: Index::default(),
-        data_einde: 0,
-        hoogste: 0,
-        header: Vec::new(),
-    };
-    let mut typen: HashMap<Vec<u8>, u32> = HashMap::new();
-    let mut ruwe_refs: Vec<u64> = Vec::new();
-
+    let mut kop = Kop { schema: String::new(), header: Vec::new(), data_einde: 0 };
     lezer.spatie()?;
     let begin = lezer.pos;
     if lezer.trefwoord_met_streepjes()? != b"ISO-10303-21" {
@@ -200,7 +226,7 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
                 header_gezien = true;
                 lezer.spatie()?;
                 lezer.verwacht(b';')?;
-                lezer.header(&mut bestand.schema, &mut bestand.header)?;
+                lezer.header(&mut kop.schema, &mut kop.header)?;
             }
             b"DATA" => {
                 if !header_gezien {
@@ -214,7 +240,8 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
                     lezer.spatie()?;
                 }
                 lezer.verwacht(b';')?;
-                bestand.data_einde = lezer.data_sectie(&mut bestand, &mut typen, &mut ruwe_refs)?;
+                let einde = lezer.data_sectie(&kop, f)?;
+                kop.data_einde = einde;
             }
             b"END-ISO-10303-21" => {
                 lezer.spatie()?;
@@ -240,6 +267,55 @@ pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
     if !data_gezien {
         return Err(ongeldig(data, lezer.pos, "het bestand heeft geen DATA-sectie"));
     }
+    Ok(kop)
+}
+
+/// Leest een STEP-bestand.
+pub(crate) fn lees(data: &[u8]) -> Result<Bestand<'_>, Fout> {
+    if data.len() >= u32::MAX as usize {
+        return Err(Fout::TeGroot);
+    }
+    let mut bestand = Bestand {
+        data,
+        schema: String::new(),
+        typen: Vec::new(),
+        instanties: Vec::new(),
+        attributen: Vec::new(),
+        verwijzingen: Vec::new(),
+        index: Index::default(),
+        data_einde: 0,
+        hoogste: 0,
+        header: Vec::new(),
+    };
+    let mut typen: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut ruwe_refs: Vec<u64> = Vec::new();
+    let kop = doorloop(data, &mut |_, g| {
+        let attr_begin = bestand.attributen.len() as u32;
+        let ref_begin = ruwe_refs.len() as u32;
+        bestand.attributen.extend(g.attributen.iter().map(|&(a, b)| (a as u32, b as u32)));
+        ruwe_refs.extend_from_slice(g.refs);
+        let volgend = typen.len() as u32;
+        let type_id = match typen.get(g.naam) {
+            Some(&t) => t,
+            None => {
+                typen.insert(g.naam.to_vec(), volgend);
+                volgend
+            }
+        };
+        bestand.instanties.push(Instantie {
+            id: g.id,
+            type_id,
+            complex: g.complex,
+            bereik: (g.bereik.0 as u32, g.bereik.1 as u32),
+            type_bereik: (g.type_bereik.0 as u32, g.type_bereik.1 as u32),
+            attrs: (attr_begin, g.attributen.len() as u32),
+            refs: (ref_begin, g.refs.len() as u32),
+        });
+        Ok(())
+    })?;
+    bestand.schema = kop.schema;
+    bestand.header = kop.header;
+    bestand.data_einde = kop.data_einde;
 
     // Instantienummers koppelen aan indexen.
     bestand.hoogste = bestand.instanties.iter().map(|i| i.id).max().unwrap_or(0);
@@ -405,13 +481,9 @@ impl<'a> Lezer<'a> {
         }
     }
 
-    /// De DATA-sectie tot en met `ENDSEC;`. Geeft het begin van `ENDSEC` terug.
-    fn data_sectie(
-        &mut self,
-        bestand: &mut Bestand<'a>,
-        typen: &mut HashMap<Vec<u8>, u32>,
-        refs: &mut Vec<u64>,
-    ) -> Result<usize, Fout> {
+    /// De DATA-sectie tot en met `ENDSEC;`; geeft elke instantie aan `f`. Geeft het begin van `ENDSEC` terug.
+    fn data_sectie(&mut self, kop: &Kop, f: &mut dyn FnMut(&Kop, &Gelezen) -> Result<(), Fout>) -> Result<usize, Fout> {
+        let mut delen = Delen::default();
         loop {
             self.spatie()?;
             let begin = self.pos;
@@ -432,62 +504,70 @@ impl<'a> Lezer<'a> {
                 }
                 _ => return Err(self.onverwacht("#n= of ENDSEC;")),
             }
-            self.pos += 1;
-            let id = self.getal_na_hekje(begin)?;
-            self.spatie()?;
-            self.verwacht(b'=')?;
-            self.spatie()?;
-            let attr_begin = bestand.attributen.len() as u32;
-            let ref_begin = refs.len() as u32;
-            let (complex, type_bereik, naam) = if self.kijk() == Some(b'(') {
-                // Complexe instantie: (A(...)B(...)).
-                let romp_begin = self.pos;
-                self.pos += 1;
-                let mut namen: Vec<u8> = Vec::new();
-                loop {
-                    self.spatie()?;
-                    if self.kijk() == Some(b')') {
-                        self.pos += 1;
-                        break;
-                    }
-                    let deel_begin = self.pos;
-                    let deel = self.trefwoord()?;
-                    if !namen.is_empty() {
-                        namen.push(b'+');
-                    }
-                    namen.extend(deel.iter().map(u8::to_ascii_uppercase));
-                    self.spatie()?;
-                    self.lijst(refs)?;
-                    bestand.attributen.push((deel_begin as u32, self.pos as u32));
-                }
-                if namen.is_empty() {
-                    return Err(ongeldig(self.data, romp_begin, format!("#{id}: lege complexe instantie")));
-                }
-                (true, (romp_begin as u32 + 1, self.pos as u32 - 1), namen)
-            } else {
-                let naam_begin = self.pos;
-                let naam = self.trefwoord()?;
-                let naam_eind = self.pos;
-                self.spatie()?;
-                let mut bereiken = Vec::new();
-                self.parameters(&mut bereiken, refs)?;
-                bestand.attributen.extend(bereiken.into_iter().map(|(a, b)| (a as u32, b as u32)));
-                (false, (naam_begin as u32, naam_eind as u32), naam.to_ascii_uppercase())
-            };
-            self.spatie()?;
-            self.verwacht(b';')?;
-            let volgend = typen.len() as u32;
-            let type_id = *typen.entry(naam).or_insert(volgend);
-            bestand.instanties.push(Instantie {
-                id,
-                type_id,
-                complex,
-                bereik: (begin as u32, self.pos as u32),
-                type_bereik,
-                attrs: (attr_begin, bestand.attributen.len() as u32 - attr_begin),
-                refs: (ref_begin, refs.len() as u32 - ref_begin),
-            });
+            let (id, complex, type_bereik) = self.instantie(&mut delen)?;
+            f(
+                kop,
+                &Gelezen {
+                    id,
+                    naam: &delen.naam,
+                    complex,
+                    bereik: (begin, self.pos),
+                    type_bereik,
+                    attributen: &delen.attributen,
+                    refs: &delen.refs,
+                },
+            )?;
         }
+    }
+
+    /// Eén instantie `#n=...;` vanaf de `#`. Vult `delen` en geeft het nummer, of ze complex is en het bereik van de
+    /// type-naam.
+    fn instantie(&mut self, delen: &mut Delen) -> Result<(u64, bool, (usize, usize)), Fout> {
+        let begin = self.pos;
+        self.pos += 1;
+        let id = self.getal_na_hekje(begin)?;
+        self.spatie()?;
+        self.verwacht(b'=')?;
+        self.spatie()?;
+        delen.attributen.clear();
+        delen.refs.clear();
+        delen.naam.clear();
+        let (complex, type_bereik) = if self.kijk() == Some(b'(') {
+            // Complexe instantie: (A(...)B(...)).
+            let romp_begin = self.pos;
+            self.pos += 1;
+            loop {
+                self.spatie()?;
+                if self.kijk() == Some(b')') {
+                    self.pos += 1;
+                    break;
+                }
+                let deel_begin = self.pos;
+                let deel = self.trefwoord()?;
+                if !delen.naam.is_empty() {
+                    delen.naam.push(b'+');
+                }
+                delen.naam.extend(deel.iter().map(u8::to_ascii_uppercase));
+                self.spatie()?;
+                self.lijst(&mut delen.refs)?;
+                delen.attributen.push((deel_begin, self.pos));
+            }
+            if delen.naam.is_empty() {
+                return Err(ongeldig(self.data, romp_begin, format!("#{id}: lege complexe instantie")));
+            }
+            (true, (romp_begin + 1, self.pos - 1))
+        } else {
+            let naam_begin = self.pos;
+            let naam = self.trefwoord()?;
+            let naam_eind = self.pos;
+            delen.naam.extend(naam.iter().map(u8::to_ascii_uppercase));
+            self.spatie()?;
+            self.parameters(&mut delen.attributen, &mut delen.refs)?;
+            (false, (naam_begin, naam_eind))
+        };
+        self.spatie()?;
+        self.verwacht(b';')?;
+        Ok((id, complex, type_bereik))
     }
 
     fn getal_na_hekje(&mut self, begin: usize) -> Result<u64, Fout> {

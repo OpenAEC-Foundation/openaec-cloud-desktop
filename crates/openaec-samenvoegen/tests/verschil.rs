@@ -3,7 +3,7 @@
 mod gemeen;
 
 use gemeen::*;
-use openaec_samenvoegen::{verschil, Fout};
+use openaec_samenvoegen::Fout;
 
 fn leeg(a: &str, b: &str) -> bool {
     let v = verschil(a.as_bytes(), b.as_bytes()).unwrap();

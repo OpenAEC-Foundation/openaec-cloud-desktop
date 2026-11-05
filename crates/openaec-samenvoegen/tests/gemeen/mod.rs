@@ -413,3 +413,24 @@ impl Feiten {
         (binnen.len() == 22).then(|| binnen.to_string())
     }
 }
+
+/// [`openaec_samenvoegen::verschil`], en de controle dat [`openaec_samenvoegen::verschil_stromend`] precies hetzelfde
+/// geeft (ook dezelfde fout). Zo draait elke test van het verschil ook op de stromende weg.
+pub fn verschil(a: &[u8], b: &[u8]) -> Result<openaec_samenvoegen::Verschil, openaec_samenvoegen::Fout> {
+    let model = openaec_samenvoegen::verschil(a, b);
+    let stromend = openaec_samenvoegen::verschil_stromend(a, b);
+    if model != stromend {
+        panic!("verschil_stromend wijkt af van verschil:\n{}", eerste_afwijking(&model, &stromend));
+    }
+    model
+}
+
+/// De eerste regels waar de twee uitkomsten (als JSON) verschillen, met wat ervoor staat.
+fn eerste_afwijking(a: &impl serde::Serialize, b: &impl serde::Serialize) -> String {
+    let (a, b) = (serde_json::to_string_pretty(a).unwrap(), serde_json::to_string_pretty(b).unwrap());
+    let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    let i = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
+    let van = i.saturating_sub(8);
+    let deel = |l: &[&str]| l[van.min(l.len())..(i + 8).min(l.len())].join("\n");
+    format!("verschil (regel {i}):\n{}\n\nverschil_stromend:\n{}", deel(&la), deel(&lb))
+}

@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{attribuut_tekst, op_sleutel, Hash, Model, Soort};
+use crate::model::{attribuut_tekst, op_sleutel, Bron, Hash, Model, Soort};
 use crate::ontleden::{Token, Tokens};
 use crate::samenvoegen::{Conflict, ConflictSoort, Gevonden, Plan, B, H, O};
 

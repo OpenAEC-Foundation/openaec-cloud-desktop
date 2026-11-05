@@ -11,6 +11,7 @@ mod samenvoegen;
 mod samenwerken;
 mod schema;
 mod schrijven;
+mod stromend;
 mod tekst;
 mod verschil;
 
@@ -21,6 +22,7 @@ pub use samenvoegen::{voeg_samen, Conflict, ConflictSoort, SamenvoegStatistiek, 
 pub use samenwerken::{
     sla_op, Antwoord, Basis, BasisVan, LusFout, LusOpties, LusUitkomst, Opslag, Reden, Uitkomst, Weigering,
 };
+pub use stromend::verschil_stromend;
 pub use verschil::{
     verschil, AttribuutWijziging, KnoopInfo, LosseKnopen, ObjectInfo, Statistiek, Verschil, VluchtigeWijziging,
     Wijziging,

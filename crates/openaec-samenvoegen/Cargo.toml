@@ -12,9 +12,10 @@ serde_json = "1"
 thiserror = "2"
 # Alleen voor het opdrachtregelprogramma (feature "cli").
 clap = { version = "4", features = ["derive"], optional = true }
+memmap2 = { version = "0.9", optional = true }
 
 [features]
-cli = ["dep:clap"]
+cli = ["dep:clap", "dep:memmap2"]
 
 [[bin]]
 name = "openaec-samenvoegen"

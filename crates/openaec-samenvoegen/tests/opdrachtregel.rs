@@ -61,3 +61,29 @@ fn gelukt_conflict_en_fout() {
     let (code, _) = voeg_samen(&pad, &b, "geen IFC", &h, &[]);
     assert_eq!(code, 2);
 }
+
+/// `verschil` leest via mmap en de stromende weg; de JSON is dezelfde als die van de bibliotheek. Een leeg bestand
+/// geeft een fout, geen crash.
+#[test]
+fn verschil_via_mmap() {
+    let a = gebouw("IFC4");
+    let b = vervang(&hernummer(&a, 9), "'W',$", "'W-nieuw',$");
+    let pad = map("verschil");
+    std::fs::write(pad.join("a.ifc"), &a).unwrap();
+    std::fs::write(pad.join("b.ifc"), &b).unwrap();
+    std::fs::write(pad.join("leeg.ifc"), "").unwrap();
+    let draai = |x: &str, y: &str| {
+        Command::new(env!("CARGO_BIN_EXE_openaec-samenvoegen"))
+            .current_dir(&pad)
+            .args(["verschil", x, y, "--json"])
+            .output()
+            .unwrap()
+    };
+    let uit = draai("a.ifc", "b.ifc");
+    assert_eq!(uit.status.code(), Some(0), "{}", String::from_utf8_lossy(&uit.stderr));
+    let gelezen: serde_json::Value = serde_json::from_slice(&uit.stdout).unwrap();
+    let verwacht = serde_json::to_value(openaec_samenvoegen::verschil(a.as_bytes(), b.as_bytes()).unwrap()).unwrap();
+    assert_eq!(gelezen, verwacht);
+    assert_eq!(gelezen["gewijzigd"].as_array().map(Vec::len), Some(1));
+    assert_eq!(draai("a.ifc", "leeg.ifc").status.code(), Some(2));
+}
