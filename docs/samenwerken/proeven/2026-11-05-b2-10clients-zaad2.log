@@ -1,0 +1,196 @@
+draai.sh: b2-10clients-zaad2, 2026-11-05 16:20:20, desktop 876b118, server 197d55b (integratie-4-4b)
+draai.sh: simulatie.py --clients 10 --beurten 20 --zaad 2
+zwaar.sh: plek .zwaar.2 voor: bash -c '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/simulatie.py' --werk '/home/aia09/bench-proef/werk/b2-10clients-zaad2' --clients 10 --beurten 20 --zaad 2
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+16:30:11 ruimte igvnmgl1s1, 10 clients, 20 beurten, zaad 2, chaos 0.0, kill 0.0
+16:30:14 startbestanden staan bij iedereen; nu de beurten
+16:31:09 beurten klaar in 55 s; nu de rustige periode, zonder chaos
+16:31:16 rustige periode: alles staat stil
+{
+ "fouten": {},
+ "s3": {
+  "versies": 328,
+  "objecten": 328,
+  "zonder_object": [],
+  "zonder_versie": [],
+  "onafgemaakte_multipart": 0
+ },
+ "gelijk": {
+  "bestanden_op_server": 85,
+  "verschillen": {}
+ },
+ "verloren_werk": {
+  "opslagen_gezien": 301,
+  "op_server": 301,
+  "alleen_in_eigen": [],
+  "nergens": [],
+  "aantal_nergens": 0
+ },
+ "wijzigingenlijst": {
+  "regels": 375,
+  "uniek": true,
+  "zonder_nummer": 0,
+  "per_client": {
+   "0": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "1": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "2": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "3": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "4": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "5": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "6": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "7": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "8": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "9": {
+    "gezien": 375,
+    "cursor": 7001,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   }
+  }
+ },
+ "server": {
+  "conflictkopieen_overbodig": 0,
+  "voorbeelden_overbodig": [],
+  "bestanden": 129,
+  "verwijderd": 44,
+  "conflictkopieen": 20,
+  "samenvoegrapporten": 6,
+  "versies_samengevoegd_uit": 63,
+  "opeenvolgende_versies_met_gelijke_inhoud": 0
+ },
+ "rondes": {
+  "totaal": 239,
+  "gedood": 0,
+  "opslag_tijdens_ronde": 26,
+  "exitcode_niet_0": 0,
+  "met_fouten": 0,
+  "samengevoegd": 63,
+  "niet_samengevoegd": {
+   "te_vaak_verouderd": 2,
+   "conflicten": 3,
+   "onbekende_basis": 1
+  },
+  "conflicten_volgens_rapport": 20,
+  "duur_gemiddeld_s": 1.58,
+  "fouten_soorten": {}
+ },
+ "proxy_api": {
+  "verzoeken": {
+   "upload_start": 326,
+   "wijzigingen": 250,
+   "upload_klaar": 249,
+   "mogelijkheden": 239,
+   "boom": 239,
+   "download_klein": 206,
+   "download": 196,
+   "blokken": 196,
+   "upload_klein": 46,
+   "verwijder": 45,
+   "maak_mappen": 1
+  },
+  "upload_klaar_status": {
+   "200": 226,
+   "409": 23
+  },
+  "foutcodes": {
+   "upload_klaar verouderde_basis": 23,
+   "upload_start verouderde_basis": 76,
+   "upload_start onbekende_basis": 1
+  },
+  "chaos": {}
+ },
+ "proxy_s3": {
+  "verzoeken": {
+   "PUT": 249,
+   "GET": 196
+  },
+  "upload_klaar_status": {},
+  "foutcodes": {},
+  "chaos": {}
+ },
+ "na_verloren_upload_klaar": {
+  "stil_bij_upload_klaar": 0,
+  "daarna": {},
+  "upload_klaar_403": 0,
+  "upload_start_200": 249,
+  "upload_klaar_verzoeken": 249
+ },
+ "args": {
+  "clients": 10,
+  "beurten": 20,
+  "zaad": 2,
+  "chaos": 0.0,
+  "kill": 0.0,
+  "tegelijk": 0.15,
+  "pauze": 1.5,
+  "rustig": 1800,
+  "werk": "/home/aia09/bench-proef/werk/b2-10clients-zaad2"
+ }
+}
+16:31:19 alle controles geslaagd
+EXIT:0

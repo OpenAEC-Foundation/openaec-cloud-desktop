@@ -63,6 +63,7 @@ class Client:
 		self.tel = collections.Counter()
 		self.reeks, self.langste_reeks = 0, 0
 		self.wachten = []  # seconden van de eerste poging tot een geslaagde opslag
+		self.pogingen_per_opslag = []  # de opslaan-lus geeft na 5 pogingen op (LusOpties): dan een conflictkopie
 
 	async def roep(self, methode: str, **velden):
 		t = time.perf_counter()
@@ -129,15 +130,18 @@ class Client:
 	async def schrijver(self, bestand: str, naam: str, tot: float, denktijd: float, rng: random.Random) -> None:
 		await self.lees_huidige(bestand)
 		begin = time.perf_counter()
-		n = 0
+		n = poging = 0
 		while time.perf_counter() < tot:
 			n += 1
+			poging += 1
 			inhoud = f"client {self.i} opslag {n}\n".encode() * 64
 			uitkomst, l = await self.schrijf(naam, inhoud, self.basis)
 			self.tel["pogingen"] += 1
 			self.tel[uitkomst] += 1
 			if uitkomst == "ok":
 				self.wachten.append(time.perf_counter() - begin)
+				self.pogingen_per_opslag.append(poging)
+				poging = 0
 				self.basis = (l["bestand"], l["versie"], l["versie_id"])
 				self.reeks = 0
 				await asyncio.sleep(rng.uniform(0, denktijd))
@@ -186,6 +190,10 @@ async def schrijvers(clients: list[Client], bestand: str, naam: str, duur: float
 		"verhongerd": sum(1 for n in ok if n == 0),
 		"opslagen_per_client": {"min": min(ok), "mediaan": statistics.median(ok), "max": max(ok)},
 		"langste_reeks_weigeringen": max(c.langste_reeks for c in clients),
+		"pogingen_per_opslag": samenvatting([p for c in clients for p in c.pogingen_per_opslag]),
+		"aandeel_meer_dan_5_pogingen": round(
+			sum(1 for c in clients for p in c.pogingen_per_opslag if p > 5) / max(1, sum(ok)), 3
+		),
 		"wachttijd_tot_opslag_s": samenvatting([w for c in clients for w in c.wachten]),
 		"cpu_lastgever_s": round(resource.getrusage(resource.RUSAGE_SELF).ru_utime - cpu, 1),
 		"verzoeken": dict(meter.status),

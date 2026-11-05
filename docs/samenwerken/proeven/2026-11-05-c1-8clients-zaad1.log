@@ -1,0 +1,314 @@
+draai.sh: c1-8clients-zaad1, 2026-11-05 15:37:02, desktop 4ef8cec, server 197d55b (integratie-4-4b)
+draai.sh: simulatie.py --clients 8 --beurten 20 --zaad 1 --chaos 0.08 --kill 0.15
+zwaar.sh: plek .zwaar.lock voor: bash -c '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' start && '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/bench.sh' python '/home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/simulatie.py' --werk '/home/aia09/bench-proef/werk/c1-8clients-zaad1' --clients 8 --beurten 20 --zaad 1 --chaos 0.08 --kill 0.15
+bench.sh: web op 127.0.0.1:18200, S3 op 127.0.0.1:18210
+16:15:24 ruimte 9ru5uu3cen, 8 clients, 20 beurten, zaad 1, chaos 0.08, kill 0.15
+16:15:27 startbestanden staan bij iedereen; nu de beurten
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c4580>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py", line 132, in __init__
+    self._drain_waiters = collections.deque()
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-860' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-862' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c5c40>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py", line 488, in _wait
+    async def _wait(fs, timeout, return_when, loop):
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-2928' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-2930' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c58c0>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py", line 48, in open_connection
+    transport, _ = await loop.create_connection(
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-5612' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-5614' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+16:16:18 beurten klaar in 51 s; nu de rustige periode, zonder chaos
+16:16:25 rustig: clients wachten op een nieuwe poging; 64 s wachten
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c66c0>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 462, in create_task
+    def create_task(self, coro, **kwargs):
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-8972' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c4200>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 462, in create_task
+    def create_task(self, coro, **kwargs):
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-8974' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-8976' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd65c6a40>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 462, in create_task
+    def create_task(self, coro, **kwargs):
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-8979' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Exception ignored while closing generator <coroutine object Proxy.verbinding at 0x717cd643d1c0>:
+Traceback (most recent call last):
+  File "/home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py", line 462, in create_task
+    def create_task(self, coro, **kwargs):
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task pending name='Task-8980' coro=<Proxy.verbinding() running at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:137> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[StreamReaderProtocol.connection_made.<locals>.callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/streams.py:255]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-8988' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-8992' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-8998' coro=<Proxy.verbinding.<locals>.terug() done, defined at /home/aia09/worktrees/desktop-p2-simulatie/scripts/simulatie/proxy.py:106> wait_for=<Future cancelled> cb=[gather.<locals>._done_callback() at /home/aia09/.local/share/uv/python/cpython-3.14.8-linux-x86_64-gnu/lib/python3.14/asyncio/tasks.py:825]>
+16:17:30 rustig: clients wachten op een nieuwe poging; 5 s wachten
+16:17:37 rustig: clients wachten op een nieuwe poging; 6 s wachten
+16:17:44 rustig: clients wachten op een nieuwe poging; 5 s wachten
+16:17:50 rustig: clients wachten op een nieuwe poging; 4 s wachten
+16:18:03 rustig: clients wachten op een nieuwe poging; 1 s wachten
+16:18:08 rustig: clients wachten op een nieuwe poging; 5 s wachten
+16:18:13 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:18:15 rustig: clients wachten op een nieuwe poging; 2 s wachten
+16:18:17 rustig: clients wachten op een nieuwe poging; 97 s wachten
+16:19:56 rustig: clients wachten op een nieuwe poging; 18 s wachten
+16:20:17 rustige periode: alles staat stil
+{
+ "fouten": {},
+ "s3": {
+  "versies": 277,
+  "objecten": 277,
+  "zonder_object": [],
+  "zonder_versie": [],
+  "onafgemaakte_multipart": 29
+ },
+ "gelijk": {
+  "bestanden_op_server": 123,
+  "verschillen": {}
+ },
+ "verloren_werk": {
+  "opslagen_gezien": 234,
+  "op_server": 234,
+  "alleen_in_eigen": [],
+  "nergens": [],
+  "aantal_nergens": 0
+ },
+ "wijzigingenlijst": {
+  "regels": 307,
+  "uniek": true,
+  "zonder_nummer": 0,
+  "per_client": {
+   "0": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "1": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "2": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "3": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "4": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "5": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "6": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   },
+   "7": {
+    "gezien": 307,
+    "cursor": 6626,
+    "mist": [],
+    "aantal_mist": 0,
+    "dubbel": 0,
+    "op_volgorde": true
+   }
+  }
+ },
+ "server": {
+  "bestanden": 150,
+  "verwijderd": 27,
+  "conflictkopieen": 64,
+  "samenvoegrapporten": 11,
+  "versies_samengevoegd_uit": 51,
+  "opeenvolgende_versies_met_gelijke_inhoud": 0
+ },
+ "rondes": {
+  "totaal": 345,
+  "gedood": 11,
+  "opslag_tijdens_ronde": 32,
+  "exitcode_niet_0": 1,
+  "met_fouten": 66,
+  "samengevoegd": 51,
+  "niet_samengevoegd": {
+   "conflicten": 17
+  },
+  "conflicten_volgens_rapport": 51,
+  "duur_gemiddeld_s": 0.85,
+  "fouten_soorten": {
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.download)": 21,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.blokken)": 19,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_start)": 14,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18201/api/method/openaec_storage.api.upload_klaar)": 13,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/00b1a00e05d8ab62f32841c1299ff261?response-conte": 2,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/0678a134c368f6ff645835ca505ce269?uploadId=pk3gf": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/eb8993a39bee99b7dcc816ce45841cbd?response-conte": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/5eed8648b215b6e7324c0515aa49353d?response-conte": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/3b916a73147bff437450d17847475922?uploadId=jvBnE": 1,
+   "netwerkfout: error sending request for url (http://127.0.0.1:18211/sim/v/190222261571f44acf4163006315b216?response-conte": 1
+  }
+ },
+ "proxy_api": {
+  "verzoeken": {
+   "download": 488,
+   "blokken": 477,
+   "wijzigingen": 396,
+   "upload_start": 351,
+   "mogelijkheden": 344,
+   "boom": 336,
+   "upload_klaar": 207,
+   "download_klein": 181,
+   "bladeren": 75,
+   "upload_klein": 38,
+   "verwijder": 27,
+   "maak_mappen": 1
+  },
+  "upload_klaar_status": {
+   "200": 182,
+   "409": 15,
+   "None": 10
+  },
+  "foutcodes": {
+   "upload_klaar verouderde_basis": 15,
+   "upload_start verouderde_basis": 115
+  },
+  "chaos": {
+   "stil wijzigingen": 4,
+   "stil blokken": 9,
+   "stil download": 7,
+   "knip upload_klaar": 7,
+   "knip mogelijkheden": 3,
+   "stil upload_start": 5,
+   "knip download": 8,
+   "knip wijzigingen": 4,
+   "traag download_klein": 3,
+   "traag upload_klein": 3,
+   "stil boom": 5,
+   "knip download_klein": 5,
+   "traag boom": 2,
+   "reset download": 6,
+   "reset upload_start": 5,
+   "traag blokken": 8,
+   "knip blokken": 9,
+   "traag download": 9,
+   "reset wijzigingen": 4,
+   "knip boom": 2,
+   "stil bladeren": 2,
+   "stil upload_klaar": 4,
+   "knip upload_start": 5,
+   "traag wijzigingen": 4,
+   "knip upload_klein": 1,
+   "traag upload_start": 6,
+   "reset upload_klaar": 3,
+   "reset mogelijkheden": 2,
+   "reset blokken": 3,
+   "stil mogelijkheden": 4,
+   "traag mogelijkheden": 2,
+   "stil upload_klein": 1,
+   "stil download_klein": 1,
+   "reset boom": 1,
+   "reset download_klein": 1,
+   "reset upload_klein": 1,
+   "traag bladeren": 1
+  }
+ },
+ "proxy_s3": {
+  "verzoeken": {
+   "GET": 446,
+   "PUT": 224
+  },
+  "upload_klaar_status": {},
+  "foutcodes": {},
+  "chaos": {
+   "knip PUT": 8,
+   "traag GET": 7,
+   "stil PUT": 5,
+   "stil GET": 7,
+   "traag PUT": 3,
+   "reset GET": 11,
+   "knip GET": 1,
+   "reset PUT": 4
+  }
+ },
+ "na_verloren_upload_klaar": {
+  "stil_bij_upload_klaar": 4,
+  "daarna": {
+   "bladeren 200 -> blokken 200 -> wijzigingen 200": 1,
+   "upload_start 200 -> upload_klaar 409 -> download 200": 1,
+   "bladeren 200 -> verwijder 200 -> wijzigingen 200": 1,
+   "blokken 200 -> blokken 200 -> bladeren 200": 1
+  },
+  "upload_klaar_403": 0,
+  "upload_start_200": 226,
+  "upload_klaar_verzoeken": 207
+ },
+ "args": {
+  "clients": 8,
+  "beurten": 20,
+  "zaad": 1,
+  "chaos": 0.08,
+  "kill": 0.15,
+  "tegelijk": 0.15,
+  "pauze": 1.5,
+  "rustig": 1800,
+  "werk": "/home/aia09/bench-proef/werk/c1-8clients-zaad1"
+ }
+}
+16:20:19 alle controles geslaagd
+EXIT:0

@@ -48,3 +48,15 @@ code), **S** = afgeleid, niet getoetst.
 14. **Samenvoegen met bestanden op aanvraag is niet op Windows getoetst** (eigen bevinding bij stap 5b, 5 november
     2026). Het resultaat van een samenvoeging komt via de veilige routine op het pad, ook in een map met placeholders.
     De proeven draaien op Linux, zonder Cloud Filter API. — S
+
+Bewijs 2 (simulatie, chaosproef en lastproef, `scripts/simulatie/`): nummers 60 tot en met 69. Een deel gaat over de
+server (openaec-storage, `integratie-4-4b`). Die ligt stil tot de kern gelezen is; daarom staan ze hier, met een
+reproductie.
+
+60. **Onafgemaakte multipart-uploads blijven in S3 staan** (eigen bevinding, chaosproef c1, 5 november 2026). Een
+    upload die na `upload_start` stopt (verbinding weg, client gestopt, een deel naar S3 mislukt), laat een
+    multipart-upload in de bucket achter. Bij een gewone upload breekt de server die nooit af: `s3.afbreken` komt
+    alleen voor bij een overdracht (`overdracht.py` r. 415), en een lifecycle-regel op de bucket
+    (`AbortIncompleteMultipartUpload`) staat nergens beschreven. Na run c1 stonden er 29. Er gaat niets verloren, maar
+    bij AWS kosten de delen opslag tot iemand ze afbreekt. Reproductie: `upload_start` zonder `upload_klaar`, dan
+    `list_multipart_uploads` op de bucket (`simulatie.py` telt ze als `onafgemaakte_multipart`). — B
