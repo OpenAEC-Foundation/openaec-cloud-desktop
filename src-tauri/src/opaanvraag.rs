@@ -77,6 +77,12 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
         self.binnen.alleen_lezen()
     }
 
+    /// Een placeholder die alleen online staat (of wordt), zet de schil zelf neer: daar is geen lokaal werk te
+    /// beschermen, dus de motor downloadt rechtstreeks naar het pad.
+    fn plaatst_zelf(&self, lokaal: &Path) -> bool {
+        (self.op_aanvraag && placeholder::zonder_inhoud(&self.root, lokaal)) || self.binnen.plaatst_zelf(lokaal)
+    }
+
     async fn upload_met_voortgang(&self, pad: &str, lokaal: &Path, basis_versie: Option<u64>, voortgang: Voortgang<'_>) -> Result<Upload, Fout> {
         self.binnen.upload_met_voortgang(pad, lokaal, basis_versie, voortgang).await
     }
@@ -144,20 +150,28 @@ mod placeholder {
         Fout::Bestand(std::io::Error::other(e.to_string()))
     }
 
+    /// Wordt een download naar `lokaal` een placeholder zonder inhoud op deze computer? Een bestand dat alleen online
+    /// staat (niet vastgezet), of een nieuw bestand buiten een vastgezette map.
+    pub fn zonder_inhoud(root: &Path, lokaal: &Path) -> bool {
+        match cloudfilter::attributen(lokaal) {
+            Some(a) => cloudfilter::is_ontwaterd(a) && a & cloudfilter::ATTR_VASTGEZET == 0,
+            None => !vastgezet_boven(root, lokaal),
+        }
+    }
+
     /// Een download in de hoofdmap: een nieuw bestand wordt een placeholder die alleen online staat (behalve onder een
     /// vastgezette map), een bestand dat alleen online staat krijgt alleen de nieuwe grootte. None: gewoon downloaden.
     pub fn download(root: &Path, bestand: &OpslagBestand, lokaal: &Path) -> Option<Result<(), Fout>> {
-        match cloudfilter::attributen(lokaal) {
-            Some(a) if cloudfilter::is_ontwaterd(a) && a & cloudfilter::ATTR_VASTGEZET == 0 => {
-                Some(cloudfilter::werk_alleen_online_bij(lokaal, bestand.grootte, &bestand.bestand).map_err(fout))
-            }
-            Some(_) => None,
-            None if vastgezet_boven(root, lokaal) => None,
-            None => Some((|| {
+        if !zonder_inhoud(root, lokaal) {
+            return None;
+        }
+        Some(match cloudfilter::attributen(lokaal) {
+            Some(_) => cloudfilter::werk_alleen_online_bij(lokaal, bestand.grootte, &bestand.bestand).map_err(fout),
+            None => (|| {
                 std::fs::create_dir_all(lokaal.parent().unwrap_or(root))?;
                 cloudfilter::maak_alleen_online(lokaal, bestand.grootte, &bestand.bestand).map_err(fout)
-            })()),
-        }
+            })(),
+        })
     }
 }
 
@@ -167,6 +181,10 @@ mod placeholder {
 
     use openaec_sync::motor::OpslagBestand;
     use openaec_sync::Fout;
+
+    pub fn zonder_inhoud(_root: &Path, _lokaal: &Path) -> bool {
+        false
+    }
 
     pub fn download(_root: &Path, _bestand: &OpslagBestand, _lokaal: &Path) -> Option<Result<(), Fout>> {
         None

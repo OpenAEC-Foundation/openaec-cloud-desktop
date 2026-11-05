@@ -142,7 +142,10 @@ fn schrijf(root: &Path, v: &Vervanging) -> io::Result<()> {
     f.write_all(&serde_json::to_vec(v)?)?;
     f.sync_all()?;
     fs::rename(&tijdelijk, journaal(root, &v.id))?;
-    sync_map(&map)
+    sync_map(&map)?;
+    #[cfg(test)]
+    proeven::NA_STAP.with(|n| n.borrow_mut().as_mut().map_or(Ok(()), |f| f(v)))?;
+    Ok(())
 }
 
 fn verwijder_journaal(root: &Path, id: &str) -> io::Result<()> {
@@ -567,4 +570,295 @@ pub(crate) fn in_gebruik(paden: &[PathBuf]) -> Vec<Gebruik> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(crate) fn in_gebruik(paden: &[PathBuf]) -> Vec<Gebruik> {
     vec![Gebruik::Onbekend; paden.len()]
+}
+
+#[cfg(test)]
+pub(crate) mod proeven {
+    //! De stappen van één vervanging, met onderbrekingen en andere programma's ertussen. De proeven op het niveau van
+    //! een hele ronde staan in `tests/vervang.rs`.
+
+    use std::cell::RefCell;
+
+    use super::*;
+
+    type NaStap = Box<dyn FnMut(&Vervanging) -> io::Result<()>>;
+
+    thread_local! {
+        /// Wordt aangeroepen nadat een stap in het journaal staat: een fout is een onderbreking op die plek.
+        pub(crate) static NA_STAP: RefCell<Option<NaStap>> = const { RefCell::new(None) };
+    }
+
+    fn na_stap(f: impl FnMut(&Vervanging) -> io::Result<()> + 'static) {
+        NA_STAP.with(|n| *n.borrow_mut() = Some(Box::new(f)));
+    }
+
+    fn onderbreek_na(stap: fn(&Stap) -> bool) {
+        na_stap(move |v| if stap(&v.stap) { Err(io::Error::other("onderbroken (proef)")) } else { Ok(()) });
+    }
+
+    struct Proef {
+        _dir: tempfile::TempDir,
+        root: PathBuf,
+        oud: (u64, u128),
+    }
+
+    impl Proef {
+        fn new() -> Self {
+            NA_STAP.with(|n| *n.borrow_mut() = None);
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().to_path_buf();
+            fs::write(root.join("a.txt"), "oud").unwrap();
+            let oud = kenmerk(&root.join("a.txt")).unwrap();
+            Self { _dir: dir, root, oud }
+        }
+
+        fn a(&self) -> PathBuf {
+            self.root.join("a.txt")
+        }
+
+        fn lees(&self) -> Option<String> {
+            fs::read_to_string(self.a()).ok()
+        }
+
+        /// Vervang a.txt (versie 1) door `nieuw` (versie 2), of verwijder het (None).
+        fn opdracht(&self, nieuw: Option<&str>) -> Opdracht {
+            let nieuw = nieuw.map(|inhoud| {
+                let p = nieuw_pad(&self.root).unwrap();
+                fs::write(&p, inhoud).unwrap();
+                (p, Versie { bestand: "b1".into(), versie: 2 })
+            });
+            Opdracht {
+                root: self.root.clone(),
+                pad: "a.txt".into(),
+                sleutel: "a.txt".into(),
+                lokaal: self.a(),
+                bekend: Some((Versie { bestand: "b1".into(), versie: 1 }, self.oud)),
+                nieuw,
+            }
+        }
+
+        /// Herstel zoals bij het begin van een ronde; `kent`: staat versie 2 al in de bewaarde toestand?
+        fn herstel(&self, kent: bool) -> Herstel {
+            let root = self.root.clone();
+            herstel(&self.root, move |rel| root.join(rel), move |_, n| kent && n.versie == 2)
+        }
+
+        fn aantal(&self, naam: &str) -> usize {
+            fs::read_dir(map(&self.root, naam)).map(|d| d.count()).unwrap_or(0)
+        }
+    }
+
+    #[test]
+    fn onderbreking_na_het_journaal_laat_alles_staan() {
+        let p = Proef::new();
+        onderbreek_na(|s| *s == Stap::Journaal);
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        let h = p.herstel(false);
+        assert!(h.bijwerken.is_empty() && h.geblokkeerd.is_empty());
+        assert_eq!(p.lees().as_deref(), Some("oud"));
+        assert_eq!(kenmerk(&p.a()).unwrap(), p.oud, "ongewijzigd: de volgende ronde downloadt gewoon opnieuw");
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON), p.aantal(NIEUW)), (0, 0, 0));
+    }
+
+    #[test]
+    fn onderbreking_na_het_verplaatsen_zet_de_bron_terug() {
+        let p = Proef::new();
+        onderbreek_na(|s| *s == Stap::Verplaatst);
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        assert_eq!(p.lees(), None, "halverwege: het pad is leeg");
+        p.herstel(false);
+        // Terug met dezelfde wijzigingstijd: de vergelijking ziet geen verwijderd bestand en ook geen wijziging.
+        assert_eq!(p.lees().as_deref(), Some("oud"));
+        assert_eq!(kenmerk(&p.a()).unwrap(), p.oud);
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON), p.aantal(NIEUW)), (0, 0, 0));
+    }
+
+    #[test]
+    fn onderbreking_tussen_verplaatsen_en_journaal_zet_de_bron_terug() {
+        // De rename is gebeurd, het journaal zegt nog "journaal".
+        let p = Proef::new();
+        let root = p.root.clone();
+        na_stap(move |v| {
+            if v.stap == Stap::Journaal {
+                fs::create_dir_all(map(&root, BRON))?;
+                fs::rename(root.join("a.txt"), bron(&root, &v.id))?;
+                return Err(io::Error::other("onderbroken (proef)"));
+            }
+            Ok(())
+        });
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        p.herstel(false);
+        assert_eq!(p.lees().as_deref(), Some("oud"));
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn onderbreking_na_het_plaatsen_werkt_de_toestand_bij() {
+        let p = Proef::new();
+        onderbreek_na(|s| matches!(s, Stap::Geplaatst { .. }));
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        assert_eq!(p.lees().as_deref(), Some("nieuw"));
+        let nieuw = kenmerk(&p.a()).unwrap();
+        // De toestand was nog niet bewaard: herstel geeft versie 2 met het kenmerk van het geplaatste bestand.
+        let h = p.herstel(false);
+        assert_eq!(h.bijwerken, vec![("a.txt".to_string(), Versie { bestand: "b1".into(), versie: 2 }, nieuw)]);
+        assert_eq!(p.aantal(BRON), 1, "de bron wacht op afronden");
+        assert!(rond_af(&p.root).is_empty());
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+        assert_eq!(p.lees().as_deref(), Some("nieuw"));
+    }
+
+    #[test]
+    fn onderbreking_voor_het_afronden_rondt_bij_de_volgende_ronde_af() {
+        let p = Proef::new();
+        assert!(matches!(vervang(p.opdracht(Some("nieuw"))).unwrap(), Uitkomst::Geplaatst(_)));
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON), p.aantal(NIEUW)), (1, 1, 0));
+        // De toestand met versie 2 is bewaard; dan is er niets bij te werken.
+        let h = p.herstel(true);
+        assert!(h.bijwerken.is_empty() && h.geblokkeerd.is_empty());
+        assert!(rond_af(&p.root).is_empty());
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn geplaatst_en_daarna_weg_zonder_bewaarde_toestand_zet_de_bron_terug() {
+        let p = Proef::new();
+        onderbreek_na(|s| matches!(s, Stap::Geplaatst { .. }));
+        assert!(vervang_binnen(&p.opdracht(Some("nieuw"))).is_err());
+        fs::remove_file(p.a()).unwrap();
+        // De toestand kent versie 1 nog: terug naar versie 1, dan downloadt de volgende ronde opnieuw.
+        let h = p.herstel(false);
+        assert!(h.bijwerken.is_empty());
+        assert_eq!(p.lees().as_deref(), Some("oud"));
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn verwijdering_onderbroken_na_het_verplaatsen_komt_niet_terug() {
+        let p = Proef::new();
+        onderbreek_na(|s| *s == Stap::Verplaatst);
+        assert!(vervang_binnen(&p.opdracht(None)).is_err());
+        let h = p.herstel(false);
+        assert!(h.bijwerken.is_empty() && h.geblokkeerd.is_empty());
+        assert_eq!(p.lees(), None, "een verwijdering is af zodra de bron er is");
+        assert_eq!(p.aantal(BRON), 1);
+        assert!(rond_af(&p.root).is_empty());
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn bestand_dat_vlak_voor_de_plaatsing_verschijnt_blijft_staan() {
+        let p = Proef::new();
+        let a = p.a();
+        na_stap(move |v| {
+            if v.stap == Stap::Verplaatst {
+                fs::write(&a, "van de gebruiker")?;
+            }
+            Ok(())
+        });
+        assert_eq!(vervang(p.opdracht(Some("nieuw"))).unwrap(), Uitkomst::PadBezet);
+        assert_eq!(p.lees().as_deref(), Some("van de gebruiker"));
+        assert_eq!(p.aantal(NIEUW), 0);
+        // De bron is de verwerkte inhoud (versie 1 staat op de server): mag weg.
+        assert!(rond_af(&p.root).is_empty());
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+        assert_eq!(p.lees().as_deref(), Some("van de gebruiker"));
+    }
+
+    #[test]
+    fn opslaan_tussen_controle_en_verplaatsen_geeft_een_afwijkende_bron() {
+        for nieuw in [None, Some("nieuw")] {
+            let p = Proef::new();
+            let a = p.a();
+            na_stap(move |v| {
+                if v.stap == Stap::Journaal {
+                    fs::write(&a, "oud + werk")?;
+                }
+                Ok(())
+            });
+            assert!(vervang(p.opdracht(nieuw)).is_ok());
+            let afwijkend = rond_af(&p.root);
+            assert_eq!(afwijkend.len(), 1, "het werk staat in de bron en gaat naar de server");
+            assert_eq!(fs::read_to_string(bron(&p.root, &afwijkend[0].id)).unwrap(), "oud + werk");
+        }
+    }
+
+    #[test]
+    fn lokaal_gewijzigd_voor_de_controle_laat_alles_staan() {
+        let p = Proef::new();
+        let mut o = p.opdracht(None);
+        o.bekend.as_mut().unwrap().1 .0 += 1;
+        assert_eq!(vervang(o).unwrap(), Uitkomst::LokaalGewijzigd);
+        assert_eq!(p.lees().as_deref(), Some("oud"));
+        assert_eq!((p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0));
+    }
+
+    #[test]
+    fn plaatsen_vervangt_nooit_een_bestaand_bestand() {
+        let p = Proef::new();
+        let b = p.root.join("b.txt");
+        fs::write(&b, "b").unwrap();
+        assert_eq!(plaats(&p.a(), &b).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!((p.lees().as_deref(), fs::read_to_string(&b).unwrap().as_str()), (Some("oud"), "b"));
+        plaats(&p.a(), &p.root.join("c.txt")).unwrap();
+        assert_eq!(fs::read_to_string(p.root.join("c.txt")).unwrap(), "oud");
+        assert_eq!(p.lees(), None);
+    }
+
+    #[test]
+    fn herstel_ruimt_tijdelijke_bestanden_op_maar_nooit_een_bron() {
+        let p = Proef::new();
+        for (naam, bestand) in [(NIEUW, "x"), (JOURNAAL, "y.tmp"), (BRON, "z")] {
+            fs::create_dir_all(map(&p.root, naam)).unwrap();
+            fs::write(map(&p.root, naam).join(bestand), "w").unwrap();
+        }
+        p.herstel(false);
+        assert_eq!((p.aantal(NIEUW), p.aantal(JOURNAAL), p.aantal(BRON)), (0, 0, 1));
+    }
+
+    #[test]
+    fn in_gebruik_ziet_een_open_bestand() {
+        let p = Proef::new();
+        let open = File::options().read(true).write(true).open(p.a()).unwrap();
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Bezet]);
+        drop(open);
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Vrij]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_gebruik_ziet_een_geheugenkoppeling_ook_na_het_sluiten() {
+        use std::os::fd::AsRawFd;
+        let p = Proef::new();
+        let f = File::options().read(true).write(true).open(p.a()).unwrap();
+        let lengte = 3;
+        let adres = unsafe {
+            libc::mmap(std::ptr::null_mut(), lengte, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
+        };
+        assert_ne!(adres, libc::MAP_FAILED);
+        drop(f);
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Bezet]);
+        unsafe { libc::munmap(adres, lengte) };
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Vrij]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_gebruik_ziet_een_ander_proces() {
+        let p = Proef::new();
+        let mut kind = std::process::Command::new("sh")
+            .args(["-c", "exec 3>>\"$1\"; echo klaar; read x", "sh"])
+            .arg(p.a())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Wachten tot het bestand echt open is.
+        let mut regel = String::new();
+        io::BufRead::read_line(&mut io::BufReader::new(kind.stdout.as_mut().unwrap()), &mut regel).unwrap();
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Bezet]);
+        drop(kind.stdin.take());
+        kind.wait().unwrap();
+        assert_eq!(in_gebruik(&[p.a()]), vec![Gebruik::Vrij]);
+    }
 }
