@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use openaec_sync::motor::{bekende_bestanden, Batchgrenzen, KleinUpload, Opslag, OpslagBestand, Upload, Voortgang};
+use openaec_sync::motor::{bekende_bestanden, Batchgrenzen, KleinUpload, Opslag, OpslagBestand, Upload, Versieregel, Voortgang};
 use openaec_sync::selectie::{mappen_boven, nieuw_niet_gekozen, NieuweMappen};
 use openaec_sync::Fout;
 
@@ -115,6 +115,26 @@ impl<O: Opslag> Opslag for Verkenneropslag<'_, O> {
 
     async fn download_klein(&self, bestanden: &[(&OpslagBestand, &Path)]) -> Result<Vec<Result<(), Fout>>, Fout> {
         self.binnen.download_klein(bestanden).await
+    }
+
+    async fn vergelijk_en_schrijf(&self) -> bool {
+        self.binnen.vergelijk_en_schrijf().await
+    }
+
+    async fn schrijf_als(&self, pad: &str, lokaal: &Path, basis: &Versieregel, samengevoegd_uit: Option<(u64, u64)>) -> Result<Upload, Fout> {
+        self.binnen.schrijf_als(pad, lokaal, basis, samengevoegd_uit).await
+    }
+
+    async fn lees_versie(&self, versie: &Versieregel) -> Result<Vec<u8>, Fout> {
+        self.binnen.lees_versie(versie).await
+    }
+
+    async fn huidige_versie(&self, bestand: &str) -> Result<Option<Versieregel>, Fout> {
+        self.binnen.huidige_versie(bestand).await
+    }
+
+    async fn blokhashes(&self, versie: &Versieregel) -> Result<Option<(u64, Vec<String>)>, Fout> {
+        self.binnen.blokhashes(versie).await
     }
 }
 
@@ -327,7 +347,7 @@ mod tests {
         }
         async fn upload(&self, pad: &str, _lokaal: &Path, _basis: Option<u64>) -> Result<Upload, Fout> {
             self.geupload.lock().unwrap().push(pad.to_string());
-            Ok(Upload { pad: pad.into(), bestand: "x".into(), versie: 1, conflict: false })
+            Ok(Upload { pad: pad.into(), bestand: "x".into(), versie: 1, conflict: false, versie_id: None })
         }
         async fn download(&self, bestand: &OpslagBestand, _lokaal: &Path) -> Result<(), Fout> {
             self.gedownload.lock().unwrap().push(bestand.pad.clone());
@@ -342,7 +362,7 @@ mod tests {
     }
 
     fn b(pad: &str) -> OpslagBestand {
-        OpslagBestand { pad: pad.into(), bestand: format!("id-{pad}"), versie: 1, grootte: 3 }
+        OpslagBestand { pad: pad.into(), bestand: format!("id-{pad}"), versie: 1, grootte: 3, versie_id: None }
     }
 
     /// Een server in het geheugen voor een hele ronde: downloadt rechtstreeks naar het gevraagde pad (met een rename die
@@ -370,7 +390,7 @@ mod tests {
         async fn lijst(&self) -> Result<Vec<OpslagBestand>, Fout> {
             let b = self.bestanden.lock().unwrap();
             Ok(b.iter()
-                .map(|(pad, (versie, inhoud))| OpslagBestand { pad: pad.clone(), bestand: format!("id-{pad}"), versie: *versie, grootte: inhoud.len() as u64 })
+                .map(|(pad, (versie, inhoud))| OpslagBestand { pad: pad.clone(), bestand: format!("id-{pad}"), versie: *versie, grootte: inhoud.len() as u64, versie_id: None })
                 .collect())
         }
         async fn upload(&self, pad: &str, lokaal: &Path, basis: Option<u64>) -> Result<Upload, Fout> {
@@ -382,7 +402,7 @@ mod tests {
             };
             self.zet(&doel, &inhoud);
             let versie = self.bestanden.lock().unwrap()[&doel].0;
-            Ok(Upload { pad: doel.clone(), bestand: format!("id-{doel}"), versie, conflict: doel != pad })
+            Ok(Upload { pad: doel.clone(), bestand: format!("id-{doel}"), versie, conflict: doel != pad, versie_id: None })
         }
         async fn download(&self, bestand: &OpslagBestand, lokaal: &Path) -> Result<(), Fout> {
             let tijdelijk = lokaal.with_extension("download");

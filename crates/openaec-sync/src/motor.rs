@@ -1069,6 +1069,7 @@ impl<O: Opslag> Ronde<'_, O> {
         let kopie = up.conflict.then(|| up.pad.clone());
         let actie = self.na_upload(pad, Some(server), up, verstuurd).await?;
         if let (Some(mut r), Some(kopie)) = (rapport, kopie) {
+            r.bestand = self.rel(pad);
             r.conflictkopie = self.rel(&kopie);
             let doel = lokaal_bestand(self.root, &format!("{}.samenvoegrapport.json", r.conflictkopie));
             let geplaatst = vervang::nieuw_pad(self.root).and_then(|tijdelijk| {
