@@ -24,14 +24,14 @@ pub(crate) fn einde(data: &[u8], begin: usize) -> Result<usize, TekstFout> {
     lees(data, begin, false, &mut Niets)
 }
 
-/// De tekst zoals een mens hem leest. `ruw` is de inhoud tussen de aanhalingstekens (die de parser al
-/// controleerde). Is hij toch kapot, dan geven we de ruwe bytes.
+/// De tekst zoals een mens hem leest. `ruw` is de inhoud tussen de aanhalingstekens; de parser controleerde hem al
+/// met dezelfde scanner ([`einde`]), dus hij is geldig.
 pub(crate) fn decodeer(ruw: &[u8]) -> String {
     let mut uit = String::with_capacity(ruw.len());
-    match lees(ruw, 0, true, &mut uit) {
-        Ok(_) => uit,
-        Err(_) => String::from_utf8_lossy(ruw).into_owned(),
+    if let Err(f) = lees(ruw, 0, true, &mut uit) {
+        unreachable!("een tekst die de parser goedkeurde, is toch ongeldig: {} (positie {})", f.melding, f.positie);
     }
+    uit
 }
 
 /// Waar de gelezen tekens heen gaan: nergens (alleen controleren) of in een `String`.

@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 use crate::model::{
-    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, op_sleutel, Hash, Model,
-    Soort, VersieStatistiek, HEADER_VELDEN,
+    attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, op_sleutel, stem_ankers_af,
+    Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::Fout;
 
@@ -127,6 +127,11 @@ pub fn verschil(a: &[u8], b: &[u8]) -> Result<Verschil, Fout> {
     let (mut ma, mut mb) = (ma?, mb?);
     let relaties_gekoppeld = koppel_relaties(&ma, &mut mb);
     markeer_gemeen(&mut [&mut ma, &mut mb]);
+    std::thread::scope(|s| {
+        s.spawn(|| ma.bereken_puur());
+        mb.bereken_puur();
+    });
+    stem_ankers_af(&ma, &mut mb);
     std::thread::scope(|s| {
         s.spawn(|| ma.bereken());
         mb.bereken();

@@ -376,4 +376,40 @@ impl Feiten {
     pub fn naar(&self, type_naam: &str, j: usize, doel: u64) -> Vec<u64> {
         self.van_type(type_naam).into_iter().filter(|&n| nummers(self.attr(n, j)).contains(&doel)).collect()
     }
+
+    /// Alle nummers, oplopend.
+    pub fn nummers(&self) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self.instanties.keys().copied().collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// Het type en de attributen van `#n`, als die er is.
+    pub fn instantie(&self, n: u64) -> Option<&(String, Vec<String>)> {
+        self.instanties.get(&n)
+    }
+
+    /// Alle `#k` in attribuut `j` van `#n` (ook in een getypte waarde of een geneste lijst).
+    pub fn alle_verwijzingen(&self, n: u64, j: usize) -> Vec<u64> {
+        nummers(self.attr(n, j))
+    }
+
+    /// De instanties die in een attribuut naar `#doel` verwijzen, op nummer.
+    pub fn verwijzers(&self, doel: u64) -> Vec<u64> {
+        let mut lijst: Vec<u64> = self
+            .instanties
+            .iter()
+            .filter(|(_, (_, a))| a.iter().any(|w| nummers(w).contains(&doel)))
+            .map(|(&n, _)| n)
+            .collect();
+        lijst.sort_unstable();
+        lijst
+    }
+
+    /// De GlobalId van `#n` als het een object is: het eerste attribuut is een tekst van 22 tekens.
+    pub fn globalid(&self, n: u64) -> Option<String> {
+        let eerste = self.instanties.get(&n)?.1.first()?;
+        let binnen = eerste.strip_prefix('\'')?.strip_suffix('\'')?;
+        (binnen.len() == 22).then(|| binnen.to_string())
+    }
 }

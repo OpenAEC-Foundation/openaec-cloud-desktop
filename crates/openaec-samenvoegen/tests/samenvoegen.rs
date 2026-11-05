@@ -1225,3 +1225,55 @@ fn regeleinden_van_windows_bij_samenvoegen() {
         }
     }
 }
+
+// --- Uit fixronde 2 van PR #6 (Sol, review van 1456355), bij het samenvoegen. ---
+
+/// Hun wijzigt alleen de Precision van de context (een anker van het project in een SET); ons hernoemt een object.
+/// Beide komen over, en alleen het project neemt de context van hun.
+#[test]
+fn precisie_van_de_context_bij_hun() {
+    let b = bestand("ifc4-wall-with-opening-and-window.ifc");
+    let h = vervang(&b, "'Model', 3, 1.E-5,", "'Model', 3, 1.E-4,");
+    let o = vervang_eerste_naam(&b, " (ons)");
+    for (oo, hh) in [(&o, &h), (&h, &o)] {
+        let r = gelukt(&b, oo, &hernummer(hh, 33));
+        let f = Feiten::lees(&r);
+        let contexten = f.van_type("IFCGEOMETRICREPRESENTATIONCONTEXT");
+        assert_eq!(contexten.len(), 1, "{r}");
+        assert_eq!(f.attr(contexten[0], 3), "1.E-4");
+        assert!(r.contains(" (ons)'"));
+    }
+    // Ons maakt de wand hoger (in zijn vorm): geen conflict met de Precision van hun, want de vorm van de wand
+    // verwijst naar de context als anker, niet op inhoud.
+    let o = vervang(
+        &b,
+        "#71 = IFCEXTRUDEDAREASOLID(#72, #79, #27, 2000.);",
+        "#71 = IFCEXTRUDEDAREASOLID(#72, #79, #27, 2500.);",
+    );
+    for (oo, hh) in [(&o, &h), (&h, &o)] {
+        let r = gelukt(&b, oo, &hernummer(hh, 35));
+        let f = Feiten::lees(&r);
+        assert_eq!(f.attr(f.van_type("IFCGEOMETRICREPRESENTATIONCONTEXT")[0], 3), "1.E-4");
+        // De wand: zijn Body-vorm is een extrusie van 2500.
+        let vorm = f.verwijzing(f.met_globalid("3ZYW59sxj8lei475l7EhLU"), 6);
+        let body = f.verwijzingen(vorm, 2).into_iter().find(|&r| f.attr(r, 1) == "'Body'").unwrap();
+        let solid = f.verwijzingen(body, 3)[0];
+        assert_eq!(f.attr(solid, 3), "2500.", "{r}");
+    }
+}
+
+/// Hun zet de plaatsingen van W en V relatief aan elkaar (een kring over ankers); ons hernoemt W. Dat is een
+/// conflict, geen resultaat.
+#[test]
+fn kring_over_ankers_is_een_conflict() {
+    for schema in SCHEMAS {
+        let b = gebouw(schema);
+        let h = vervang(&b, "#40=IFCLOCALPLACEMENT(#20,", "#40=IFCLOCALPLACEMENT(#45,");
+        let h = vervang(&h, "#45=IFCLOCALPLACEMENT(#20,", "#45=IFCLOCALPLACEMENT(#40,");
+        let o = vervang(&b, "#5,'W',$", "#5,'W-ons',$");
+        for (oo, hh) in [(&o, &h), (&h, &o)] {
+            let soorten = conflicten(&b, oo, hh);
+            assert!(soorten.contains(&ConflictSoort::NietOndersteund), "{schema}: {soorten:?}");
+        }
+    }
+}

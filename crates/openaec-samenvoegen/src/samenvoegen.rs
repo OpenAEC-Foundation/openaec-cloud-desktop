@@ -26,7 +26,7 @@ use serde::Serialize;
 use crate::koppelregel::koppelregel;
 use crate::model::{
     attribuut_tekst, enkele_verwijzing, header_vluchtig, koppel_relaties, markeer_gemeen, ongeordend_hash, op_sleutel,
-    Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
+    stem_ankers_af, Hash, Model, Soort, VersieStatistiek, HEADER_VELDEN,
 };
 use crate::ontleden::{elementen, Token, Tokens};
 use crate::schema::Aggregaat;
@@ -278,6 +278,14 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
     let gekoppeld = koppel_relaties(&mb, &mut mo) + koppel_relaties(&mb, &mut mh);
     markeer_gemeen(&mut [&mut mb, &mut mo, &mut mh]);
     std::thread::scope(|s| {
+        s.spawn(|| mb.bereken_puur());
+        s.spawn(|| mh.bereken_puur());
+        mo.bereken_puur();
+    });
+    // Een anker in een SET dat aan één kant een andere inhoud kreeg, houdt de positie van de basis.
+    stem_ankers_af(&mb, &mut mo);
+    stem_ankers_af(&mb, &mut mh);
+    std::thread::scope(|s| {
         s.spawn(|| mb.bereken());
         s.spawn(|| mh.bereken());
         mo.bereken();
@@ -344,6 +352,8 @@ pub fn voeg_samen(basis: &[u8], ons: &[u8], hun: &[u8]) -> Result<Samenvoeging, 
                 }
                 object.gemeen = gemeen.contains(object.sleutel.as_str());
             }
+            r.bereken_puur();
+            stem_ankers_af(&m[B], &mut r);
             r.bereken();
             controleer_resultaat(&m, &plan, &r, &mut gevonden);
         }
