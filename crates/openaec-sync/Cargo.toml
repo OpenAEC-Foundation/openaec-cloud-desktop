@@ -7,6 +7,7 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 blake3 = "1"
+log = "0.4"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2", "multipart"] }
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +23,13 @@ zip = { version = "4", default-features = false }
 clap = { version = "4", features = ["derive"], optional = true }
 dirs = { version = "5", optional = true }
 notify = { version = "6", optional = true }
+
+# Veilig vervangen (vervang.rs): plaatsen zonder te vervangen en zien of een proces een bestand open heeft.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_RestartManager"] }
 
 [features]
 cli = ["dep:clap", "dep:dirs", "dep:notify"]

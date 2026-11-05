@@ -32,6 +32,7 @@ pub use crate::api::Batchgrenzen;
 use crate::namen::{self, Negeerlijst};
 // Mapselectie: één filter voor uploaden en downloaden (zie `selectie`).
 use crate::selectie::uitgesloten as uitgesloten_pad;
+use crate::vervang;
 use crate::voortgang::{Actie, Gebeurtenis, Richting, Stil, Teller, Waarnemer};
 use crate::{Fout, MAX_GELIJKTIJDIG, STANDAARD_GELIJKTIJDIG};
 
@@ -100,6 +101,15 @@ pub trait Opslag {
     async fn download_met_voortgang(&self, bestand: &OpslagBestand, lokaal: &Path, voortgang: Voortgang<'_>) -> Result<(), Fout> {
         let _ = voortgang;
         self.download(bestand, lokaal).await
+    }
+
+    /// Zet deze opslag een download naar `lokaal` zelf neer, zonder inhoud op deze computer (een placeholder die alleen
+    /// online staat)? Dan gaat de download rechtstreeks naar `lokaal`: daar is geen lokaal werk te beschermen. Anders
+    /// downloadt de motor naar een tijdelijk bestand en zet hij het veilig op zijn plek (zie `crate::vervang`).
+    /// Standaard niet.
+    fn plaatst_zelf(&self, lokaal: &Path) -> bool {
+        let _ = lokaal;
+        false
     }
 
     /// Zorg dat deze mappen (paden met '/') op de server bestaan, vóór de uploads erin beginnen. Standaard niets:
@@ -300,7 +310,10 @@ fn bewaar(root: &Path, toestand: &Toestand) -> Result<(), Fout> {
     let pad = toestandsbestand(root);
     std::fs::create_dir_all(pad.parent().unwrap())?;
     let tijdelijk = pad.with_extension("json.tmp");
-    std::fs::write(&tijdelijk, serde_json::to_vec_pretty(toestand).unwrap())?;
+    let mut f = std::fs::File::create(&tijdelijk)?;
+    std::io::Write::write_all(&mut f, &serde_json::to_vec_pretty(toestand).unwrap())?;
+    // Duurzaam: het journaal van een vervanging gaat pas weg als de toestand die het verwerkt, echt op schijf staat.
+    f.sync_all()?;
     std::fs::rename(tijdelijk, pad)?;
     Ok(())
 }
@@ -311,12 +324,12 @@ fn lokaal_pad(root: &Path, pad: &str) -> PathBuf {
 
 /// Het bestand `rel` (met '/') in `root`; met een lastige naam letterlijk (`\\?\` op Windows), anders zou Windows
 /// er een apparaat of een andere naam van maken.
-fn lokaal_bestand(root: &Path, rel: &str) -> PathBuf {
+pub(crate) fn lokaal_bestand(root: &Path, rel: &str) -> PathBuf {
     let pad = lokaal_pad(root, rel);
     if namen::padprobleem(rel).is_some() || rel.split('/').any(namen::letterlijk_nodig) { namen::lang_pad(&pad) } else { pad }
 }
 
-fn kenmerk(pad: &Path) -> std::io::Result<(u64, u128)> {
+pub(crate) fn kenmerk(pad: &Path) -> std::io::Result<(u64, u128)> {
     let meta = std::fs::metadata(pad)?;
     let mtime = meta.modified()?.duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     Ok((meta.len(), mtime))
@@ -570,15 +583,21 @@ impl<O: Opslag> Ronde<'_, O> {
 
     /// Neem `pad` op in de toestand: lokaal en op de server zijn nu gelijk (komt in [`Rapport::bijgewerkt`]).
     fn onthoud(&self, pad: &str, bestand: &str, versie: u64) -> Result<(), Fout> {
+        let k = kenmerk(&self.hier(pad))?;
+        self.onthoud_als(pad, bestand, versie, k);
+        Ok(())
+    }
+
+    /// Als [`Ronde::onthoud`], met het kenmerk (grootte, wijzigingstijd) dat bij die versie hoort, gemeten vóór het
+    /// bestand op zijn plek kwam: een programma dat er daarna meteen in schrijft, geeft zo een lokale wijziging.
+    fn onthoud_als(&self, pad: &str, bestand: &str, versie: u64, (grootte, mtime_ns): (u64, u128)) {
         let rel = self.rel(pad);
-        let (grootte, mtime_ns) = kenmerk(&lokaal_bestand(self.root, &rel))?;
         self.toestand
             .lock()
             .unwrap()
             .bestanden
             .insert(pad.to_string(), Bekend { bestand: bestand.to_string(), versie, grootte, mtime_ns });
         self.rapport.lock().unwrap().bijgewerkt.push(rel);
-        Ok(())
     }
 
     fn vergeet(&self, pad: &str) {
@@ -613,17 +632,14 @@ impl<O: Opslag> Ronde<'_, O> {
     async fn na_upload(&self, pad: &str, server: Option<&OpslagBestand>, up: Upload) -> Result<Actie, Fout> {
         match server {
             Some(server) if up.conflict => {
-                // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen, en de
-                // serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
-                let lokaal = self.hier(pad);
-                let kopie = self.hier(&up.pad);
-                std::fs::rename(&lokaal, &kopie)?;
+                // Mijn versie staat nu als conflictkopie op de server: lokaal hernoemen (zonder iets te vervangen), en
+                // de serverversie op de oorspronkelijke plek zetten. Niets gaat verloren.
+                vervang::plaats(&self.hier(pad), &self.hier(&up.pad))?;
                 self.onthoud(&up.pad, &up.bestand, up.versie)?;
-                self.download(pad, server, &lokaal).await?;
-                self.onthoud(pad, &server.bestand, server.versie)?;
+                let gedownload = self.haal_op(pad, server).await?;
                 self.tel(|r| {
                     r.conflicten += 1;
-                    r.gedownload += 1;
+                    r.gedownload += u32::from(gedownload);
                 });
                 Ok(Actie::Conflict)
             }
@@ -640,33 +656,156 @@ impl<O: Opslag> Ronde<'_, O> {
         }
     }
 
-    /// Eén taak uitvoeren; geeft terug wat er gebeurd is.
-    async fn voer_uit(&self, taak: &Taak) -> Result<Actie, Fout> {
-        let lokaal = self.hier(taak.pad());
+    /// Haal `server` op naar het pad hier van `pad`, zonder lokaal werk te vervangen. Geeft false als het niet
+    /// geplaatst is (lokaal net gewijzigd, of er stond intussen een ander bestand): dat ziet de volgende ronde als
+    /// lokale wijziging.
+    async fn haal_op(&self, pad: &str, server: &OpslagBestand) -> Result<bool, Fout> {
+        let lokaal = self.hier(pad);
+        if self.opslag.plaatst_zelf(&lokaal) {
+            self.download(pad, server, &lokaal).await?;
+            self.onthoud(pad, &server.bestand, server.versie)?;
+            return Ok(true);
+        }
+        let nieuw = vervang::nieuw_pad(self.root)?;
+        // Blokken die hier al kloppen, hoeven niet over de lijn: de download begint met een kopie van het lokale bestand.
+        let _ = std::fs::copy(&lokaal, &nieuw);
+        if let Err(fout) = self.download(pad, server, &nieuw).await {
+            let _ = std::fs::remove_file(&nieuw);
+            return Err(fout);
+        }
+        self.plaats_download(pad, server, nieuw).await
+    }
+
+    /// Zet een download (het tijdelijke bestand `nieuw`) veilig op het pad van `pad`; als [`Ronde::haal_op`].
+    async fn plaats_download(&self, pad: &str, server: &OpslagBestand, nieuw: PathBuf) -> Result<bool, Fout> {
+        let versie = vervang::Versie { bestand: server.bestand.clone(), versie: server.versie };
+        match self.vervang_hier(pad, Some((nieuw, versie))).await? {
+            vervang::Uitkomst::Geplaatst(k) => {
+                self.onthoud_als(pad, &server.bestand, server.versie, k);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Verwijder het bestand hier van `pad` veilig. Geeft false als het lokaal net gewijzigd is: dan blijft het staan.
+    async fn verwijder_hier(&self, pad: &str) -> Result<bool, Fout> {
+        Ok(self.vervang_hier(pad, None).await? == vervang::Uitkomst::Verwijderd)
+    }
+
+    /// De veilige vervanging of verwijdering van het bestand hier van `pad` (zie [`vervang::vervang`]), met wat de
+    /// toestand ervan weet.
+    async fn vervang_hier(&self, pad: &str, nieuw: Option<(PathBuf, vervang::Versie)>) -> Result<vervang::Uitkomst, Fout> {
+        let rel = self.rel(pad);
+        let bekend = self.toestand.lock().unwrap().bestanden.get(pad).map(|b| {
+            (vervang::Versie { bestand: b.bestand.clone(), versie: b.versie }, (b.grootte, b.mtime_ns))
+        });
+        let opdracht = vervang::Opdracht {
+            root: self.root.to_path_buf(),
+            lokaal: lokaal_bestand(self.root, &rel),
+            pad: rel,
+            sleutel: pad.to_string(),
+            bekend,
+            nieuw,
+        };
+        // Een groot bestand lezen en hashen: niet op de thread van de ronde.
+        Ok(tokio::task::spawn_blocking(move || vervang::vervang(opdracht)).await.map_err(std::io::Error::other)??)
+    }
+
+    /// Rond de bronnen af, ook die van eerdere rondes (zie [`vervang::rond_af`]). Een afwijkende bron is een lokale
+    /// wijziging, afgeleid van de verwerkte inhoud: zie [`Ronde::lever_in`]. Geeft true als de toestand veranderde.
+    async fn rond_af(&self) -> bool {
+        let root = self.root.to_path_buf();
+        let afwijkend = tokio::task::spawn_blocking(move || vervang::rond_af(&root)).await.unwrap_or_default();
+        let mut veranderd = false;
+        for v in afwijkend {
+            if self.stoppen() || self.opslag.alleen_lezen() {
+                log::info!("{}: de bron wijkt af en blijft bewaakt (gestopt, of alleen lezen)", v.pad);
+                continue;
+            }
+            veranderd |= self.lever_in(&v).await;
+        }
+        veranderd
+    }
+
+    /// Een afwijkende bron naar de server, langs de gewone uploadweg. Bij een vervanging met de verwerkte versie als
+    /// basis: de server is intussen verder, dus dat wordt een conflictkopie, en die komt hier naast het bestand. Bij
+    /// een verwijdering als nieuw bestand (een conflictkopie als er weer een bestand met die naam staat), en dan terug
+    /// op het pad. Pas daarna gaat de bron weg; geeft true als er iets in de toestand kwam.
+    async fn lever_in(&self, v: &vervang::Vervanging) -> bool {
+        let bron = vervang::bron(self.root, &v.id);
+        let k = match kenmerk(&bron) {
+            Ok(k) => k,
+            Err(e) => {
+                log::warn!("{}: bron niet te lezen: {e}", v.pad);
+                return false;
+            }
+        };
+        let basis = v.nieuw.as_ref().map(|_| v.basis.versie);
+        let up = match self.upload(&v.sleutel, &bron, basis).await {
+            Ok(up) => up,
+            Err(fout) if fout.sessie_verlopen() => {
+                self.gestopt.store(true, Ordering::SeqCst);
+                return false;
+            }
+            Err(fout) => {
+                let pad = self.rel(&v.sleutel);
+                self.waarnemer.melding(Gebeurtenis::Fout { pad: pad.clone(), fout: fout.to_string() });
+                self.rapport.lock().unwrap().fout(&pad, fout);
+                return false;
+            }
+        };
+        // De inhoud staat nu op de server. Lukt het plaatsen hier niet (er staat al iets), dan haalt een volgende ronde
+        // hem op; de bron mag dus hoe dan ook weg.
+        let plek = (up.conflict || v.nieuw.is_none()).then(|| self.hier(&up.pad));
+        let geplaatst = plek.is_some_and(|p| {
+            p.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| vervang::plaats(&bron, &p)).is_ok()
+        });
+        if geplaatst {
+            self.onthoud_als(&up.pad, &up.bestand, up.versie, k);
+        }
+        if let Err(e) = vervang::klaar(self.root, v) {
+            log::warn!("{}: bron niet op te ruimen: {e}", v.pad);
+        }
+        let actie = if up.conflict { Actie::Conflict } else { Actie::Geupload };
+        self.tel(|r| match actie {
+            Actie::Conflict => r.conflicten += 1,
+            _ => r.geupload += 1,
+        });
+        self.waarnemer.melding(Gebeurtenis::Klaar { pad: self.rel(&up.pad), actie });
+        geplaatst
+    }
+
+    /// Eén taak uitvoeren; geeft terug wat er gebeurd is (None: niets, de volgende ronde neemt het mee).
+    async fn voer_uit(&self, taak: &Taak) -> Result<Option<Actie>, Fout> {
         match taak {
             Taak::Upload { pad, basis, server } => {
                 // Basis: de versie waarop de lokale wijziging gebaseerd is; de server beslist over een conflict.
-                let up = self.upload(pad, &lokaal, *basis).await?;
-                self.na_upload(pad, server.as_ref(), up).await
+                let up = self.upload(pad, &self.hier(pad), *basis).await?;
+                self.na_upload(pad, server.as_ref(), up).await.map(Some)
             }
             Taak::Download { pad, server } => {
-                self.download(pad, server, &lokaal).await?;
-                self.onthoud(pad, &server.bestand, server.versie)?;
+                if !self.haal_op(pad, server).await? {
+                    return Ok(None);
+                }
                 self.tel(|r| r.gedownload += 1);
-                Ok(Actie::Gedownload)
+                Ok(Some(Actie::Gedownload))
             }
             Taak::VerwijderLokaal { pad } => {
-                // Op de server verwijderd (staat daar in de prullenbak) en lokaal ongewijzigd: lokaal weg.
-                std::fs::remove_file(&lokaal)?;
+                // Op de server verwijderd (staat daar in de prullenbak) en lokaal ongewijzigd: lokaal weg, maar alleen
+                // de inhoud die de sync verwerkte.
+                if !self.verwijder_hier(pad).await? {
+                    return Ok(None);
+                }
                 self.vergeet(pad);
                 self.tel(|r| r.verwijderd += 1);
-                Ok(Actie::Verwijderd)
+                Ok(Some(Actie::Verwijderd))
             }
             Taak::VerwijderServer { pad, server } => {
                 self.opslag.verwijder(server).await?;
                 self.vergeet(pad);
                 self.tel(|r| r.verwijderd += 1);
-                Ok(Actie::Verwijderd)
+                Ok(Some(Actie::Verwijderd))
             }
         }
     }
@@ -674,10 +813,12 @@ impl<O: Opslag> Ronde<'_, O> {
     /// Uitkomst van een taak melden; een fout komt in het rapport. Een verlopen sessie is geen fout van dit bestand:
     /// de ronde stopt (zie [`Rapport::sessie_verlopen`]).
     /// Een mislukte overdracht wacht daarna een tijd (zie [`wachttijd`]); een gelukte wist de eerdere pogingen.
-    fn meld(&self, sleutel: &str, uitkomst: Result<Actie, Fout>) {
+    fn meld(&self, sleutel: &str, uitkomst: Result<Option<Actie>, Fout>) {
         let pad = &self.rel(sleutel);
         match uitkomst {
-            Ok(actie) => {
+            // Niets gedaan (lokaal net gewijzigd): geen melding; de volgende ronde neemt het mee.
+            Ok(None) => {}
+            Ok(Some(actie)) => {
                 self.toestand.lock().unwrap().mislukt.remove(sleutel);
                 self.waarnemer.melding(Gebeurtenis::Klaar { pad: pad.to_string(), actie })
             }
@@ -746,7 +887,7 @@ impl<O: Opslag> Ronde<'_, O> {
             let uitkomst = match resultaat {
                 Ok(up) => {
                     Teller::new(self.waarnemer, &self.rel(pad), Richting::Upload).stand(*grootte, *grootte);
-                    self.na_upload(pad, *server, up).await
+                    self.na_upload(pad, *server, up).await.map(Some)
                 }
                 Err(fout) => Err(fout),
             };
@@ -759,17 +900,32 @@ impl<O: Opslag> Ronde<'_, O> {
         if self.stoppen() {
             return;
         }
-        let paden: Vec<(&str, &OpslagBestand, PathBuf)> = taken
-            .iter()
-            .filter_map(|t| match t {
-                Taak::Download { pad, server } => Some((pad.as_str(), server, self.hier(pad))),
-                _ => None,
-            })
-            .collect();
-        for (pad, server, _) in &paden {
+        // Per bestand waar de download heen gaat: een tijdelijk bestand dat daarna veilig op zijn plek komt (zie
+        // `Ronde::haal_op`), of rechtstreeks het pad als de opslag daar zelf een placeholder neerzet.
+        let mut paden: Vec<(&str, &OpslagBestand, PathBuf, Option<PathBuf>)> = Vec::new();
+        for taak in taken {
+            let Taak::Download { pad, server } = taak else { continue };
+            let lokaal = self.hier(pad);
+            let tijdelijk = match self.opslag.plaatst_zelf(&lokaal) {
+                true => None,
+                false => match vervang::nieuw_pad(self.root) {
+                    Ok(p) => Some(p),
+                    // Geen plek voor tijdelijke bestanden: elk bestand apart (dat meldt de fout per bestand).
+                    Err(_) => {
+                        for taak in taken {
+                            self.verwerk(taak).await;
+                        }
+                        return;
+                    }
+                },
+            };
+            paden.push((pad.as_str(), server, lokaal, tijdelijk));
+        }
+        for (pad, server, _, _) in &paden {
             self.waarnemer.melding(Gebeurtenis::Start { pad: self.rel(pad), richting: Richting::Download, totaal: server.grootte });
         }
-        let items: Vec<(&OpslagBestand, &Path)> = paden.iter().map(|(_, server, lokaal)| (*server, lokaal.as_path())).collect();
+        let items: Vec<(&OpslagBestand, &Path)> =
+            paden.iter().map(|(_, server, lokaal, tijdelijk)| (*server, tijdelijk.as_deref().unwrap_or(lokaal))).collect();
         let resultaten = match self.opslag.download_klein(&items).await {
             Ok(r) if r.len() == paden.len() => r,
             Err(fout) if fout.sessie_verlopen() => return self.gestopt.store(true, Ordering::SeqCst),
@@ -780,12 +936,27 @@ impl<O: Opslag> Ronde<'_, O> {
                 return;
             }
         };
-        for ((pad, server, _), resultaat) in paden.iter().zip(resultaten) {
-            let uitkomst = resultaat.and_then(|()| {
-                Teller::new(self.waarnemer, &self.rel(pad), Richting::Download).stand(server.grootte, server.grootte);
-                self.onthoud(pad, &server.bestand, server.versie)?;
-                self.tel(|r| r.gedownload += 1);
-                Ok(Actie::Gedownload)
+        for ((pad, server, _, tijdelijk), resultaat) in paden.into_iter().zip(resultaten) {
+            let geplaatst = match (resultaat, tijdelijk) {
+                (Err(fout), tijdelijk) => {
+                    if let Some(t) = tijdelijk {
+                        let _ = std::fs::remove_file(t);
+                    }
+                    Err(fout)
+                }
+                (Ok(()), tijdelijk) => {
+                    Teller::new(self.waarnemer, &self.rel(pad), Richting::Download).stand(server.grootte, server.grootte);
+                    match tijdelijk {
+                        Some(t) => self.plaats_download(pad, server, t).await,
+                        None => self.onthoud(pad, &server.bestand, server.versie).map(|()| true),
+                    }
+                }
+            };
+            let uitkomst = geplaatst.map(|g| {
+                if g {
+                    self.tel(|r| r.gedownload += 1);
+                }
+                g.then_some(Actie::Gedownload)
             });
             self.meld(pad, uitkomst);
         }
@@ -863,6 +1034,15 @@ pub async fn sync_met_opties<O: Opslag>(
     opties: &Opties,
 ) -> Result<Rapport, Fout> {
     let mut toestand = laad(root);
+    // Eerst onafgemaakte vervangingen afmaken of terugzetten, vóór de vergelijking (zie `crate::vervang`).
+    let herstel = vervang::herstel(
+        root,
+        |rel| lokaal_bestand(root, rel),
+        |sleutel, n| toestand.bestanden.get(sleutel).is_some_and(|b| b.bestand == n.bestand && b.versie == n.versie),
+    );
+    for (sleutel, n, (grootte, mtime_ns)) in herstel.bijwerken {
+        toestand.bestanden.insert(sleutel, Bekend { bestand: n.bestand, versie: n.versie, grootte, mtime_ns });
+    }
     let server: BTreeMap<String, OpslagBestand> =
         opslag.lijst().await?.into_iter().map(|b| (b.pad.clone(), b)).collect();
     // De map aflopen kost bij duizenden bestanden even: op een aparte thread, zodat de runtime doorloopt.
@@ -881,7 +1061,7 @@ pub async fn sync_met_opties<O: Opslag>(
         .keys()
         .chain(server.keys())
         .chain(lokaal.keys())
-        .filter(|p| !buiten.contains(*p) && !negeer.negeert(p))
+        .filter(|p| !buiten.contains(*p) && !negeer.negeert(p) && !herstel.geblokkeerd.contains(*p))
         .cloned()
         .collect();
 
@@ -966,10 +1146,15 @@ pub async fn sync_met_opties<O: Opslag>(
         let hier = lokaal.contains_key(&pad);
         if uitgesloten_pad(&pad, uitgesloten) && !(hier && lokaal_gewijzigd) {
             if hier {
-                // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg, op de server blijft hij staan.
-                if let Err(fout) = std::fs::remove_file(ronde.hier(&pad)) {
-                    ronde.rapport.lock().unwrap().fout(&pad, fout);
-                    continue;
+                // Uitgevinkt en lokaal ongewijzigd: de kopie hier mag weg (veilig, zie `crate::vervang`), op de server
+                // blijft hij staan. Net gewijzigd: blijft staan en gaat de volgende ronde naar de server.
+                match ronde.verwijder_hier(&pad).await {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(fout) => {
+                        ronde.rapport.lock().unwrap().fout(&pad, fout);
+                        continue;
+                    }
                 }
             }
             ronde.vergeet(&pad);
@@ -1046,6 +1231,11 @@ pub async fn sync_met_opties<O: Opslag>(
     ronde.toestand.lock().unwrap().overgeslagen = ronde.rapport.lock().unwrap().overgeslagen.clone();
     // Ook als de sessie onderweg verliep: wat gelukt is, blijft bekend.
     bewaar(root, &ronde.toestand.lock().unwrap())?;
+    // Pas nu de toestand op schijf staat, de bronnen afronden (ook die van eerdere rondes); een journaal verdwijnt zo
+    // nooit vóór de toestand die het verwerkt.
+    if ronde.rond_af().await {
+        bewaar(root, &ronde.toestand.lock().unwrap())?;
+    }
     let mut rapport = ronde.rapport.into_inner().unwrap();
     rapport.sessie_verlopen = ronde.gestopt.into_inner();
     Ok(rapport)

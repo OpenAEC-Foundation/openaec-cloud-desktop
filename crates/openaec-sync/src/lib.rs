@@ -14,6 +14,7 @@ pub mod opslag;
 pub mod overdracht;
 pub mod selectie;
 pub mod sessie;
+mod vervang;
 pub mod voortgang;
 
 use std::io::SeekFrom;
