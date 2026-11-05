@@ -10,7 +10,8 @@ Bron van de schema's (officiële publicaties van buildingSMART International):
       IFC4/ADD2_TC1/EXPRESS/IFC4.exp
       IFC4_3/HTML/IFC4X3_ADD2.exp
 
-Uitvoer, één regel per entiteit:
+Uitvoer: eerst "!SCHEMA", dan "~TYPE,TYPE,..." met de TYPE's die een SET of BAG zijn (bijv.
+IfcPropertySetDefinitionSet; in een bestand als getypte waarde), dan één regel per entiteit:
     NAAM|SUPERTYPE|VLAGGEN|ATTRIBUTEN|INVERSES
 - NAAM en SUPERTYPE zoals in het schema (bijv. IfcTask); SUPERTYPE is "-" als er geen is. In een IFC-bestand
   staan ze in hoofdletters (IFCTASK).
@@ -172,6 +173,9 @@ def genereer(pad):
     typen = lees_typen(tekst)
     entiteiten = lees_entiteiten(tekst, typen)
     regels = [f"!{schema}"]
+    ongeordend = [t for t in typen if (aggregaat(typen[t], typen) or ("",))[0] in ("S", "B")]
+    namen = {m.group(1).upper(): m.group(1) for m in re.finditer(r"^TYPE\s+(\w+)", tekst, flags=re.M)}
+    regels.append("~" + ",".join(sorted(namen[t] for t in ongeordend)))
     for naam in sorted(entiteiten, key=str.upper):
         voorouders = keten(entiteiten, naam)
         vlaggen = ""
@@ -196,7 +200,7 @@ def main():
         schema, inhoud = genereer(pad)
         uit = doel / f"{schema.lower()}.txt"
         uit.write_text(inhoud, encoding="utf-8")
-        print(f"{uit}: {inhoud.count(chr(10)) - 1} entiteiten, {len(inhoud)} bytes")
+        print(f"{uit}: {inhoud.count(chr(10)) - 2} entiteiten, {len(inhoud)} bytes")
 
 
 if __name__ == "__main__":

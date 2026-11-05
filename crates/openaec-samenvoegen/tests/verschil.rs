@@ -432,3 +432,112 @@ fn ifc2x3_model_met_stijlen() {
     assert_eq!(v.statistiek.a.afwijkend_aantal_attributen, 0);
     assert!(v.statistiek.a.losse_knopen > 0);
 }
+
+// --- Fixronde 2 (review van Sol op 1456355). Elke test gaat het feit eerst na met de losse lezer `Feiten`. ---
+
+/// Bevinding 1: alleen de Precision van de context verandert. De context is een anker van het project (in de SET
+/// `RepresentationContexts`); de vormen van de andere objecten verwijzen er dieper naar. Alleen het project is
+/// gewijzigd, in beide IFC4-voorbeeldmodellen.
+#[test]
+fn precisie_van_de_context_wijzigt_alleen_het_project() {
+    for (naam, van, naar) in [
+        ("ifc4-wall-with-opening-and-window.ifc", "'Model', 3, 1.E-5,", "'Model', 3, 1.E-4,"),
+        ("ifc4-tessellation-with-individual-colors.ifc", "'Model',3,0.0001,", "'Model',3,0.001,"),
+    ] {
+        let a = bestand(naam);
+        let b = vervang(&a, van, naar);
+        // Los nagegaan: precies één instantie is anders (de context), en het enige object dat er rechtstreeks naar
+        // verwijst, is het project.
+        let (fa, fb) = (Feiten::lees(&a), Feiten::lees(&b));
+        let anders: Vec<u64> = fa.nummers().into_iter().filter(|&n| fa.instantie(n) != fb.instantie(n)).collect();
+        assert_eq!(anders.len(), 1, "{naam}");
+        let context = anders[0];
+        assert_eq!(fa.type_van(context), "IFCGEOMETRICREPRESENTATIONCONTEXT");
+        let objecten: Vec<u64> = fa.verwijzers(context).into_iter().filter(|&n| fa.globalid(n).is_some()).collect();
+        assert_eq!(objecten.iter().map(|&n| fa.type_van(n)).collect::<Vec<_>>(), ["IFCPROJECT"], "{naam}");
+        let project = fa.globalid(objecten[0]).unwrap();
+        // Ook knopen van andere objecten verwijzen ernaar: een vorm of een subcontext.
+        let typen: Vec<&str> = fa.verwijzers(context).into_iter().map(|n| fa.type_van(n)).collect();
+        assert!(
+            typen.iter().any(|t| *t == "IFCSHAPEREPRESENTATION" || *t == "IFCGEOMETRICREPRESENTATIONSUBCONTEXT"),
+            "{naam}: {typen:?}"
+        );
+
+        let v = verschil(a.as_bytes(), hernummer(&b, 4).as_bytes()).unwrap();
+        let gewijzigd: Vec<&str> = v.gewijzigd.iter().map(|w| w.globalid.as_str()).collect();
+        assert_eq!(gewijzigd, [project.as_str()], "{naam}: {v:#?}");
+        assert_eq!(v.gewijzigd[0].attributen[0].attribuut, "RepresentationContexts");
+        assert!(v.toegevoegd.is_empty() && v.verwijderd.is_empty(), "{naam}");
+    }
+}
+
+/// Het gebouw met een getypte SET in `RelatingPropertyDefinition` (een SELECT, geen SET):
+/// `IFCPROPERTYSETDEFINITIONSET((#61,#64))`. De tweede set heeft een hoek als getypte LIST.
+fn met_getypte_set(schema: &str) -> String {
+    let b =
+        vervang(&gebouw(schema), "#5,$,$,(#43,#44),#61);", "#5,$,$,(#43,#44),IFCPROPERTYSETDEFINITIONSET((#61,#64)));");
+    voeg_toe(
+        &b,
+        &format!(
+            "#63=IFCPROPERTYSINGLEVALUE('Hoek',$,IFCCOMPOUNDPLANEANGLEMEASURE((52,22,1)),$);\n\
+             #64=IFCPROPERTYSET('{}',#5,'Pset_Twee',$,(#63));",
+            gid("Pset2")
+        ),
+    )
+}
+
+/// De GlobalIds van de sets in de getypte SET van de relatie, gesorteerd.
+fn leden(tekst: &str) -> Vec<String> {
+    let f = Feiten::lees(tekst);
+    let rel = f.met_globalid(&gid("Defs"));
+    let mut lijst: Vec<String> = f.alle_verwijzingen(rel, 5).into_iter().map(|n| f.globalid(n).unwrap()).collect();
+    lijst.sort();
+    lijst
+}
+
+/// Bevinding 2: in een getypte SET telt de volgorde niet, een ander lid wel. Een getypte LIST blijft geordend.
+#[test]
+fn getypte_set_zonder_volgorde() {
+    for schema in ["IFC4", "IFC4X3_ADD2"] {
+        let a = met_getypte_set(schema);
+        let omgekeerd = vervang(&a, "((#61,#64))", "((#64,#61))");
+        assert_eq!(leden(&a), leden(&omgekeerd), "{schema}");
+        let v = verschil(a.as_bytes(), hernummer(&omgekeerd, 3).as_bytes()).unwrap();
+        assert!(v.is_leeg(), "{schema}: {v:#?}");
+        // Een lid minder is een wijziging van de relatie.
+        let minder = vervang(&a, "((#61,#64))", "((#61))");
+        assert_ne!(leden(&a), leden(&minder));
+        let v = verschil(a.as_bytes(), minder.as_bytes()).unwrap();
+        let w: Vec<(&str, &str)> = v
+            .gewijzigd
+            .iter()
+            .flat_map(|w| w.attributen.iter().map(|x| (w.globalid.as_str(), x.attribuut.as_str())))
+            .collect();
+        assert_eq!(w, [(gid("Defs").as_str(), "RelatingPropertyDefinition")], "{schema}: {v:#?}");
+        // Een getypte LIST: een andere volgorde is een andere hoek.
+        let hoek = vervang(&a, "((52,22,1))", "((22,52,1))");
+        let v = verschil(a.as_bytes(), hoek.as_bytes()).unwrap();
+        assert_eq!(v.gewijzigd.iter().map(|w| w.globalid.as_str()).collect::<Vec<_>>(), [gid("Pset2").as_str()]);
+    }
+}
+
+/// Bevinding 3: de plaatsingen van W en V staan relatief aan elkaar (#40 aan #45, #45 aan #40). Elk is het anker
+/// van een eigen wand. Een kring over ankers is ook een fout.
+#[test]
+fn kring_over_ankers_is_een_fout() {
+    for schema in SCHEMAS {
+        let a = vervang(&gebouw(schema), "#40=IFCLOCALPLACEMENT(#20,", "#40=IFCLOCALPLACEMENT(#45,");
+        let a = vervang(&a, "#45=IFCLOCALPLACEMENT(#20,", "#45=IFCLOCALPLACEMENT(#40,");
+        // Los nagegaan: de keten PlacementRelTo vanaf de plaatsing van W komt bij zichzelf terug.
+        let f = Feiten::lees(&a);
+        let (w, v) = (f.met_globalid(&gid("WandW")), f.met_globalid(&gid("WandV")));
+        let (pw, pv) = (f.verwijzing(w, 5), f.verwijzing(v, 5));
+        assert_ne!(pw, pv);
+        assert_eq!((f.verwijzing(pw, 0), f.verwijzing(pv, 0)), (pv, pw));
+        let regel = |n: &str| a.lines().position(|r| r.starts_with(n)).unwrap() + 1;
+        match verschil(a.as_bytes(), a.as_bytes()) {
+            Err(Fout::Kring { regel: r }) => assert!(r == regel("#40=") || r == regel("#45="), "{schema}: regel {r}"),
+            x => panic!("{schema}: verwachtte Fout::Kring: {x:?}"),
+        }
+    }
+}

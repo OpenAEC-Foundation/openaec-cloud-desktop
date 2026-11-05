@@ -26,7 +26,8 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   nodig, want Open Planner Studio nummert bij elk opslaan alles opnieuw.
 - Getallen vergelijken we precies op hun waarde, zonder afronden: `1.`, `1.0` en `1.E0` zijn gelijk,
   `9007199254740992.` en `9007199254740993.` niet. Teksten vergelijken we na het decoderen van de codes.
-- De volgorde in een SET of BAG telt niet (bijv. de eigenschappen in `HasProperties`); in een LIST wel.
+- De volgorde in een SET of BAG telt niet (bijv. de eigenschappen in `HasProperties`); in een LIST wel. Dat geldt
+  ook voor een getypte waarde van een TYPE dat een SET is: `IFCPROPERTYSETDEFINITIONSET((#1,#2))`.
 - Regeleinden en witruimte tussen de waarden tellen niet: een bestand met `\r\n` (zoals veel Windows-programma's
   schrijven) is gelijk aan hetzelfde bestand met `\n`.
 - **Ankers.** Een knoop waar een object rechtstreeks naar verwijst (bijv. `ObjectPlacement`), is een anker van dat
@@ -34,7 +35,9 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
   hangt nu onder verdieping Q in plaats van P" een wijziging, ook als de plaatsingen van P en Q dezelfde inhoud
   hebben. Een knoop die meer objecten gebruiken, heeft als identiteit al zijn ankers samen. Daarin tellen alleen
   objecten die in beide versies staan: een nieuw object aan een gedeelde IfcOwnerHistory verandert de andere
-  objecten niet.
+  objecten niet. Een anker in een SET of BAG houdt zijn identiteit als zijn inhoud verandert: we zoeken het
+  element in de basis dat niet ongewijzigd terugkomt, per type van de knoop. Zo is een andere Precision van de
+  context alleen een wijziging van het project, niet van elk object met een vorm.
 - **Delen telt.** Delen twee objecten een knoop (bijv. W en V één plaatsing) en krijgt V in de andere versie een
   eigen kopie met dezelfde inhoud, dan zijn W en V gewijzigd (`ObjectPlacement (gedeeld)`: "gedeeld met V" ->
   "niet gedeeld"). Bij IfcOwnerHistory telt delen niet: sommige programma's geven een gewijzigd object een eigen
@@ -56,8 +59,8 @@ Het ontwerp staat in openaec-storage, `docs/samenwerken/ontwerp.md` §5.6.
 - `.ifczip` en `.ifcxml`.
 - Schema's buiten IFC2X3, IFC4 en IFC4X3 (zoals IFC4X1): die vergelijken we met een heuristiek (een object herkennen
   aan een geldige GlobalId als eerste attribuut), en de statistiek meldt het.
-- Knopen die zonder object ertussen in een kring naar elkaar verwijzen: dat geeft een fout (`Fout::Kring`), want
-  hun hash zou afhangen van de volgorde in het bestand.
+- Knopen die zonder object ertussen in een kring naar elkaar verwijzen, ook via ankers (bijv. twee plaatsingen
+  relatief aan elkaar): dat geeft een fout (`Fout::Kring`).
 - Bestanden van 4 GiB of groter.
 
 Bekende kleinere punten staan in `knownbugs.md`.

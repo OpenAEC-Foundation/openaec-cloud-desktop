@@ -21,6 +21,15 @@ script of door de reviewer in de code), **S** = afgeleid, niet getoetst.
    precies dezelfde inhoud, dan telt bovendien het hoeveelste gelijke element, en dat volgt de tekst. Een diepere
    verwijzing naar een van de twee kan dan wisselen zonder dat het verschil het ziet, of andersom een wijziging
    tonen. De twee knopen zijn inhoudelijk gelijk. — S
-4. **De codetabel van `\P?\` geldt tot het einde van de tekst** (eigen bevinding, 5 november 2026). `src/tekst.rs`
-   begint elke tekst met tabel A (ISO 8859-1). Dat de keuze niet over teksten heen doorloopt, is niet nagelezen in
-   de tekst van ISO 10303-21 §6.4.3. — S
+4. **Gesloten: de codetabel van `\P?\` geldt tot het einde van de tekst** (eigen bevinding, 5 november 2026).
+   `src/tekst.rs` begint elke tekst met tabel A (ISO 8859-1). Sol bevestigde in de review van 1456355 dat de
+   keuze alleen binnen dezelfde tekst geldt (ISO 10303-21 §6.4.3.2). — B
+5. **Vluchtige waarden van een losse IfcOwnerHistory staan niet in het rapport** (review PR #6 fixronde 2,
+   bevinding 4, 5 november 2026). Verwijst niets naar een IfcOwnerHistory, dan vergelijken we hem als losse knoop,
+   zonder zijn vluchtige velden. Verandert alleen bijv. zijn CreationDate (1700000000 -> 1700000001), dan noemt
+   `Verschil::vluchtig` dat niet. Het verschil blijft verder juist (vluchtig telt niet als wijziging). — B
+6. **Veranderen twee elementen van hetzelfde type in één SET, dan verliezen hun ankers hun identiteit** (eigen
+   bevinding, 5 november 2026). De afstemming met de basis (`stem_ankers_af`) koppelt een veranderd element alleen
+   als er per type van de knoop precies één veranderd is, aan beide kanten. Veranderen bijv. twee contexten van het
+   project tegelijk, dan tellen de objecten die er dieper naar verwijzen ook als gewijzigd. Dat is een wijziging
+   te veel, geen verlies. — S
