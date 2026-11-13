@@ -708,3 +708,9 @@ Handmatig testen (op een testmachine of VM, niet op een werkplek met een echte i
 - Assistent: "Vragen aan de assistent" ook in het moderne rechtermuismenu van Windows 11 en op Linux en macOS (nu alleen
   in het klassieke submenu van de gekoppelde mappen); een eigen klein venster vanuit het systeemvak; PowerPoint, oudere
   Office-bestanden en gescande PDF's (tekstherkenning).
+
+## OpenAEC Local Workspace (sem cloud)
+
+Variante totalmente local, em português: colaboração BIM/CAD por **pasta partilhada em rede
+LAN**, sem servidores cloud, com trancas, versões, histórico e SQLite na própria raiz.
+Núcleo: `crates/openaec-local`; documentação completa: [`docs/LOCAL-WORKSPACE.md`](docs/LOCAL-WORKSPACE.md).

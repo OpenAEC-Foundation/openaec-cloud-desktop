@@ -1,0 +1,21 @@
+[package]
+name = "openaec-local"
+version = "2026.44.10"
+edition = "2021"
+description = "OpenAEC Local Workspace — núcleo local de colaboração BIM/CAD por pasta partilhada, sem cloud"
+license = "AGPL-3.0-only"
+rust-version = "1.77"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+blake3 = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[[bin]]
+name = "openaec-local"
+path = "src/bin/openaec-local.rs"
+
+[dev-dependencies]
+tempfile = "3"
