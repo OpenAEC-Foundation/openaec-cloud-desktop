@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  pull_request:
+    paths:
+      - "crates/openaec-local/**"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch: {}
+
+jobs:
+  openaec-local:
+    name: cargo test (openaec-local)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/openaec-local
+      - name: Test
+        run: cargo test --manifest-path crates/openaec-local/Cargo.toml --all-targets
