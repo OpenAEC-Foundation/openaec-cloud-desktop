@@ -83,7 +83,7 @@ const haalReleases = async (forceer: boolean) => {
     }
     const repos = DESKTOP_TOOLS.filter(eigenRepo).map((t) => {
       const [owner, repo] = t.repo!.split("/")
-      return { id: t.id, owner, repo }
+      return { id: t.id, owner, repo, assetPrefix: t.assetPrefix ?? null }
     })
     const data = await api.toolsReleases(repos)
     const samen = voegSamen(bekend, data)
