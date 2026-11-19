@@ -418,7 +418,7 @@ export const api = {
   menuVersturen: () => invoke<boolean>("menu_versturen"),
   zetMenuVersturen: (aan: boolean) => invoke<boolean>("zet_menu_versturen", { aan }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),
-  toolsReleases: (repos: { id: string; owner: string; repo: string }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
+  toolsReleases: (repos: { id: string; owner: string; repo: string; assetPrefix: string | null }[]) => invoke<ReleaseInfo[]>("tools_releases", { repos }),
   toolInstalleren: (id: string, url: string, bestandsnaam: string, digest: string | null, naam: string) =>
     invoke<InstallUitkomst>("tool_installeren", { id, url, bestandsnaam, digest, naam }),
   toolStarten: (exePad: string) => invoke<void>("tool_starten", { exePad }),

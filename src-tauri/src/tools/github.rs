@@ -22,6 +22,10 @@ pub struct RepoRef {
     pub id: String,
     pub owner: String,
     pub repo: String,
+    /// Begin van de naam van het installer-asset, voor een release met de setups van meerdere apps (zoals Open Office
+    /// Studio). Zonder prefix telt elk asset.
+    #[serde(default)]
+    pub asset_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -89,16 +93,26 @@ async fn fetch_one(client: reqwest::Client, repo: RepoRef) -> ReleaseInfo {
         Ok(v) => v,
         Err(e) => return error_info(repo.id, format!("json: {e}")),
     };
-    release_uit_json(repo.id, &json)
+    release_uit_json(repo.id, &json, repo.asset_prefix.as_deref())
 }
 
 /// Zet het antwoord van `releases/latest` om; los van het netwerk zodat het te testen is.
-fn release_uit_json(id: String, json: &serde_json::Value) -> ReleaseInfo {
+fn release_uit_json(id: String, json: &serde_json::Value, prefix: Option<&str>) -> ReleaseInfo {
     let tag = json["tag_name"].as_str().map(str::to_string);
     let page_url = json["html_url"].as_str().map(str::to_string);
     let published_at = json["published_at"].as_str().map(str::to_string);
 
-    let assets = json["assets"].as_array().cloned().unwrap_or_default();
+    let prefix = prefix.map(str::to_ascii_lowercase);
+    let assets: Vec<serde_json::Value> = json["assets"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| match (&prefix, a["name"].as_str()) {
+            (Some(p), Some(name)) => name.to_ascii_lowercase().starts_with(p.as_str()),
+            _ => true,
+        })
+        .collect();
     let best = assets
         .iter()
         .filter_map(|a| {
@@ -259,6 +273,28 @@ mod tests {
     }
 
     #[test]
+    fn assetprefix_kiest_een_app_uit_een_suite() {
+        // Open Office Studio levert de setups van al zijn apps in één release.
+        let json = serde_json::json!({
+            "tag_name": "v2026.46.2",
+            "assets": [
+                { "name": "Open.Database.Studio_2026.46.2_x64-setup.exe", "browser_download_url": "https://github.com/x/db" },
+                { "name": "Open.Office.Studio_2026.46.2_x64-setup.exe", "browser_download_url": "https://github.com/x/office" },
+                { "name": "Open.Writer.Studio_2026.46.2_x64-setup.exe", "browser_download_url": "https://github.com/x/writer" },
+                { "name": "Open.Database.Studio_2026.46.2_amd64.AppImage", "browser_download_url": "https://github.com/x/db-ai" },
+                { "name": "Open.Office.Studio_2026.46.2_amd64.AppImage", "browser_download_url": "https://github.com/x/office-ai" }
+            ]
+        });
+        let r = release_uit_json("open-office-studio".into(), &json, Some("Open.Office.Studio_"));
+        assert_eq!(r.version.as_deref(), Some("2026.46.2"));
+        if cfg!(windows) {
+            assert_eq!(r.asset_name.as_deref(), Some("Open.Office.Studio_2026.46.2_x64-setup.exe"));
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(r.asset_name.as_deref(), Some("Open.Office.Studio_2026.46.2_amd64.AppImage"));
+        }
+    }
+
+    #[test]
     fn release_met_digest_en_assetkeuze() {
         let json = serde_json::json!({
             "tag_name": "v1.0.1",
@@ -271,7 +307,7 @@ mod tests {
                 { "name": "latest.json", "browser_download_url": "https://github.com/x/json", "size": 4 }
             ]
         });
-        let r = release_uit_json("monty".into(), &json);
+        let r = release_uit_json("monty".into(), &json, None);
         assert!(r.ok);
         assert_eq!(r.tag.as_deref(), Some("v1.0.1"));
         // De versie komt uit de assetnaam, niet uit de tag.
@@ -283,7 +319,7 @@ mod tests {
             assert_eq!(r.asset_digest.as_deref(), Some("sha256:cc"));
         }
         // Zonder bruikbaar asset valt de versie terug op de tag.
-        let r = release_uit_json("x".into(), &serde_json::json!({ "tag_name": "v2.0", "assets": [] }));
+        let r = release_uit_json("x".into(), &serde_json::json!({ "tag_name": "v2.0", "assets": [] }), None);
         assert_eq!(r.version.as_deref(), Some("2.0"));
         assert!(r.asset_url.is_none());
     }
