@@ -1,0 +1,3 @@
+# De testbestanden blijven op elk platform byte voor byte zoals ze in de repo staan (LF). De root zet `text=auto`,
+# en dan checkt Windows ze uit met CRLF. Regeleinden van Windows testen we apart, met eigen CRLF-invoer.
+*.ifc -text
