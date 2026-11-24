@@ -221,11 +221,40 @@ keer; Delen… neemt het eerste). Zo werkt het:
   gebruik je de AppImage, zet het dan uit voordat je hem weggooit. Bij het verwijderen van de `.deb` ruimt
   `src-tauri/linux/postrm` de items op die naar het pakket wijzen (bij elke gebruiker; die van een AppImage blijven
   staan). Een postinst is niet nodig: de app zet de items bij de eerste start zelf, voor de gebruiker die hem start.
+- **Delen… op Linux en macOS** (`rechtermuis::werk_delen_bij`): zolang er een gekoppelde map is, staat er ook
+  **Delen met OpenAEC…** in het menu (`--actie delen <pad>`, het deelvenster). Nemo (`Locations=` in
+  `nemo/actions/openaec-delen.nemo_action`) en de nautilus-python-extensie (`openaec_delen.py`, leest
+  `openaec-cloud/mappen.json`) tonen het alleen in een gekoppelde map. Het Nautilus-script, Dolphin
+  (`kio/servicemenus/openaec-delen.desktop`) en de snelle actie van de Finder (`Delen met OpenAEC.workflow`) kunnen
+  dat niet en tonen het overal. Zonder gekoppelde map gaat het weg.
 - **macOS:** een snelle actie voor de Finder, `~/Library/Services/Versturen met OpenAEC.workflow` (één stap "Voer
   shellscript uit" met de gekozen bestanden als argumenten). Hij staat in het rechtermuismenu onder **Snelle acties**
   (of **Voorzieningen**), zonder extra installatiestap; na het schrijven ververst de app de lijst (`pbs -update`).
   Uitzetten in de instellingen haalt hem weg. (Een `NSServices`-regel in de `Info.plist` van de app zou een eigen
   Objective-C-methode in de app vragen; de workflow werkt met de app zoals Tauri hem bouwt.)
+
+## Statusvinkjes op Linux
+
+In een gekoppelde map krijgt elk bestand en elke map een embleem in de bestandsbeheerder (`src-tauri/src/emblemen.rs`):
+
+| Embleem | Betekenis |
+|---|---|
+| groen vinkje | gelijk aan de server |
+| blauwe pijlen | gewijzigd, of nu onderweg (ook op de mappen erboven) |
+| rood uitroepteken | de laatste poging mislukte (ook op de mappen erboven) |
+| grijs streepje | wordt niet gesynchroniseerd (lastige naam, alleen lezen gedeeld) |
+
+- De app zet het embleem in de metadata van GVfs (`metadata::emblems`, te zien met
+  `gio info -a metadata::emblems <pad>`). **Nemo** (Cinnamon) tekent het; getest op Linux Mint. Caja, Thunar en
+  Nautilus lezen dezelfde lijst, maar zijn niet getest. **Dolphin** (KDE) leest hem niet: daar is een eigen plugin
+  in C++ voor nodig.
+- Er is geen extensie en geen beheerdersrecht nodig. De pictogrammen (`emblem-openaec-*.svg`) komen in
+  `~/.local/share/icons/hicolor/scalable/emblems`.
+- Een embleem dat je zelf op een bestand zette, blijft staan. Bij ontkoppelen gaan de eigen emblemen weg.
+- De metadata staat niet in het bestand zelf; een embleem zetten wijzigt het bestand dus niet.
+- Bestanden op aanvraag (alleen online) zijn er op Linux niet: alles in een gekoppelde map staat op de computer.
+- Rooktest: `cd src-tauri && cargo run --example emblemen_smoke` (de echte sync-motor tegen een opslag in het
+  geheugen, op een tijdelijke map).
 
 ## Lastige namen en negeerlijst
 
@@ -374,9 +403,10 @@ De installers en het opdrachtregelprogramma komen uit GitHub Actions (workflow *
   `.AppImage` (uitvoerbaar maken en starten). Het pictogram verschijnt in het systeemvak; sleutels gaan naar de
   sleutelbos van de desktop (Secret Service).
 - **macOS:** `OpenAEC.Desktop.App_<versie>_universal.dmg` (Apple silicon en Intel), ondertekend en genotariseerd;
-  open hem en sleep de app naar Programma's. Op macOS synchroniseert de app gekoppelde mappen, deelt en verstuurt,
-  maar zonder statusvinkjes in de Finder, zonder bestanden op aanvraag en zonder hoofdmap in de navigatiekolom (die
-  gebruiken de Cloud Filter API van Windows; die code wordt op macOS niet gebouwd).
+  open hem en sleep de app naar Programma's. Op macOS synchroniseert de app gekoppelde mappen, deelt en verstuurt
+  (ook vanuit het rechtermuismenu van de Finder), maar zonder statusvinkjes in de Finder, zonder bestanden op
+  aanvraag en zonder hoofdmap in de navigatiekolom. Wat daarvoor nodig is, staat in
+  [docs/macos-finder.md](docs/macos-finder.md).
 - **Linux zonder scherm (servers):** het programma `openaec-storage` (de naam blijft: het is de opdrachtregel voor
   OpenAEC Storage, en scripts en `packaging/openaec-storage.service` gebruiken hem):
 

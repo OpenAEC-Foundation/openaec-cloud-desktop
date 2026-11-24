@@ -12,7 +12,8 @@
 //! "Vergrendeld door" ([`eigen_staten`], [`zet_slot`]). Welke status wat betekent, staat in `itemstatus`.
 //!
 //! Lukt registreren niet (een map die al onder een andere sync-provider valt, geen NTFS), dan alleen een waarschuwing
-//! in het logboek: synchroniseren werkt gewoon door. Op andere systemen doet dit niets.
+//! in het logboek: synchroniseren werkt gewoon door. Op Linux gaan dezelfde meldingen naar `emblemen` (een embleem in de
+//! bestandsbeheerder, zonder bestanden op aanvraag); op macOS doet dit nog niets.
 //!
 //! Alle functies behalve [`gebeurtenis`] en [`tijdens`] doen bestands-IO en horen op een blocking thread.
 
@@ -89,22 +90,34 @@ pub fn tijdens(lokaal: &str, g: &openaec_sync::voortgang::Gebeurtenis) {
     echt::tijdens(lokaal, g)
 }
 
+// Niet Windows: op Linux emblemen in de bestandsbeheerder (zie `emblemen`), op macOS (nog) niets.
+
 #[cfg(not(windows))]
-pub fn nog_te_koppelen(_lokaal: &str) -> bool {
-    false
+pub fn nog_te_koppelen(lokaal: &str) -> bool {
+    !crate::emblemen::gekoppeld(lokaal)
 }
 
 #[cfg(not(windows))]
-pub fn koppel(_k: &Koppeling) {}
+pub fn koppel(k: &Koppeling) {
+    crate::emblemen::koppel(&k.lokaal)
+}
 
 #[cfg(not(windows))]
-pub fn koppel_op_aanvraag(_k: &Koppeling) {}
+pub fn koppel_op_aanvraag(k: &Koppeling) {
+    crate::emblemen::koppel(&k.lokaal)
+}
 
 #[cfg(not(windows))]
-pub fn na_ronde(_lokaal: &str, _bijgewerkt: &[String], _foutpaden: &[String]) {}
+pub fn na_ronde(lokaal: &str, _bijgewerkt: &[String], foutpaden: &[String]) {
+    crate::emblemen::fouten(lokaal, foutpaden)
+}
 
+/// Volgt altijd op [`na_ronde`]: nu is ook bekend wat overgeslagen is, en worden alle emblemen opnieuw bepaald.
 #[cfg(not(windows))]
-pub fn eigen_staten(_lokaal: &str, _fouten: &[(String, String)], _overgeslagen: &[(String, String)]) {}
+pub fn eigen_staten(lokaal: &str, _fouten: &[(String, String)], overgeslagen: &[(String, String)]) {
+    let paden: Vec<String> = overgeslagen.iter().map(|(pad, _)| pad.clone()).collect();
+    crate::emblemen::na_ronde(lokaal, &paden)
+}
 
 #[cfg(not(windows))]
 pub fn zet_slot(_lokaal: &str, _pad: &str, _wie: Option<String>) {}
@@ -115,15 +128,30 @@ pub fn sloten(_lokaal: &str) -> Vec<String> {
 }
 
 #[cfg(not(windows))]
-pub fn ontkoppel(_lokaal: &str) {}
+pub fn ontkoppel(lokaal: &str) {
+    crate::emblemen::ontkoppel(lokaal)
+}
 
+/// Een wijziging in een gekoppelde map: het bestand krijgt pijlen tot de volgende ronde. Telt altijd mee voor de sync
+/// (een embleem zetten wijzigt het bestand zelf niet, dus dat komt hier niet langs).
 #[cfg(not(windows))]
-pub fn gebeurtenis(_root: &Path, _pad: &Path) -> bool {
+pub fn gebeurtenis(root: &Path, pad: &Path) -> bool {
+    if let Ok(rel) = pad.strip_prefix(root) {
+        let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/");
+        crate::emblemen::bezig(&root.to_string_lossy(), &rel);
+    }
     true
 }
 
 #[cfg(not(windows))]
-pub fn tijdens(_lokaal: &str, _g: &openaec_sync::voortgang::Gebeurtenis) {}
+pub fn tijdens(lokaal: &str, g: &openaec_sync::voortgang::Gebeurtenis) {
+    use openaec_sync::voortgang::{Actie, Gebeurtenis};
+    match g {
+        Gebeurtenis::Start { pad, .. } => crate::emblemen::bezig(lokaal, pad),
+        Gebeurtenis::Klaar { pad, actie } if *actie != Actie::Verwijderd => crate::emblemen::klaar(lokaal, pad),
+        _ => {}
+    }
+}
 
 #[cfg(any(windows, test))]
 fn lokaal_pad(root: &Path, pad: &str) -> std::path::PathBuf {
