@@ -1,7 +1,9 @@
 #!/bin/sh
-# Na het verwijderen van het pakket: "Versturen met OpenAEC" uit het rechtermuismenu van de bestandsbeheerders halen.
-# De app zet die items per gebruiker in ~/.local/share (zie src-tauri/src/rechtermuis.rs); hier gaan alleen de items
-# weg die naar dit pakket wijzen (/usr/bin/openaec-cloud), niet die van een AppImage. Bij een upgrade blijven ze staan.
+# Na het verwijderen van het pakket: "Versturen met OpenAEC" en "Delen met OpenAEC…" uit het rechtermuismenu van de
+# bestandsbeheerders halen, en de pictogrammen van de statusvinkjes.
+# De app zet die items per gebruiker in ~/.local/share (zie src-tauri/src/rechtermuis.rs en emblemen.rs); hier gaan
+# alleen de items weg die naar dit pakket wijzen (/usr/bin/openaec-cloud), niet die van een AppImage. Bij een upgrade
+# blijven ze staan.
 set -e
 
 case "$1" in
@@ -16,16 +18,29 @@ for thuis in /root /home/*; do
     "nautilus/scripts/Versturen met OpenAEC" \
     "nautilus-python/extensions/openaec_versturen.py" \
     "kio/servicemenus/openaec-versturen.desktop" \
-    "nemo/actions/openaec-versturen.nemo_action"; do
+    "nemo/actions/openaec-versturen.nemo_action" \
+    "nautilus/scripts/Delen met OpenAEC" \
+    "nautilus-python/extensions/openaec_delen.py" \
+    "kio/servicemenus/openaec-delen.desktop" \
+    "nemo/actions/openaec-delen.nemo_action"; do
     if grep -qs "/usr/bin/openaec-cloud" "$data/$item"; then
-      rm -f "$data/$item"
+      rm -f "${data:?}/${item:?}"
     fi
   done
   # Het pictogram alleen als geen enkel item er nog naar kan wijzen.
   if [ ! -e "$data/kio/servicemenus/openaec-versturen.desktop" ] && [ ! -e "$data/nemo/actions/openaec-versturen.nemo_action" ]; then
-    rm -f "$data/openaec-cloud/versturen.png"
-    rmdir "$data/openaec-cloud" 2>/dev/null || true
+    rm -f "${data:?}/openaec-cloud/versturen.png"
   fi
+  # Wat alleen bij Delen… hoort, als geen enkel item van Delen… er nog is.
+  if [ ! -e "$data/kio/servicemenus/openaec-delen.desktop" ] && [ ! -e "$data/nemo/actions/openaec-delen.nemo_action" ]; then
+    rm -f "${data:?}/openaec-cloud/mappen.json" "${data:?}/openaec-cloud/delen.png"
+  fi
+  rmdir "$data/openaec-cloud" 2>/dev/null || true
+  # De pictogrammen van de statusvinkjes. De emblemen zelf staan in de metadata van GVfs; zonder pictogram toont de
+  # bestandsbeheerder ze niet meer.
+  for embleem in emblem-openaec-synced.svg emblem-openaec-syncing.svg emblem-openaec-error.svg emblem-openaec-skipped.svg; do
+    rm -f "${data:?}/icons/hicolor/scalable/emblems/${embleem:?}"
+  done
 done
 
 exit 0

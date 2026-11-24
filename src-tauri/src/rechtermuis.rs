@@ -12,6 +12,12 @@
 //!   instellingen gaan ze weg; bij het verwijderen van de .deb ruimt `linux/postrm` ze op.
 //! - **macOS**: een snelle actie (`~/Library/Services/Versturen met OpenAEC.workflow`) voor de Finder.
 //!
+//! **Delen…** staat er op Linux en macOS naast, zolang er een gekoppelde map is ([`werk_delen_bij`]): het opent het
+//! deelvenster voor het gekozen bestand of de gekozen map (`--actie delen <pad>`). Nemo en de nautilus-python-extensie
+//! tonen het alleen in een gekoppelde map; het Nautilus-script, Dolphin en de snelle actie van de Finder kunnen dat
+//! niet en tonen het overal (buiten een gekoppelde map legt het deelvenster uit dat de map niet gekoppeld is). Op
+//! Windows zit Delen… in het submenu van de gekoppelde mappen (`verkenner`, `menupakket`).
+//!
 //! De app schrijft dit bij elke start opnieuw (alleen als er iets verandert), zodat het pad naar de app klopt na een
 //! update of een verplaatste AppImage. Dit bestand staat los van de rest van de app (alleen std, winreg, dirs en
 //! serde_json), zodat de rooktest (`examples/versturen_smoke.rs`) het kan meenemen.
@@ -22,6 +28,10 @@ use std::path::{Path, PathBuf};
 pub const LABEL: &str = "Versturen met OpenAEC";
 /// De actie op de opdrachtregel (`--actie versturen <paden…>`).
 pub const ACTIE: &str = "versturen";
+/// Tekst van het item voor delen (Linux en macOS).
+pub const LABEL_DELEN: &str = "Delen met OpenAEC…";
+/// De actie op de opdrachtregel voor delen (`--actie delen <pad>`).
+pub const ACTIE_DELEN: &str = "delen";
 /// Sleutelnaam van het werkwoord in het register (Windows).
 pub const SLEUTEL: &str = "OpenAECVersturen";
 /// De soorten waarop het werkwoord staat: alle bestanden en mappen.
@@ -138,6 +148,130 @@ pub const PICTOGRAM: &str = "openaec-cloud/versturen.png";
 /// Alles wat de app op Linux in `~/.local/share` zet (ook `linux/postrm` ruimt precies deze op).
 pub const LINUX_PADEN: [&str; 5] = [NAUTILUS_SCRIPT, NAUTILUS_PYTHON, DOLPHIN, NEMO, PICTOGRAM];
 
+/// Delen…: het Nautilus-script, of de nautilus-python-extensie (alleen in een gekoppelde map).
+pub const NAUTILUS_SCRIPT_DELEN: &str = "nautilus/scripts/Delen met OpenAEC";
+pub const NAUTILUS_PYTHON_DELEN: &str = "nautilus-python/extensions/openaec_delen.py";
+/// Delen…: het service-menu van Dolphin en de actie van Nemo.
+pub const DOLPHIN_DELEN: &str = "kio/servicemenus/openaec-delen.desktop";
+pub const NEMO_DELEN: &str = "nemo/actions/openaec-delen.nemo_action";
+/// De gekoppelde mappen voor de nautilus-python-extensie (`{"mappen": [...]}`).
+pub const MAPPEN: &str = "openaec-cloud/mappen.json";
+/// Het pictogram bij Delen… (los van dat van Versturen, dat weggaat als Versturen uit staat).
+pub const PICTOGRAM_DELEN: &str = "openaec-cloud/delen.png";
+
+/// Alles wat de app op Linux voor Delen… in `~/.local/share` zet (ook `linux/postrm` ruimt precies deze op).
+pub const LINUX_PADEN_DELEN: [&str; 6] = [NAUTILUS_SCRIPT_DELEN, NAUTILUS_PYTHON_DELEN, DOLPHIN_DELEN, NEMO_DELEN, MAPPEN, PICTOGRAM_DELEN];
+
+/// De regel `Locations=` voor een actie van Nemo: alleen in de gekoppelde mappen en alles eronder. Een patroon met
+/// een `*` vooraan vergelijkt Nemo met het volledige pad. Kan een pad niet in zo'n patroon (het bevat zelf een
+/// jokerteken of een puntkomma), dan `None`: de actie staat dan overal.
+pub fn nemo_locaties(mappen: &[String]) -> Option<String> {
+    let mut uit = String::new();
+    for map in mappen {
+        let map = map.trim_end_matches('/');
+        if map.is_empty() || map.chars().any(|c| matches!(c, '*' | '?' | '[' | ']' | ';' | '\\' | '\n')) {
+            return None;
+        }
+        uit.push_str(&format!("*{map};*{map}/*;"));
+    }
+    (!uit.is_empty()).then_some(uit)
+}
+
+/// De menubestanden voor Delen… op Linux, voor deze gekoppelde mappen (zie [`linux_bestanden`] voor de parameters).
+pub fn linux_delen_bestanden(exe: &str, pictogram: &str, nautilus_python: bool, mappen: &[String]) -> Vec<Menubestand> {
+    let mut uit = vec![Menubestand {
+        pad: MAPPEN,
+        uitvoerbaar: false,
+        inhoud: serde_json::to_vec(&serde_json::json!({ "mappen": mappen })).unwrap_or_default(),
+    }];
+    if nautilus_python {
+        let exe_py = serde_json::to_string(exe).unwrap_or_default();
+        uit.push(Menubestand {
+            pad: NAUTILUS_PYTHON_DELEN,
+            uitvoerbaar: false,
+            inhoud: format!(
+                r#"# {LABEL_DELEN}: geplaatst door OpenAEC Desktop App, die het weer opruimt als er geen gekoppelde map meer is of de app weggaat.
+import json
+import os
+import subprocess
+
+import gi
+
+try:
+    gi.require_version("Nautilus", "4.0")
+except ValueError:
+    gi.require_version("Nautilus", "3.0")
+from gi.repository import GLib, GObject, Nautilus
+
+PROGRAMMA = {exe_py}
+# De gekoppelde mappen; de app werkt dit bestand bij na elke (ont)koppeling.
+MAPPEN = os.path.join(GLib.get_user_data_dir(), "{MAPPEN}")
+
+
+def gekoppeld(pad):
+    try:
+        with open(MAPPEN, encoding="utf-8") as bestand:
+            mappen = json.load(bestand).get("mappen", [])
+    except (OSError, ValueError):
+        return False
+    return any(pad == m.rstrip("/") or pad.startswith(m.rstrip("/") + "/") for m in mappen if m)
+
+
+class OpenAECDelen(GObject.GObject, Nautilus.MenuProvider):
+    def _delen(self, _item, pad):
+        subprocess.Popen([PROGRAMMA, "--actie", "{ACTIE_DELEN}", pad], start_new_session=True)
+
+    # Nautilus 4 geeft (bestanden), Nautilus 3 (venster, bestanden). Alleen bij één keuze in een gekoppelde map.
+    def get_file_items(self, *args):
+        bestanden = args[-1]
+        if not bestanden or len(bestanden) != 1:
+            return []
+        pad = bestanden[0].get_location().get_path()
+        if not pad or not gekoppeld(pad):
+            return []
+        item = Nautilus.MenuItem(name="OpenAECDelen::delen", label="{LABEL_DELEN}")
+        item.connect("activate", self._delen, pad)
+        return [item]
+"#
+            )
+            .into_bytes(),
+        });
+    } else {
+        uit.push(Menubestand {
+            pad: NAUTILUS_SCRIPT_DELEN,
+            uitvoerbaar: true,
+            inhoud: format!(
+                "#!/bin/sh\n# {LABEL_DELEN}: geplaatst door OpenAEC Desktop App, die het weer opruimt als er geen gekoppelde map meer is of de app weggaat.\n\
+                 # Nautilus geeft de gekozen paden, een per regel; delen gaat over het eerste.\nIFS='\n'\nset -f\nset -- $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS\n\
+                 [ -n \"$1\" ] || exit 0\nexec {} --actie {ACTIE_DELEN} \"$1\"\n",
+                sh_woord(exe)
+            )
+            .into_bytes(),
+        });
+    }
+    let exec = desktop_exec(exe);
+    uit.push(Menubestand {
+        pad: DOLPHIN_DELEN,
+        uitvoerbaar: true,
+        inhoud: format!(
+            "[Desktop Entry]\nType=Service\nMimeType=all/all;\nX-KDE-ServiceTypes=KonqPopupMenu/Plugin\nActions=delen\n\
+             X-KDE-Priority=TopLevel\n\n[Desktop Action delen]\nName={LABEL_DELEN}\nIcon={pictogram}\nExec={exec} --actie {ACTIE_DELEN} %f\n"
+        )
+        .into_bytes(),
+    });
+    let locaties = nemo_locaties(mappen).map(|l| format!("Locations={l}\n")).unwrap_or_default();
+    uit.push(Menubestand {
+        pad: NEMO_DELEN,
+        uitvoerbaar: false,
+        inhoud: format!(
+            "[Nemo Action]\nName={LABEL_DELEN}\nComment=Delen met een collega of met een link\nExec={exec} --actie {ACTIE_DELEN} %F\n\
+             Icon-Name=openaec-cloud\nSelection=s\nExtensions=any;\nQuote=double\n{locaties}"
+        )
+        .into_bytes(),
+    });
+    uit
+}
+
 /// Een argument voor een shellscript: tussen enkele aanhalingstekens.
 pub fn sh_woord(tekst: &str) -> String {
     format!("'{}'", tekst.replace('\'', r"'\''"))
@@ -246,11 +380,35 @@ fn xml(tekst: &str) -> String {
 
 /// De map van de snelle actie op macOS, ten opzichte van `~/Library/Services`.
 pub const MACOS_WORKFLOW: &str = "Versturen met OpenAEC.workflow";
+/// De snelle actie voor Delen… (zolang er een gekoppelde map is).
+pub const MACOS_WORKFLOW_DELEN: &str = "Delen met OpenAEC.workflow";
 
 /// De bestanden van de snelle actie voor de Finder (macOS), ten opzichte van `~/Library/Services`: een workflow met
 /// één stap "Voer shellscript uit" die de app met de gekozen paden start.
 pub fn macos_bestanden(exe: &str) -> Vec<Menubestand> {
-    let opdracht = xml(&format!("{} --actie {ACTIE} \"$@\" >/dev/null 2>&1 &", sh_woord(exe)));
+    macos_workflow(
+        ["Versturen met OpenAEC.workflow/Contents/Info.plist", "Versturen met OpenAEC.workflow/Contents/document.wflow"],
+        LABEL,
+        ACTIE,
+        exe,
+    )
+}
+
+/// De snelle actie "Delen met OpenAEC…" voor de Finder (macOS): opent het deelvenster voor het gekozen bestand of de
+/// gekozen map. De Finder kan een snelle actie niet tot bepaalde mappen beperken; hij staat dus overal.
+pub fn macos_delen_bestanden(exe: &str) -> Vec<Menubestand> {
+    macos_workflow(
+        ["Delen met OpenAEC.workflow/Contents/Info.plist", "Delen met OpenAEC.workflow/Contents/document.wflow"],
+        LABEL_DELEN,
+        ACTIE_DELEN,
+        exe,
+    )
+}
+
+/// Een workflow (Info.plist en document.wflow) die de app start met `--actie <actie>` en de gekozen paden.
+fn macos_workflow(paden: [&'static str; 2], label: &str, actie: &str, exe: &str) -> Vec<Menubestand> {
+    let label = xml(label);
+    let opdracht = xml(&format!("{} --actie {actie} \"$@\" >/dev/null 2>&1 &", sh_woord(exe)));
     let info = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -266,7 +424,7 @@ pub fn macos_bestanden(exe: &str) -> Vec<Menubestand> {
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>{LABEL}</string>
+				<string>{label}</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
@@ -439,8 +597,8 @@ pub fn macos_bestanden(exe: &str) -> Vec<Menubestand> {
 "#
     );
     vec![
-        Menubestand { pad: "Versturen met OpenAEC.workflow/Contents/Info.plist", inhoud: info.into_bytes(), uitvoerbaar: false },
-        Menubestand { pad: "Versturen met OpenAEC.workflow/Contents/document.wflow", inhoud: document.into_bytes(), uitvoerbaar: false },
+        Menubestand { pad: paden[0], inhoud: info.into_bytes(), uitvoerbaar: false },
+        Menubestand { pad: paden[1], inhoud: document.into_bytes(), uitvoerbaar: false },
     ]
 }
 
@@ -551,9 +709,96 @@ pub fn werk_bij(aan: bool) -> std::io::Result<()> {
     }
 }
 
+/// Delen… in het rechtermuismenu op Linux en macOS, voor deze gekoppelde mappen; zonder gekoppelde map gaat het weg.
+/// Op Windows doet dit niets (daar zit Delen… in het submenu van de gekoppelde mappen).
+pub fn werk_delen_bij(mappen: &[String]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let basis = basismap().ok_or_else(|| std::io::Error::other("geen gegevensmap"))?;
+        if mappen.is_empty() {
+            return verwijder_uit(&basis, &LINUX_PADEN_DELEN);
+        }
+        let pictogram = Menubestand { pad: PICTOGRAM_DELEN, inhoud: include_bytes!("../icons/128x128.png").to_vec(), uitvoerbaar: false };
+        installeer_in(&basis, std::slice::from_ref(&pictogram))?;
+        let python = heeft_nautilus_python();
+        let bestanden = linux_delen_bestanden(&linux_programma()?, &basis.join(PICTOGRAM_DELEN).to_string_lossy(), python, mappen);
+        verwijder_uit(&basis, &[if python { NAUTILUS_SCRIPT_DELEN } else { NAUTILUS_PYTHON_DELEN }])?;
+        installeer_in(&basis, &bestanden).map(|_| ())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let basis = basismap().ok_or_else(|| std::io::Error::other("geen thuismap"))?;
+        let veranderd = if mappen.is_empty() {
+            match std::fs::remove_dir_all(basis.join(MACOS_WORKFLOW_DELEN)) {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => return Err(e),
+            }
+        } else {
+            installeer_in(&basis, &macos_delen_bestanden(&std::env::current_exe()?.to_string_lossy()))?
+        };
+        if veranderd {
+            let _ = std::process::Command::new("/System/Library/CoreServices/pbs").arg("-update").status();
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = mappen;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_delen_alleen_in_gekoppelde_mappen_waar_dat_kan() {
+        let exe = "/usr/bin/openaec-cloud";
+        let mappen = vec!["/home/jan/OpenAEC/Project A".to_string(), "/home/jan/Werk/".to_string()];
+        let b = linux_delen_bestanden(exe, "/x/delen.png", false, &mappen);
+        let tekst = |pad: &str| String::from_utf8(b.iter().find(|m| m.pad == pad).unwrap().inhoud.clone()).unwrap();
+        assert_eq!(b.iter().map(|m| m.pad).collect::<Vec<_>>(), [MAPPEN, NAUTILUS_SCRIPT_DELEN, DOLPHIN_DELEN, NEMO_DELEN]);
+        assert_eq!(tekst(MAPPEN), r#"{"mappen":["/home/jan/OpenAEC/Project A","/home/jan/Werk/"]}"#);
+        let script = tekst(NAUTILUS_SCRIPT_DELEN);
+        assert!(script.contains("exec '/usr/bin/openaec-cloud' --actie delen \"$1\"\n"));
+        assert!(tekst(DOLPHIN_DELEN).contains("Exec=\"/usr/bin/openaec-cloud\" --actie delen %f\n"));
+        let nemo = tekst(NEMO_DELEN);
+        assert!(nemo.contains("Name=Delen met OpenAEC…\n"));
+        assert!(nemo.contains("Selection=s\n"));
+        assert!(nemo.contains("Locations=*/home/jan/OpenAEC/Project A;*/home/jan/OpenAEC/Project A/*;*/home/jan/Werk;*/home/jan/Werk/*;\n"));
+
+        // Een pad dat niet in een patroon kan: de actie staat dan overal (het deelvenster legt het uit).
+        assert_eq!(nemo_locaties(&["/home/jan/Project [oud]".to_string()]), None);
+        assert_eq!(nemo_locaties(&[]), None);
+        let b = linux_delen_bestanden(exe, "/x/delen.png", false, &["/home/jan/a;b".to_string()]);
+        assert!(!String::from_utf8(b.last().unwrap().inhoud.clone()).unwrap().contains("Locations="));
+
+        // Met nautilus-python: de extensie leest de gekoppelde mappen en toont het item alleen daarin.
+        let b = linux_delen_bestanden(exe, "/x/delen.png", true, &mappen);
+        assert_eq!(b[1].pad, NAUTILUS_PYTHON_DELEN);
+        let py = String::from_utf8(b[1].inhoud.clone()).unwrap();
+        assert!(py.contains("PROGRAMMA = \"/usr/bin/openaec-cloud\""));
+        assert!(py.contains("\"openaec-cloud/mappen.json\""));
+        assert!(py.contains("[PROGRAMMA, \"--actie\", \"delen\", pad]"));
+    }
+
+    #[test]
+    fn postrm_ruimt_ook_delen_op() {
+        let postrm = include_str!("../linux/postrm");
+        for pad in LINUX_PADEN_DELEN {
+            assert!(postrm.contains(pad), "{pad} ontbreekt in linux/postrm");
+        }
+    }
+
+    #[test]
+    fn macos_snelle_actie_voor_delen() {
+        let b = macos_delen_bestanden("/Applications/OpenAEC Desktop App.app/Contents/MacOS/openaec-cloud");
+        assert!(b.iter().all(|m| m.pad.starts_with(MACOS_WORKFLOW_DELEN)));
+        assert!(String::from_utf8(b[0].inhoud.clone()).unwrap().contains("<string>Delen met OpenAEC…</string>"));
+        assert!(String::from_utf8(b[1].inhoud.clone()).unwrap().contains("openaec-cloud' --actie delen \"$@\" &gt;/dev/null"));
+    }
 
     #[test]
     fn windows_werkwoord_op_alle_bestanden_en_mappen() {

@@ -5,9 +5,10 @@ mod activiteit;
 mod assistent;
 mod bewaking;
 mod delen;
+pub mod emblemen;
 mod hoofdmap;
 mod instellingen;
-mod itemstatus;
+pub mod itemstatus;
 mod logboek;
 mod menupakket;
 mod opaanvraag;
@@ -369,6 +370,10 @@ fn werk_menu_bij(inst: &Instellingen) {
         log::warn!("rechtermuismenu bijwerken mislukt: {e}");
     }
     menupakket::schrijf_menu(inst);
+    // Linux en macOS: Delen… in het rechtermuismenu, zolang er een gekoppelde map is.
+    if let Err(e) = rechtermuis::werk_delen_bij(&mappen) {
+        log::warn!("Delen… in het rechtermuismenu bijwerken mislukt: {e}");
+    }
     let koppelingen: Vec<(String, String)> = inst.koppelingen.iter().map(|k| (k.ruimte_naam.clone(), k.lokaal.clone())).collect();
     werk_navigatie_bij(inst.hoofdmap.clone(), koppelingen);
 }

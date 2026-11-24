@@ -49,6 +49,10 @@ pdf-extract = "0.9"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 
+# Statusvinkjes in de bestandsbeheerder (emblemen via GVfs-metadata); dezelfde gio als die van Tauri (GTK 3).
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.18"
+
 # Windows Cloud Filter API (Verkenner-overlays + files-on-demand) — Fase 2.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
