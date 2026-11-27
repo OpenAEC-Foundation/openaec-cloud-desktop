@@ -310,7 +310,7 @@ impl From<&str> for VersturenFout {
     }
 }
 
-async fn verbinding(state: &AppState) -> Result<Client, VersturenFout> {
+pub(crate) async fn verbinding(state: &AppState) -> Result<Client, VersturenFout> {
     client(state).await.map_err(|e| {
         let melding = if e.contains("niet verbonden") {
             "Er is nog geen omgeving gekoppeld. Log in om bestanden te versturen.".to_string()

@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import type { Bijlage, Gebeurtenis, Gesprek, Model, Samenvatting } from "./assistent.ts"
 import type { GeinstalleerdeTool, ReleaseInfo } from "./tools.ts"
+import type { KlantGedeeld, KlantGemaakt, KlantLevering, KlantProjecten } from "./klant.ts"
 import type { Lopend, OverdrachtRegel, Overdrachtgrenzen, VerstuurItem, VerstuurStap, Voltooid } from "./versturen.ts"
 
 export interface Ruimte {
@@ -415,6 +416,12 @@ export const api = {
   opVersturenKlaar: (f: (v: Voltooid) => void) => listen<Voltooid>("versturen-klaar", (e) => f(e.payload)),
   opVersturenFout: (f: (v: { overdracht: string; fout: { code: string; melding: string } }) => void) =>
     listen<{ overdracht: string; fout: { code: string; melding: string } }>("versturen-fout", (e) => f(e.payload)),
+  klantProjecten: (zoek = "") => invoke<KlantProjecten>("klant_projecten", { zoek }),
+  klantMijn: () => invoke<KlantLevering[]>("klant_mijn"),
+  klantVanOverdracht: (overdracht: string, levering: { titel: string; project: string | null; bericht: string | null; datadrop: string | null; notitie: string | null }) =>
+    invoke<KlantGemaakt>("klant_van_overdracht", { overdracht, levering }),
+  klantDeel: (datadrop: string, ontvangers: string[], bericht: string | null) => invoke<KlantGedeeld>("klant_deel", { datadrop, ontvangers, bericht }),
+  klantVoorbeeld: (url: string) => invoke<void>("klant_voorbeeld", { url }),
   menuVersturen: () => invoke<boolean>("menu_versturen"),
   zetMenuVersturen: (aan: boolean) => invoke<boolean>("zet_menu_versturen", { aan }),
   toolsGeinstalleerd: (queries: ToolVraag[]) => invoke<GeinstalleerdeTool[]>("tools_geinstalleerd", { queries }),

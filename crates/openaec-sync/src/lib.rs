@@ -6,6 +6,7 @@ pub mod ai;
 pub mod api;
 pub mod bewaking;
 pub mod blokken;
+pub mod datadrop;
 pub mod importeer;
 pub mod motor;
 pub mod namen;
