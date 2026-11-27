@@ -3187,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "openaec-cloud"
-version = "2026.48.0"
+version = "2026.48.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "openaec-shellmenu"
-version = "2026.48.0"
+version = "2026.48.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "openaec-sync"
-version = "2026.48.0"
+version = "2026.48.1"
 dependencies = [
  "base64 0.22.1",
  "blake3",
