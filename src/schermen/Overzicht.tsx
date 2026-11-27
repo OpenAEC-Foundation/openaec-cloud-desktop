@@ -7,7 +7,7 @@ import SessieVerlopen from "../SessieVerlopen"
 import { rechtenTekst } from "../lib/delen"
 import { besparingTekst, grootte, misluktTekst, naamVan, procent, quotumTekst, rondeTekst, snelheid, soort, tijdstip } from "../lib/opmaak"
 import {
-  basis, bezig, doe, hoofdmap, inHoofdmap, koppelingen, koppelStatus, laadHoofdmap, quotum, rapporten, ruimtes, setHoofdmap,
+  basis, bezig, doe, hoofdmap, inHoofdmap, kortAdres, koppelingen, koppelStatus, laadHoofdmap, omgevingen, quotum, rapporten, ruimtes, setHoofdmap,
   setKoppelingen, setMelding, setScherm, stand, verversOverzicht, verwerkSync,
 } from "../lib/winkel"
 
@@ -158,7 +158,12 @@ export default function Overzicht() {
       ? ["gedeeld", k.gedeeld_door ? `door ${k.gedeeld_door}` : "", rechtenTekst("gebruiker", k.rechten ?? "lezen").toLowerCase()]
           .filter(Boolean)
           .join(" · ")
-      : soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
+      : !k.basis || k.basis === basis()
+        ? soort(ruimtes().find((r) => r.name === k.ruimte)?.soort)
+        : ""
+
+  /** Bij meer dan één omgeving: bij welke omgeving de map hoort. */
+  const omgevingVan = (k: Koppeling) => (omgevingen().length > 1 ? kortAdres(k.basis ?? basis()) : "")
 
   return (
     <div class="scherm">
@@ -256,6 +261,9 @@ export default function Overzicht() {
                       <h2>{k.ruimte_naam}</h2>
                       <Show when={soortVan(k)}>
                         <span class="soort">{soortVan(k)}</span>
+                      </Show>
+                      <Show when={omgevingVan(k)}>
+                        <span class="soort">{omgevingVan(k)}</span>
                       </Show>
                     </div>
                     <div>

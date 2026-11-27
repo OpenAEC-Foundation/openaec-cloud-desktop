@@ -2,13 +2,20 @@
 // de sync. De schermen lezen hieruit en roepen de acties hieronder aan.
 
 import { createSignal } from "solid-js"
-import { api, type Gedeeld, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type Quotum, type Ruimte, type Stand } from "./api"
+import {
+  api, type Gedeeld, type HoofdmapStatus, type Koppeling, type KoppelStatus, type MapRapport, type OmgevingStatus, type Quotum, type Ruimte,
+  type Stand, type Status,
+} from "./api"
 
 export type Scherm = "overzicht" | "ruimtes" | "delen" | "assistent" | "tools" | "instellingen"
 
 export const [scherm, setScherm] = createSignal<Scherm>("overzicht")
 export const [basis, setBasis] = createSignal("")
 export const [verbonden, setVerbonden] = createSignal(false)
+/** Alle omgevingen waarmee de app verbonden is (de gekozen is `basis`). */
+export const [omgevingen, setOmgevingen] = createSignal<OmgevingStatus[]>([])
+/** Het inlogscherm staat open om een omgeving toe te voegen (terwijl er al een verbonden is). */
+export const [toevoegen, setToevoegen] = createSignal(false)
 export const [bezig, setBezig] = createSignal(false)
 export const [melding, setMelding] = createSignal("")
 export const [ruimtes, setRuimtes] = createSignal<Ruimte[]>([])
@@ -88,6 +95,30 @@ export const inHoofdmap = (k: Koppeling) => {
   const ouder = k.lokaal.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "")
   return ouder.toLowerCase() === h.replace(/[\\/]+$/, "").toLowerCase()
 }
+
+/** Een adres zoals de app het toont: zonder `https://`. */
+export const kortAdres = (b: string) => b.replace(/^https?:\/\//, "")
+
+/** De stand van de backend overnemen: gekozen omgeving, alle omgevingen en de koppelingen. */
+export const neemStatus = (s: Status) => {
+  setBasis(s.basis ?? "")
+  setOmgevingen(s.omgevingen)
+  setKoppelingen(s.koppelingen)
+  setVerbonden(s.verbonden)
+}
+
+/** Een andere omgeving kiezen: Ruimtes, Versturen en de assistent werken daarna daarmee. */
+export const kiesOmgeving = (b: string) =>
+  doe(`Overschakelen naar ${kortAdres(b)}`, async () => {
+    neemStatus(await api.kiesOmgeving(b))
+    setRuimtes([])
+    setGedeeld([])
+    setRuimtesOpgehaald(false)
+    setQuotum(null)
+    laatsteRuimtes = 0
+    ververs()
+    setMelding(`Je werkt nu in ${kortAdres(b)}`)
+  })
 
 /** Gegevens verversen als het venster (weer) in beeld komt. */
 export const ververs = () => {

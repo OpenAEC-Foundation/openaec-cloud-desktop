@@ -29,6 +29,8 @@ export interface Koppeling {
   wortel?: string | null
   rechten?: "lezen" | "schrijven" | "beheren" | null
   gedeeld_door?: string | null
+  /** De omgeving waar de ruimte op staat (een oude koppeling zonder: de gekozen omgeving). */
+  basis?: string | null
 }
 
 /** Iets dat een ander met mij deelde (`gedeeld_met_mij` op de server). */
@@ -78,10 +80,23 @@ export interface HoofdmapStatus {
   fout: string | null
 }
 
+/** Een omgeving waarmee de app verbonden is. */
+export interface OmgevingStatus {
+  basis: string
+  /** Er staat een sleutel of token in de sleutelbos. */
+  verbonden: boolean
+  /** De sessie is verlopen: opnieuw inloggen. */
+  verlopen: boolean
+  /** Aantal gekoppelde mappen bij deze omgeving. */
+  koppelingen: number
+}
+
 export interface Status {
+  /** De gekozen omgeving (Ruimtes, Versturen, de assistent). */
   basis: string | null
   verbonden: boolean
   koppelingen: Koppeling[]
+  omgevingen: OmgevingStatus[]
 }
 
 export interface Rapport {
@@ -270,6 +285,8 @@ export interface Deeldoel {
   pad: string
   ruimte: string
   ruimte_naam: string
+  /** De omgeving waar het op staat; leeg: de gekozen omgeving. */
+  basis?: string | null
 }
 
 /** Opdracht aan het deelvenster: een lokaal pad (nog op te zoeken) of een bekend doel. */
@@ -316,7 +333,10 @@ export const api = {
   status: () => invoke<Status>("status"),
   verbind: (basis: string, autorisatie: string) => invoke<Ruimte[]>("verbind", { basis, autorisatie }),
   logIn: (basis: string) => invoke<Ruimte[]>("log_in", { basis }),
-  verbreek: () => invoke<void>("verbreek"),
+  /** Uitloggen bij een omgeving (zonder `basis`: de gekozen); geeft de nieuwe stand. */
+  verbreek: (basis?: string) => invoke<Status>("verbreek", { basis: basis ?? null }),
+  /** Een andere omgeving kiezen voor Ruimtes, Versturen en de assistent. */
+  kiesOmgeving: (basis: string) => invoke<Status>("kies_omgeving", { basis }),
   ruimtes: () => invoke<Ruimte[]>("ruimtes"),
   mapsjablonen: (soort: string | null) =>
     invoke<{ naam: string; omschrijving?: string | null; soort?: string | null; standaard: boolean }[]>("mapsjablonen", { soort }),
@@ -380,15 +400,18 @@ export const api = {
   opDelenVerzoek: (f: (v: Deelverzoek) => void) => listen<Deelverzoek>("delen-verzoek", (e) => f(e.payload)),
   deeldoel: (pad: string) => invoke<Deeldoel>("deeldoel", { pad }),
   deelMetCollega: (doel: Deeldoel, gebruiker: string, rechten: string, verloopt: string) =>
-    invoke<"al_lid" | "lid" | "uitgenodigd" | null>("deel_met_collega", { doctype: doel.doctype, id: doel.id, gebruiker, rechten, verloopt }),
+    invoke<"al_lid" | "lid" | "uitgenodigd" | null>("deel_met_collega", {
+      basis: doel.basis ?? null, doctype: doel.doctype, id: doel.id, gebruiker, rechten, verloopt,
+    }),
   maakLink: (doel: Deeldoel, rechten: string, wachtwoord: string, verloopt: string) =>
-    invoke<string>("maak_link", { doctype: doel.doctype, id: doel.id, rechten, wachtwoord, verloopt }),
-  delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { doctype: doel.doctype, id: doel.id }),
-  trekDelingIn: (deling: string) => invoke<void>("trek_deling_in", { deling }),
-  wijzigDeling: (deling: string, rechten: string) => invoke<void>("wijzig_deling", { deling, rechten }),
-  toegangVan: (doel: Deeldoel) => invoke<Toegang>("toegang_van", { doctype: doel.doctype, id: doel.id }),
-  ruimteleden: (ruimte: string) => invoke<Ruimtelid[]>("ruimteleden", { ruimte }),
-  collegas: (ruimte: string, tekst: string) => invoke<Collega[]>("collegas", { ruimte, tekst }),
+    invoke<string>("maak_link", { basis: doel.basis ?? null, doctype: doel.doctype, id: doel.id, rechten, wachtwoord, verloopt }),
+  delingenVan: (doel: Deeldoel) => invoke<DelingRegel[]>("delingen_van", { basis: doel.basis ?? null, doctype: doel.doctype, id: doel.id }),
+  trekDelingIn: (doel: Deeldoel, deling: string) => invoke<void>("trek_deling_in", { basis: doel.basis ?? null, deling }),
+  wijzigDeling: (doel: Deeldoel, deling: string, rechten: string) =>
+    invoke<void>("wijzig_deling", { basis: doel.basis ?? null, deling, rechten }),
+  toegangVan: (doel: Deeldoel) => invoke<Toegang>("toegang_van", { basis: doel.basis ?? null, doctype: doel.doctype, id: doel.id }),
+  ruimteleden: (doel: Deeldoel) => invoke<Ruimtelid[]>("ruimteleden", { basis: doel.basis ?? null, ruimte: doel.ruimte }),
+  collegas: (doel: Deeldoel, tekst: string) => invoke<Collega[]>("collegas", { basis: doel.basis ?? null, ruimte: doel.ruimte, tekst }),
   kopieer: (tekst: string) => invoke<void>("kopieer", { tekst }),
   // Venster Versturen (src-tauri/src/versturen.rs); fouten komen als { code, melding }, net als bij het deelvenster.
   openVersturen: (paden?: string[]) => invoke<void>("open_versturen", { paden: paden ?? null }),

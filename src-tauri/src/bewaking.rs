@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use crate::instellingen::Koppeling;
-use crate::{client, hoofdmap, sloten, sync_mappen, vinkjes, AppState};
+use crate::{client_van, hoofdmap, sloten, sync_mappen, vinkjes, AppState};
 
 const RUST: Duration = Duration::from_secs(2);
 const CONTROLE: Duration = Duration::from_secs(30);
@@ -117,13 +117,19 @@ pub fn start(app: AppHandle) {
                         te_doen.extend(actief.iter().cloned());
                         laatste_volledig = Some(Instant::now());
                         // Ook de vergrendelingen in de Verkenner nakijken (die verlopen zonder melding).
-                        if let Ok(client) = client(&state).await {
-                            for k in &koppelingen {
+                        for k in &koppelingen {
+                            if let Ok(client) = client_van(&state, k) {
                                 sloten::herbekijk(&client, k).await;
                             }
                         }
-                    } else if let Ok(client) = client(&state).await {
+                    } else {
+                        // Per koppeling bij zijn eigen omgeving; een omgeving waar de sessie verlopen is, slaan we over.
+                        let mut verlopen: HashSet<String> = HashSet::new();
                         for k in &koppelingen {
+                            let Ok(client) = client_van(&state, k) else { continue };
+                            if verlopen.contains(client.basis()) || crate::is_verlopen(client.basis()) {
+                                continue;
+                            }
                             let sinds = cursors.get(&k.lokaal).copied().unwrap_or(0);
                             match sloten::wijzigingen(&client, &k.ruimte, k.deling.as_deref(), sinds).await {
                                 Ok((iets, cursor, slotgebeurtenissen)) => {
@@ -140,8 +146,8 @@ pub fn start(app: AppHandle) {
                                 }
                                 // Ook tussen de rondes door: één melding dat opnieuw inloggen nodig is.
                                 Err(f) if f.sessie_verlopen() => {
-                                    crate::sessie_verlopen(&app);
-                                    break;
+                                    crate::sessie_verlopen(&app, client.basis());
+                                    verlopen.insert(client.basis().to_string());
                                 }
                                 Err(_) => {}
                             }

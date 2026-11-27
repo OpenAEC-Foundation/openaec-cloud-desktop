@@ -80,7 +80,7 @@ export default function Deelvenster() {
     zoekTimer = setTimeout(() => {
       const nummer = ++zoekNummer
       api
-        .collegas(d.ruimte, tekst.trim())
+        .collegas(d, tekst.trim())
         .then((lijst) => nummer === zoekNummer && setSuggesties(lijst))
         .catch(() => nummer === zoekNummer && setSuggesties([]))
     }, 200)
@@ -146,7 +146,7 @@ export default function Deelvenster() {
   createEffect(
     on(doel, async (d) => {
       if (!d) return
-      api.ruimteleden(d.ruimte).then(setLeden).catch(() => setLeden([]))
+      api.ruimteleden(d).then(setLeden).catch(() => setLeden([]))
       const t = await api.toegangVan(d).catch(() => null)
       if (doel() !== d) return
       setToegang(t)
@@ -223,7 +223,7 @@ export default function Deelvenster() {
     if (rechten === d.rechten) return
     doe("wijzigen", async () => {
       try {
-        await api.wijzigDeling(d.deling, rechten)
+        await api.wijzigDeling(doel()!, d.deling, rechten)
         setMelding(`${d.gebruiker}: ${rechtenTekst("gebruiker", rechten).toLowerCase()}`)
       } catch (e) {
         setLijstFout(leesFout(e))
@@ -237,7 +237,7 @@ export default function Deelvenster() {
     if (intrekken() !== d.deling) return setIntrekken(d.deling)
     doe("intrekken", async () => {
       try {
-        await api.trekDelingIn(d.deling)
+        await api.trekDelingIn(doel()!, d.deling)
         setIntrekken("")
         setMelding(d.soort === "link" ? "Link ingetrokken: hij werkt niet meer" : `Toegang van ${d.gebruiker} ingetrokken`)
         await laadDelingen()

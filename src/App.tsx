@@ -1,9 +1,9 @@
 import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { api } from "./lib/api"
 import {
-  basis, bezig, doe, koppelingen, melding, ruimtes, scherm, setBasis, setBestand, setKoppelingen, setMelding,
-  setQuotum, setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setVerbonden, setVoorAssistent, stand, verbonden,
-  verwerkSync, ververs, voorAssistent, type Scherm,
+  basis, bezig, doe, kiesOmgeving, kortAdres, koppelingen, melding, neemStatus, omgevingen, ruimtes, scherm, setBestand,
+  setKoppelingen, setMelding, setQuotum, setRuimtes, setRuimtesOpgehaald, setScherm, setStand, setToevoegen, setVoorAssistent,
+  stand, toevoegen, verbonden, verwerkSync, ververs, voorAssistent, type Scherm,
 } from "./lib/winkel"
 import { naamVan, procent, rondeTekst } from "./lib/opmaak"
 import Overzicht from "./schermen/Overzicht"
@@ -25,27 +25,35 @@ const schermen: { id: Scherm; titel: string; icoon: string }[] = [
 
 function Inloggen() {
   const [sleutel, setSleutel] = createSignal("")
+  // Een nieuwe omgeving begint leeg; zonder verbinding staat het laatst gebruikte adres er al.
+  const [adres, setAdres] = createSignal(toevoegen() ? "" : basis())
 
-  const klaar = (r: Awaited<ReturnType<typeof api.ruimtes>>, tekst: string) => {
+  const klaar = async (r: Awaited<ReturnType<typeof api.ruimtes>>, tekst: string) => {
+    neemStatus(await api.status())
     setRuimtes(r)
     setRuimtesOpgehaald(true)
-    setVerbonden(true)
+    setToevoegen(false)
     setMelding(tekst)
+    ververs()
   }
 
   return (
     <div class="inloggen">
       <section class="kaart">
-        <h2>Verbinden met OpenAEC Storage</h2>
-        <p class="uitleg">Koppel mappen op deze computer aan de ruimtes van je omgeving. Bestanden blijven daarna vanzelf gelijk.</p>
+        <h2>{toevoegen() ? "Nog een omgeving toevoegen" : "Verbinden met OpenAEC Storage"}</h2>
+        <p class="uitleg">
+          {toevoegen()
+            ? "Werk je ook voor een ander bureau of een klant met een eigen omgeving? Log daar in; je huidige omgeving blijft verbonden en bovenin wissel je tussen beide."
+            : "Koppel mappen op deze computer aan de ruimtes van je omgeving. Bestanden blijven daarna vanzelf gelijk."}
+        </p>
         <label>
           Adres van je omgeving
-          <input value={basis()} placeholder="https://jouwbedrijf.cloud.open-aec.eu" onInput={(e) => setBasis(e.currentTarget.value)} />
+          <input value={adres()} placeholder="https://jouwbedrijf.cloud.open-aec.eu" onInput={(e) => setAdres(e.currentTarget.value)} />
         </label>
         <button
           class="primair breed"
-          disabled={bezig() || !basis()}
-          onClick={() => doe("Inloggen (rond het af in je browser)", async () => klaar(await api.logIn(basis()), `Ingelogd bij ${basis()}`))}
+          disabled={bezig() || !adres()}
+          onClick={() => doe("Inloggen (rond het af in je browser)", async () => klaar(await api.logIn(adres()), `Ingelogd bij ${adres()}`))}
         >
           Inloggen met OpenAEC-account
         </button>
@@ -57,10 +65,10 @@ function Inloggen() {
           </label>
           <p class="hint">Voor servers en scripts: maak een API-sleutel in je omgeving (Mijn instellingen → API-toegang).</p>
           <button
-            disabled={bezig() || !basis() || !sleutel()}
+            disabled={bezig() || !adres() || !sleutel()}
             onClick={() =>
               doe("Verbinden", async () => {
-                klaar(await api.verbind(basis(), sleutel()), `Verbonden met ${basis()}`)
+                await klaar(await api.verbind(adres(), sleutel()), `Verbonden met ${adres()}`)
                 setSleutel("")
               })
             }
@@ -68,7 +76,48 @@ function Inloggen() {
             Verbinden met sleutel
           </button>
         </details>
+        <Show when={toevoegen()}>
+          <button class="tekstknop" disabled={bezig()} onClick={() => setToevoegen(false)}>
+            Annuleren
+          </button>
+        </Show>
       </section>
+    </div>
+  )
+}
+
+const NIEUW = "__nieuw__"
+
+/** Bovenin: met welke omgeving je werkt, wisselen, of er een toevoegen. */
+function Omgevingkiezer() {
+  const kies = (waarde: string, select: HTMLSelectElement) => {
+    if (waarde === NIEUW) {
+      select.value = basis()
+      setToevoegen(true)
+      return
+    }
+    if (waarde !== basis()) kiesOmgeving(waarde)
+  }
+  return (
+    <div class="omgeving" title="De omgeving waarmee je werkt; gekoppelde mappen synchroniseren altijd met hun eigen omgeving">
+      <span class={`stip ${omgevingen().some((o) => o.verlopen) ? "fout" : "bijgewerkt"}`} />
+      <select
+        class="omgeving-keuze"
+        aria-label="Omgeving"
+        value={basis()}
+        disabled={bezig()}
+        onChange={(e) => kies(e.currentTarget.value, e.currentTarget)}
+      >
+        <For each={omgevingen()}>
+          {(o) => (
+            <option value={o.basis} selected={o.basis === basis()}>
+              {kortAdres(o.basis)}
+              {o.verlopen ? " (opnieuw inloggen)" : ""}
+            </option>
+          )}
+        </For>
+        <option value={NIEUW}>+ Omgeving toevoegen…</option>
+      </select>
     </div>
   )
 }
@@ -100,12 +149,8 @@ function Statusbalk() {
 export default function App() {
   onMount(async () => {
     const s = await api.status()
-    setBasis(s.basis ?? "")
-    setKoppelingen(s.koppelingen)
-    if (s.verbonden) {
-      setVerbonden(true)
-      ververs()
-    }
+    neemStatus(s)
+    if (s.verbonden) ververs()
     api.activiteit().then(setStand).catch(() => {})
 
     // Rechtermuismenu in de Verkenner: "Versies bekijken" komt in het deelscherm binnen ("Versturen met OpenAEC" heeft
@@ -153,10 +198,7 @@ export default function App() {
       <Titelbalk
         rechts={
           <Show when={verbonden()}>
-            <div class="omgeving" title="Verbonden omgeving" data-tauri-drag-region>
-              <span class="stip bijgewerkt" />
-              {basis().replace(/^https?:\/\//, "")}
-            </div>
+            <Omgevingkiezer />
           </Show>
         }
       />
@@ -190,11 +232,11 @@ export default function App() {
             <Match when={scherm() === "tools"}>
               <Tools />
             </Match>
-            <Match when={scherm() === "instellingen" && verbonden()}>
-              <Instellingen />
-            </Match>
-            <Match when={!verbonden()}>
+            <Match when={!verbonden() || toevoegen()}>
               <Inloggen />
+            </Match>
+            <Match when={scherm() === "instellingen"}>
+              <Instellingen />
             </Match>
             <Match when={scherm() === "overzicht"}>
               <Overzicht />

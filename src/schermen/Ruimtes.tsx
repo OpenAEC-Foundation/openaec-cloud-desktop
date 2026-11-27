@@ -4,9 +4,12 @@ import { api, type Deeldoel, type Gedeeld, type MapInhoud, type Ruimte } from ".
 import { datumTekst, gedeeldMeta, rechtenTekst } from "../lib/delen"
 import { grootte, servertijd, soort } from "../lib/opmaak"
 import {
-  bezig, doe, gedeeld, hoofdmap, inHoofdmap, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald,
+  basis, bezig, doe, gedeeld, hoofdmap, inHoofdmap, koppelingen, laadRuimtes, ruimteFout, ruimtes, ruimtesLaden, ruimtesOpgehaald,
   setKoppelingen, setMelding, setScherm, verversOverzicht, verwerkSync,
 } from "../lib/winkel"
+
+/** De koppelingen bij de gekozen omgeving (een ruimte-id is alleen binnen één omgeving uniek). */
+const hierGekoppeld = () => koppelingen().filter((k) => !k.basis || k.basis === basis())
 
 const rolNaam: Record<string, string> = { beheerder: "beheerder", schrijver: "schrijver", lezer: "lezer", gast: "gast" }
 const rol = (r: string) => rolNaam[r.toLowerCase()] ?? r
@@ -71,7 +74,7 @@ function Bestandsweergave(props: { plek: Plek }) {
       if (uitnodigen) {
         const plek = [props.plek.naam, ...pad().map((s) => s.naam), naam].join(" / ")
         await api.openDelen({
-          doel: { doctype: "Opslagmap", id: uit.map, naam, pad: plek, ruimte: props.plek.ruimte, ruimte_naam: props.plek.ruimte_naam },
+          doel: { doctype: "Opslagmap", id: uit.map, naam, pad: plek, ruimte: props.plek.ruimte, ruimte_naam: props.plek.ruimte_naam, basis: basis() },
         })
       }
     } catch (e) {
@@ -84,7 +87,7 @@ function Bestandsweergave(props: { plek: Plek }) {
     e.stopPropagation()
     const plek = [props.plek.naam, ...pad().map((s) => s.naam), naam].join(" / ")
     api
-      .openDelen({ doel: { doctype, id, naam, pad: plek, ruimte: props.plek.ruimte, ruimte_naam: props.plek.ruimte_naam } })
+      .openDelen({ doel: { doctype, id, naam, pad: plek, ruimte: props.plek.ruimte, ruimte_naam: props.plek.ruimte_naam, basis: basis() } })
       .catch((fout) => setMelding(String(fout)))
   }
 
@@ -277,7 +280,7 @@ export default function Ruimtes() {
     return ruimtes().length || k ? undefined : gedeeld()[0]
   }
   const gekoppeldAan = (ruimte: string, deling?: string) =>
-    koppelingen().filter((k) => k.ruimte === ruimte && (k.deling ?? undefined) === deling)
+    hierGekoppeld().filter((k) => k.ruimte === ruimte && (k.deling ?? undefined) === deling)
 
   const koppel = (naam: string, f: (map: string) => Promise<unknown>) =>
     doe("Koppelen", async () => {
@@ -297,7 +300,7 @@ export default function Ruimtes() {
       setMelding(`${r.naam} staat nu in de hoofdmap; de eerste synchronisatie loopt`)
       api.syncNu().then(verwerkSync).catch(() => {})
     })
-  const alInHoofdmap = (r: Ruimte) => koppelingen().some((k) => k.ruimte === r.name && !k.deling && inHoofdmap(k))
+  const alInHoofdmap = (r: Ruimte) => hierGekoppeld().some((k) => k.ruimte === r.name && !k.deling && inHoofdmap(k))
 
   const cloudmap = (naam: string, f: (map: string) => Promise<number>) =>
     doe("Cloud-map maken", async () => {
@@ -566,7 +569,7 @@ export default function Ruimtes() {
                         </button>
                       }
                     >
-                      <Show when={hoofdmap()?.hoofdmap && !koppelingen().some((k) => k.deling === g().deling && inHoofdmap(k))}>
+                      <Show when={hoofdmap()?.hoofdmap && !hierGekoppeld().some((k) => k.deling === g().deling && inHoofdmap(k))}>
                         <button
                           class="primair"
                           disabled={bezig()}

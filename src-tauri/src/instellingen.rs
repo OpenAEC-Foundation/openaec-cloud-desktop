@@ -33,6 +33,10 @@ pub struct Koppeling {
     pub rechten: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gedeeld_door: Option<String>,
+    /// De omgeving (het adres) waar de ruimte op staat. None bij een koppeling van vóór meerdere omgevingen: die hoort
+    /// bij de omgeving waarmee de app toen verbonden was (zie [`Instellingen::vul_omgevingen_aan`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis: Option<String>,
 }
 
 impl Koppeling {
@@ -49,6 +53,7 @@ impl Koppeling {
             wortel: None,
             rechten: None,
             gedeeld_door: None,
+            basis: None,
         }
     }
 }
@@ -85,7 +90,12 @@ impl SyncInstellingen {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Instellingen {
+    /// De gekozen omgeving: daar werken Ruimtes, Versturen en de assistent mee. Gekoppelde mappen volgen hun eigen
+    /// omgeving ([`Koppeling::basis`]).
     pub basis: Option<String>,
+    /// Alle omgevingen waarmee de app verbonden is, de gekozen erbij (elk met een eigen sleutel in de sleutelbos).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub omgevingen: Vec<String>,
     /// De hoofdmap: één map met per ruimte een submap, als eigen plek in het navigatiepaneel van de Verkenner en met
     /// bestanden op aanvraag (zie `hoofdmap`). None: nog niet ingesteld (de app stelt [`standaard_hoofdmap`] voor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -130,6 +140,49 @@ pub fn submapnaam(ruimte_naam: &str, bestaand: &[String]) -> String {
 pub const GEDEELD_MET_MIJ: &str = "Gedeeld met mij";
 
 impl Instellingen {
+    /// Instellingen van vóór meerdere omgevingen: de gekozen omgeving komt in de lijst, en elke koppeling zonder
+    /// omgeving hoort bij die omgeving. Geeft of er iets veranderde.
+    pub fn vul_omgevingen_aan(&mut self) -> bool {
+        let Some(basis) = self.basis.clone() else { return false };
+        let mut veranderd = false;
+        if !self.omgevingen.contains(&basis) {
+            self.omgevingen.insert(0, basis.clone());
+            veranderd = true;
+        }
+        for k in self.koppelingen.iter_mut().filter(|k| k.basis.is_none()) {
+            k.basis = Some(basis.clone());
+            veranderd = true;
+        }
+        veranderd
+    }
+
+    /// De omgeving van een koppeling (een oude koppeling zonder omgeving: de gekozen omgeving).
+    pub fn basis_van(&self, k: &Koppeling) -> Option<String> {
+        k.basis.clone().or_else(|| self.basis.clone())
+    }
+
+    /// Na inloggen: een nieuwe omgeving komt achteraan in de lijst en wordt gekozen. Opnieuw inloggen bij een omgeving
+    /// die er al stond (een verlopen sessie), verandert de keuze niet.
+    pub fn voeg_omgeving_toe(&mut self, basis: &str) {
+        self.vul_omgevingen_aan();
+        if !self.omgevingen.iter().any(|b| b == basis) {
+            self.omgevingen.push(basis.to_string());
+            self.basis = Some(basis.to_string());
+        } else if self.basis.is_none() {
+            self.basis = Some(basis.to_string());
+        }
+    }
+
+    /// Een omgeving uit de lijst halen (uitloggen). Was hij gekozen, dan wordt de eerste die overblijft gekozen.
+    /// Koppelingen blijven staan: ze synchroniseren weer als je opnieuw inlogt.
+    pub fn haal_omgeving_weg(&mut self, basis: &str) {
+        self.vul_omgevingen_aan();
+        self.omgevingen.retain(|b| b != basis);
+        if self.basis.as_deref() == Some(basis) {
+            self.basis = self.omgevingen.first().cloned();
+        }
+    }
+
     /// Staat "Versturen met OpenAEC" in het rechtermuismenu? Standaard wel.
     pub fn menu_versturen_aan(&self) -> bool {
         self.menu_versturen != Some(false)
@@ -150,7 +203,11 @@ fn bestand() -> PathBuf {
 
 impl Instellingen {
     pub fn laad() -> Self {
-        std::fs::read(bestand()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let mut inst: Self = std::fs::read(bestand()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if inst.vul_omgevingen_aan() {
+            let _ = inst.bewaar();
+        }
+        inst
     }
 
     pub fn bewaar(&self) -> std::io::Result<()> {
@@ -227,6 +284,39 @@ mod tests {
         assert!(k.deling.is_none() && k.rechten.is_none());
         // En zo blijft hij ook bewaard: zonder de velden van een deling.
         assert!(!serde_json::to_string(&k).unwrap().contains("deling"));
+    }
+
+    #[test]
+    fn oude_instellingen_krijgen_een_lijst_omgevingen() {
+        let mut inst: Instellingen =
+            serde_json::from_str(r#"{"basis":"https://a.test","koppelingen":[{"ruimte":"R1","ruimte_naam":"P","lokaal":"P"}]}"#).unwrap();
+        assert!(inst.vul_omgevingen_aan());
+        assert_eq!(inst.omgevingen, vec!["https://a.test".to_string()]);
+        assert_eq!(inst.koppelingen[0].basis.as_deref(), Some("https://a.test"));
+        assert!(!inst.vul_omgevingen_aan());
+        // Zonder omgeving valt er niets aan te vullen.
+        assert!(!Instellingen::default().vul_omgevingen_aan());
+    }
+
+    #[test]
+    fn omgevingen_toevoegen_en_weghalen() {
+        let mut inst = Instellingen { basis: Some("https://a.test".into()), ..Default::default() };
+        inst.koppelingen.push(Koppeling::ruimte("R1".into(), "P".into(), "P".into()));
+        inst.voeg_omgeving_toe("https://b.test");
+        assert_eq!(inst.basis.as_deref(), Some("https://b.test"));
+        assert_eq!(inst.omgevingen, vec!["https://a.test".to_string(), "https://b.test".to_string()]);
+        // De oude koppeling blijft bij de omgeving waar hij hoorde, ook nu een andere gekozen is.
+        assert_eq!(inst.basis_van(&inst.koppelingen[0]).as_deref(), Some("https://a.test"));
+        // Opnieuw inloggen bij a (verlopen sessie): b blijft gekozen.
+        inst.voeg_omgeving_toe("https://a.test");
+        assert_eq!(inst.omgevingen.len(), 2);
+        assert_eq!(inst.basis.as_deref(), Some("https://b.test"));
+        inst.basis = Some("https://a.test".into());
+        inst.haal_omgeving_weg("https://a.test");
+        assert_eq!(inst.basis.as_deref(), Some("https://b.test"));
+        assert_eq!(inst.koppelingen.len(), 1);
+        inst.haal_omgeving_weg("https://b.test");
+        assert!(inst.basis.is_none() && inst.omgevingen.is_empty());
     }
 
     #[test]

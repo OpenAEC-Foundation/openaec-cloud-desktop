@@ -321,6 +321,13 @@ pub(crate) async fn verbinding(state: &AppState) -> Result<Client, VersturenFout
     })
 }
 
+/// Als [`verbinding`], bij de omgeving waar een overdracht op staat (die kan een andere zijn dan de gekozen).
+async fn verbinding_bij(state: &AppState, basis: &str) -> Result<Client, VersturenFout> {
+    crate::client_in(state, Some(basis)).await.map_err(|e| {
+        VersturenFout(DeelFout { code: "niet_ingelogd", melding: format!("Je bent niet (meer) ingelogd bij deze omgeving. Log in om verder te gaan ({e}).") })
+    })
+}
+
 /// De grenzen van de server; meteen ook de test of er een omgeving is, of je ingelogd bent en mag versturen.
 #[tauri::command]
 pub async fn versturen_grenzen(state: tauri::State<'_, AppState>) -> Result<Grenzen, VersturenFout> {
@@ -600,11 +607,18 @@ pub async fn start_versturen(app: AppHandle, state: tauri::State<'_, AppState>, 
     let mut delen = tauri::async_runtime::spawn_blocking(move || onderdelen(&paden)).await.map_err(|e| e.to_string())??;
     let client = verbinding(&state).await?;
     if let Some(oud) = lees_lopend() {
-        let _ = client.trek_overdracht_in(&oud.overdracht).await;
+        // Een onderbroken overdracht staat op zijn eigen omgeving (die kan een andere zijn dan de gekozen).
+        if let Ok(c) = crate::client_in(&state, Some(&oud.basis)).await {
+            let _ = c.trek_overdracht_in(&oud.overdracht).await;
+        }
         wis_lopend(&oud.overdracht);
     }
     if client.mogelijkheden().await.is_ok_and(|m| m.overdracht_van_opslag) {
-        let koppelingen = state.instellingen.lock().unwrap().koppelingen.clone();
+        // Alleen gekoppelde mappen van deze omgeving: wat op een andere omgeving staat, gaat langs de upload.
+        let koppelingen: Vec<Koppeling> = {
+            let inst = state.instellingen.lock().unwrap();
+            inst.koppelingen.iter().filter(|k| inst.basis_van(k).as_deref() == Some(client.basis())).cloned().collect()
+        };
         zoek_bronnen(&client, &koppelingen, &mut delen).await;
     }
     let naam = match opdracht.naam.trim() {
@@ -656,7 +670,7 @@ pub async fn stop_versturen(app: AppHandle, state: tauri::State<'_, AppState>, i
     }
     if intrekken {
         if let Some(l) = lees_lopend() {
-            let r = verbinding(&state).await?.trek_overdracht_in(&l.overdracht).await;
+            let r = verbinding_bij(&state, &l.basis).await?.trek_overdracht_in(&l.overdracht).await;
             wis_lopend(&l.overdracht);
             r?;
         }
@@ -796,7 +810,8 @@ async fn vergelijk_met_server(client: &Client, stand: &Mutex<Lopend>, omg: &Omge
 
 async fn uitvoeren(app: &AppHandle, stand: &Mutex<Lopend>, hervat: bool) -> Result<Voltooid, VersturenFout> {
     let state = app.state::<AppState>();
-    let client = verbinding(&state).await?;
+    let basis = stand.lock().unwrap().basis.clone();
+    let client = verbinding_bij(&state, &basis).await?;
     let overdracht = stand.lock().unwrap().overdracht.clone();
     let gelijktijdig = state.instellingen.lock().unwrap().sync.clone().begrensd().gelijktijdig;
     let meld = |s: Stap| {

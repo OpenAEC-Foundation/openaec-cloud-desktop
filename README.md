@@ -77,6 +77,27 @@ en stuurt de stand hoogstens tien keer per seconde naar de vensters.
 
 Gemeten tegen een lokale bench (zie `scripts/meetbench` in openaec-storage): zie de tabel onder Testen.
 
+## Meerdere omgevingen
+
+Wie voor meer dan één bureau of klant werkt, kan bij meerdere omgevingen tegelijk ingelogd zijn. Bovenin het
+hoofdvenster staat de **gekozen omgeving**, met een keuzelijst om te wisselen of met **Omgeving toevoegen…** bij nog
+een omgeving in te loggen. In **Instellingen → Omgevingen** staan ze onder elkaar, met **Kiezen** en **Uitloggen** per
+omgeving.
+
+- **Gekoppelde mappen** horen bij de omgeving waar hun ruimte op staat (`basis` in de koppeling) en synchroniseren
+  altijd daarmee, welke omgeving er ook gekozen is. Het overzicht toont bij meer dan één omgeving bij elke map het
+  adres. Ook **Delen…**, vergrendelen, versies en deellinks vanuit een gekoppelde map gaan naar de omgeving van die map.
+- **Ruimtes**, **Versturen**, **Delen met klant**, het opslaggebruik en de **assistent** werken met de gekozen
+  omgeving. Bij Versturen tellen alleen bestanden uit gekoppelde mappen van die omgeving als "staat al in OpenAEC";
+  de rest gaat langs de upload. Een onderbroken overdracht gaat verder op de omgeving waar hij begon.
+- **Sessies:** elke omgeving heeft een eigen sleutel of eigen tokens in de sleutelbos. Verloopt de sessie bij één
+  omgeving, dan wachten alleen de mappen van die omgeving op opnieuw inloggen (met een knop per omgeving); de andere
+  synchroniseren door. Opnieuw inloggen bij een omgeving die al in de lijst staat, verandert de keuze niet.
+- **Uitloggen** bij een omgeving laat de gekoppelde mappen en bestanden staan; ze synchroniseren weer na opnieuw
+  inloggen. De assistent meldt zich pas af als er geen omgeving meer over is.
+- Instellingen van vóór deze versie: de omgeving waarmee de app verbonden was, komt in de lijst en elke koppeling hoort
+  daarbij (`Instellingen::vul_omgevingen_aan`).
+
 ## Gedeeld met mij
 
 Een map of bestand die een collega met je deelde, staat in **Ruimtes** onder **Gedeeld met mij**, met wie het deelde,
