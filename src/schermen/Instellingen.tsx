@@ -1,8 +1,9 @@
-import { createSignal, onMount, Show } from "solid-js"
+import { createSignal, For, onMount, Show } from "solid-js"
 import { api, type Gereserveerd, type SyncInstellingen } from "../lib/api"
 import { useAppVersie, versieLabel } from "../lib/appversie"
 import {
-  basis, bezig, doe, koppelingen, setMelding, setRuimtes, setRuimtesOpgehaald, setScherm, setVerbonden, stand,
+  basis, bezig, doe, kiesOmgeving, kortAdres, neemStatus, omgevingen, setGedeeld, setMelding, setRuimtes, setRuimtesOpgehaald,
+  setScherm, setToevoegen, stand, ververs,
 } from "../lib/winkel"
 
 export default function Instellingen() {
@@ -39,14 +40,20 @@ export default function Instellingen() {
     }
   }
 
-  const verbreek = () =>
-    doe("Verbreken", async () => {
-      await api.verbreek()
-      setVerbonden(false)
-      setRuimtes([])
-      setRuimtesOpgehaald(false)
-      setScherm("overzicht")
-      setMelding("Verbinding verbroken; je gekoppelde mappen en bestanden blijven staan")
+  /** Uitloggen bij één omgeving; de andere blijven verbonden. */
+  const verbreek = (b: string) =>
+    doe(`Uitloggen bij ${kortAdres(b)}`, async () => {
+      const gekozen = b === basis()
+      const s = await api.verbreek(b)
+      neemStatus(s)
+      if (gekozen) {
+        setRuimtes([])
+        setGedeeld([])
+        setRuimtesOpgehaald(false)
+      }
+      if (!s.verbonden) setScherm("overzicht")
+      else if (gekozen) ververs()
+      setMelding(`Uitgelogd bij ${kortAdres(b)}; de gekoppelde mappen en bestanden blijven staan`)
     })
 
   const nieuweVersie = () => !["", "zoeken", "actueel"].includes(update())
@@ -60,28 +67,44 @@ export default function Instellingen() {
       </div>
 
       <section class="kaart">
-        <h2>Account en server</h2>
-        <dl class="gegevens">
-          <div class="vol">
-            <dt>Omgeving</dt>
-            <dd class="pad">{basis()}</dd>
-          </div>
-          <div>
-            <dt>Gekoppelde mappen</dt>
-            <dd>{koppelingen().length}</dd>
-          </div>
-          <div>
-            <dt>Synchronisatie</dt>
-            <dd>{stand()?.gepauzeerd ? "gepauzeerd" : "actief"}</dd>
-          </div>
-        </dl>
+        <h2>Omgevingen</h2>
+        <ul class="omgevingen">
+          <For each={omgevingen()}>
+            {(o) => (
+              <li classList={{ gekozen: o.basis === basis() }}>
+                <div class="omgeving-tekst">
+                  <span class="pad">{kortAdres(o.basis)}</span>
+                  <span class="hint">
+                    {o.basis === basis() ? "gekozen · " : ""}
+                    {o.koppelingen === 1 ? "1 gekoppelde map" : `${o.koppelingen} gekoppelde mappen`}
+                    {o.verlopen ? " · opnieuw inloggen nodig" : !o.verbonden ? " · niet ingelogd" : ""}
+                  </span>
+                </div>
+                <div class="knoppen">
+                  <Show when={o.basis !== basis()}>
+                    <button disabled={bezig()} onClick={() => kiesOmgeving(o.basis)}>
+                      Kiezen
+                    </button>
+                  </Show>
+                  <button class="gevaar-licht" disabled={bezig()} onClick={() => verbreek(o.basis)}>
+                    Uitloggen
+                  </button>
+                </div>
+              </li>
+            )}
+          </For>
+        </ul>
         <div class="knoppen">
-          <button onClick={() => api.pauzeer(!stand()?.gepauzeerd)}>{stand()?.gepauzeerd ? "Hervatten" : "Pauzeren"}</button>
-          <button class="gevaar-licht" disabled={bezig()} onClick={verbreek}>
-            Verbinding verbreken
+          <button disabled={bezig()} onClick={() => setToevoegen(true)}>
+            Omgeving toevoegen
           </button>
+          <button onClick={() => api.pauzeer(!stand()?.gepauzeerd)}>{stand()?.gepauzeerd ? "Synchroniseren hervatten" : "Synchroniseren pauzeren"}</button>
         </div>
-        <p class="hint">Na verbreken blijven je gekoppelde mappen en bestanden op deze computer staan; ze synchroniseren weer als je opnieuw inlogt.</p>
+        <p class="hint">
+          Gekoppelde mappen synchroniseren altijd met hun eigen omgeving. Ruimtes, Versturen en de assistent werken met de
+          gekozen omgeving. Na uitloggen blijven de gekoppelde mappen en bestanden op deze computer staan; ze synchroniseren
+          weer als je opnieuw inlogt.
+        </p>
       </section>
 
       <Show when={sync()}>

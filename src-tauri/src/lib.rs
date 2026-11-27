@@ -106,27 +106,53 @@ pub(crate) async fn autorisatie(app: &AppHandle, basis: &str, afgewezen: Option<
     };
     uitkomst.map_err(|f| {
         if f.sessie_verlopen() {
-            sessie_verlopen(app);
+            sessie_verlopen(app, basis);
         }
         fout(f)
     })
 }
 
-/// De sessie is verlopen en vernieuwen lukt niet meer: één melding, en in het overzicht en het statusvenster de vraag
-/// om opnieuw in te loggen. Rondes wachten tot er opnieuw is ingelogd (zie [`opnieuw_ingelogd`]).
-pub(crate) fn sessie_verlopen(app: &AppHandle) {
-    if app.state::<AppState>().activiteit.zet_sessie_verlopen(true) {
-        log::warn!("sessie verlopen; opnieuw inloggen nodig");
-        melding(app, SESSIE_VERLOPEN);
+/// De omgevingen waarvan de sessie verlopen is (opnieuw inloggen nodig).
+fn verlopen() -> std::sync::MutexGuard<'static, std::collections::BTreeSet<String>> {
+    static VERLOPEN: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+    VERLOPEN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Is de sessie bij deze omgeving verlopen?
+pub(crate) fn is_verlopen(basis: &str) -> bool {
+    verlopen().contains(basis)
+}
+
+/// De sessie bij `basis` is verlopen en vernieuwen lukt niet meer: één melding, en in het overzicht en het
+/// statusvenster de vraag om opnieuw in te loggen. Rondes slaan de mappen van die omgeving over tot er opnieuw is
+/// ingelogd (zie [`opnieuw_ingelogd`]); andere omgevingen gaan gewoon door.
+pub(crate) fn sessie_verlopen(app: &AppHandle, basis: &str) {
+    let nieuw = verlopen().insert(basis.to_string());
+    app.state::<AppState>().activiteit.zet_sessie_verlopen(true);
+    if nieuw {
+        log::warn!("sessie bij {basis} verlopen; opnieuw inloggen nodig");
+        melding(app, &format!("{SESSIE_VERLOPEN} ({})", kort_adres(basis)));
         activiteit::meld(app);
     }
 }
 
-/// Opnieuw ingelogd (of verbonden met een sleutel): de sessie leest de sleutelbos opnieuw, de melding verdwijnt en een
-/// gestopte ronde gaat verder.
+/// Een adres zonder `https://`, zoals de app het toont.
+fn kort_adres(basis: &str) -> &str {
+    basis.trim_start_matches("https://").trim_start_matches("http://")
+}
+
+/// Opnieuw ingelogd (of verbonden met een sleutel): de sessie leest de sleutelbos opnieuw, de melding verdwijnt (als
+/// geen andere omgeving meer wacht) en een gestopte ronde gaat verder.
 async fn opnieuw_ingelogd(app: &AppHandle, basis: &str) {
     sessie(basis).vergeet().await;
-    let was_verlopen = app.state::<AppState>().activiteit.zet_sessie_verlopen(false);
+    let was_verlopen = {
+        let mut v = verlopen();
+        let was = v.remove(basis);
+        if v.is_empty() {
+            app.state::<AppState>().activiteit.zet_sessie_verlopen(false);
+        }
+        was
+    };
     activiteit::meld(app);
     if was_verlopen {
         let app = app.clone();
@@ -144,19 +170,56 @@ fn http() -> reqwest::Client {
     HTTP.get_or_init(openaec_sync::api::nieuwe_http).clone()
 }
 
-/// Client voor de verbonden omgeving; de autorisatie komt bij elk verzoek uit de [`sessie`].
+/// Client voor een omgeving; de autorisatie komt bij elk verzoek uit de [`sessie`].
+fn client_bij(basis: &str) -> Result<Client, String> {
+    if instellingen::lees_sleutel(basis).is_none() {
+        return Err(format!("niet ingelogd bij {}; log opnieuw in", kort_adres(basis)));
+    }
+    Ok(Client::met_bron(basis, sessie(basis), http()))
+}
+
+/// Client voor de gekozen omgeving (Ruimtes, Versturen, het opslaggebruik).
 async fn client(state: &AppState) -> Result<Client, String> {
     let basis = state.instellingen.lock().unwrap().basis.clone().ok_or("niet verbonden")?;
-    if instellingen::lees_sleutel(&basis).is_none() {
-        return Err("niet ingelogd; verbind opnieuw".into());
+    client_bij(&basis)
+}
+
+/// Client voor een omgeving uit de lijst, of zonder `basis` de gekozen omgeving. Een adres dat niet in de lijst staat,
+/// wordt geweigerd.
+pub(crate) async fn client_in(state: &AppState, basis: Option<&str>) -> Result<Client, String> {
+    match basis.filter(|b| !b.is_empty()) {
+        None => client(state).await,
+        Some(b) => {
+            if !state.instellingen.lock().unwrap().omgevingen.iter().any(|o| o == b) {
+                return Err(format!("niet verbonden met {}", kort_adres(b)));
+            }
+            client_bij(b)
+        }
     }
-    Ok(Client::met_bron(&basis, sessie(&basis), http()))
+}
+
+/// Client voor de omgeving van een gekoppelde map.
+pub(crate) fn client_van(state: &AppState, k: &Koppeling) -> Result<Client, String> {
+    let basis = state.instellingen.lock().unwrap().basis_van(k).ok_or("niet verbonden")?;
+    client_bij(&basis)
 }
 
 fn onthoud_basis(state: &AppState, basis: String) -> Result<(), String> {
     let mut inst = state.instellingen.lock().unwrap();
-    inst.basis = Some(basis);
+    inst.voeg_omgeving_toe(&basis);
     inst.bewaar().map_err(fout)
+}
+
+/// Een omgeving waarmee de app verbonden is.
+#[derive(Serialize)]
+struct OmgevingStatus {
+    basis: String,
+    /// Er staat een sleutel of token in de sleutelbos.
+    verbonden: bool,
+    /// De sessie is verlopen: opnieuw inloggen.
+    verlopen: bool,
+    /// Aantal gekoppelde mappen bij deze omgeving.
+    koppelingen: usize,
 }
 
 #[derive(Serialize)]
@@ -164,13 +227,40 @@ struct Status {
     basis: Option<String>,
     verbonden: bool,
     koppelingen: Vec<Koppeling>,
+    omgevingen: Vec<OmgevingStatus>,
+}
+
+fn status_van(inst: &Instellingen) -> Status {
+    let verbonden = inst.basis.as_deref().is_some_and(|b| instellingen::lees_sleutel(b).is_some());
+    let omgevingen = inst
+        .omgevingen
+        .iter()
+        .map(|b| OmgevingStatus {
+            basis: b.clone(),
+            verbonden: instellingen::lees_sleutel(b).is_some(),
+            verlopen: is_verlopen(b),
+            koppelingen: inst.koppelingen.iter().filter(|k| inst.basis_van(k).as_deref() == Some(b.as_str())).count(),
+        })
+        .collect();
+    Status { basis: inst.basis.clone(), verbonden, koppelingen: inst.koppelingen.clone(), omgevingen }
 }
 
 #[tauri::command]
 fn status(state: tauri::State<'_, AppState>) -> Status {
-    let inst = state.instellingen.lock().unwrap();
-    let verbonden = inst.basis.as_deref().is_some_and(|b| instellingen::lees_sleutel(b).is_some());
-    Status { basis: inst.basis.clone(), verbonden, koppelingen: inst.koppelingen.clone() }
+    status_van(&state.instellingen.lock().unwrap())
+}
+
+/// Een andere omgeving kiezen (uit de omgevingen waarmee de app verbonden is) voor Ruimtes, Versturen en de
+/// assistent. Gekoppelde mappen blijven bij hun eigen omgeving synchroniseren.
+#[tauri::command]
+fn kies_omgeving(state: tauri::State<'_, AppState>, basis: String) -> Result<Status, String> {
+    let mut inst = state.instellingen.lock().unwrap();
+    if !inst.omgevingen.contains(&basis) {
+        return Err(format!("niet verbonden met {}", kort_adres(&basis)));
+    }
+    inst.basis = Some(basis);
+    inst.bewaar().map_err(fout)?;
+    Ok(status_van(&inst))
 }
 
 /// Verbinden met een klantomgeving; geeft de ruimtes terug (dient meteen als test van de sleutel).
@@ -211,25 +301,37 @@ async fn log_in(app: AppHandle, state: tauri::State<'_, AppState>, basis: String
     Ok(ruimtes)
 }
 
+/// Uitloggen bij een omgeving (zonder `basis`: de gekozen). Gekoppelde mappen en bestanden blijven staan; ze
+/// synchroniseren weer als je opnieuw inlogt. Is er daarna een andere omgeving, dan wordt die gekozen.
 #[tauri::command]
-async fn verbreek(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let basis = {
+async fn verbreek(app: AppHandle, state: tauri::State<'_, AppState>, basis: Option<String>) -> Result<Status, String> {
+    let (weg, over) = {
         let mut inst = state.instellingen.lock().unwrap();
-        let basis = inst.basis.take();
-        if let Some(b) = &basis {
+        let weg = basis.filter(|b| !b.is_empty()).or_else(|| inst.basis.clone());
+        if let Some(b) = &weg {
             instellingen::wis_sleutel(b);
+            inst.haal_omgeving_weg(b);
         }
         inst.bewaar().map_err(fout)?;
-        basis
+        (weg, !inst.omgevingen.is_empty())
     };
-    if let Some(b) = basis {
-        sessie(&b).vergeet().await;
+    if let Some(b) = &weg {
+        sessie(b).vergeet().await;
+        let mut v = verlopen();
+        v.remove(b);
+        if v.is_empty() {
+            state.activiteit.zet_sessie_verlopen(false);
+        }
     }
-    // Ook de assistent meldt zich af (zijn tokens horen bij hetzelfde account).
-    assistent::log_uit(&state).await;
-    state.activiteit.zet_sessie_verlopen(false);
+    // De assistent meldt zich pas af als er geen omgeving meer is (zijn tokens horen bij het account, niet bij één
+    // omgeving).
+    if !over {
+        assistent::log_uit(&state).await;
+    }
     activiteit::meld(&app);
-    Ok(())
+    let inst = state.instellingen.lock().unwrap();
+    werk_menu_bij(&inst);
+    Ok(status_van(&inst))
 }
 
 #[tauri::command]
@@ -273,9 +375,13 @@ fn koppel(state: tauri::State<'_, AppState>, ruimte: String, ruimte_naam: String
     voeg_koppeling_toe(&state, Koppeling::ruimte(ruimte, ruimte_naam, lokaal))
 }
 
-fn voeg_koppeling_toe(state: &AppState, k: Koppeling) -> Result<Vec<Koppeling>, String> {
+fn voeg_koppeling_toe(state: &AppState, mut k: Koppeling) -> Result<Vec<Koppeling>, String> {
     std::fs::create_dir_all(&k.lokaal).map_err(fout)?;
     let mut inst = state.instellingen.lock().unwrap();
+    // De ruimte komt uit de gekozen omgeving; de koppeling blijft daar ook bij als later een andere gekozen wordt.
+    if k.basis.is_none() {
+        k.basis = inst.basis.clone();
+    }
     if inst.koppelingen.iter().any(|b| Path::new(&b.lokaal) == Path::new(&k.lokaal)) {
         return Err("deze map is al gekoppeld".into());
     }
@@ -430,10 +536,9 @@ struct Mapkeuze {
 async fn mappen_van(state: tauri::State<'_, AppState>, ruimte: String, lokaal: Option<String>) -> Result<Vec<Mapkeuze>, String> {
     use openaec_sync::motor::Opslag;
     let k = lokaal.and_then(|l| state.instellingen.lock().unwrap().koppelingen.iter().find(|k| k.lokaal == l).cloned());
-    let client = client(&state).await?;
     let opslag = match &k {
-        Some(k) => opslag_voor(client, k),
-        None => ClientOpslag::new(client, &ruimte),
+        Some(k) => opslag_voor(client_van(&state, k)?, k),
+        None => ClientOpslag::new(client(&state).await?, &ruimte),
     };
     let bestanden = opslag.lijst().await.map_err(fout)?;
     let mappen = opslag.alle_mappen().await.map_err(fout)?;
@@ -766,10 +871,6 @@ async fn sync_mappen(app: &AppHandle, alleen: Option<&std::collections::HashSet<
     if state.activiteit.gepauzeerd() {
         return Err("synchroniseren is gepauzeerd".into());
     }
-    // Wachten op opnieuw inloggen (zie `opnieuw_ingelogd`): niet bij elke wijziging opnieuw proberen.
-    if state.activiteit.sessie_is_verlopen() {
-        return Err(SESSIE_VERLOPEN.into());
-    }
     activiteit::begin(app);
     let r = sync_ronde(app, &state, alleen).await;
     activiteit::einde(app, r.as_deref().map_err(String::as_str));
@@ -806,13 +907,25 @@ async fn sync_ronde(
     state: &AppState,
     alleen: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<MapRapport>, String> {
-    let client = client(state).await?;
     let (koppelingen, sync, op_aanvraag) = {
         let inst = state.instellingen.lock().unwrap();
         let op_aanvraag: std::collections::HashSet<String> =
             inst.koppelingen.iter().filter(|k| inst.in_hoofdmap(k)).map(|k| k.lokaal.clone()).collect();
-        (inst.koppelingen.clone(), inst.sync.clone().begrensd(), op_aanvraag)
+        // Elke koppeling met zijn eigen omgeving (een oude zonder omgeving: de gekozen).
+        let koppelingen: Vec<Koppeling> = inst
+            .koppelingen
+            .iter()
+            .cloned()
+            .map(|mut k| {
+                k.basis = inst.basis_van(&k);
+                k
+            })
+            .collect();
+        (koppelingen, inst.sync.clone().begrensd(), op_aanvraag)
     };
+    if koppelingen.is_empty() && state.instellingen.lock().unwrap().omgevingen.is_empty() {
+        return Err("niet verbonden".into());
+    }
     let opties = Opties {
         gelijktijdig: sync.gelijktijdig,
         gereserveerd: sync.gereserveerd,
@@ -820,12 +933,17 @@ async fn sync_ronde(
         ..Default::default()
     };
     let koppelingen: Vec<Koppeling> = koppelingen.into_iter().filter(|k| alleen.is_none_or(|a| a.contains(&k.lokaal))).collect();
-    // Gedeelde mappen: de rechten kunnen veranderd zijn (bijv. van bewerken naar bekijken); volg de server.
-    let koppelingen = if koppelingen.iter().any(|k| k.deling.is_some()) {
-        werk_rechten_bij(state, koppelingen, client.gedeeld_met_mij().await.ok())
-    } else {
-        koppelingen
-    };
+    // Gedeelde mappen: de rechten kunnen veranderd zijn (bijv. van bewerken naar bekijken); volg de server, per
+    // omgeving één keer gevraagd.
+    let mut gedeeld: std::collections::HashMap<String, Vec<Gedeeld>> = std::collections::HashMap::new();
+    let met_deling: std::collections::BTreeSet<String> =
+        koppelingen.iter().filter(|k| k.deling.is_some()).filter_map(|k| k.basis.clone()).filter(|b| !is_verlopen(b)).collect();
+    for b in met_deling {
+        if let Ok(lijst) = async { client_bij(&b)?.gedeeld_met_mij().await.map_err(fout) }.await {
+            gedeeld.insert(b, lijst);
+        }
+    }
+    let koppelingen = werk_rechten_bij(state, koppelingen, &gedeeld);
     let mut uit = Vec::new();
     for k in koppelingen {
         let root = Path::new(&k.lokaal);
@@ -835,12 +953,26 @@ async fn sync_ronde(
             uit.push(MapRapport { lokaal: k.lokaal.clone(), ruimte_naam: k.ruimte_naam.clone(), rapport: None, fout });
             continue;
         }
-        let binnen = opslag_voor(client.clone(), &k).met_gelijktijdig(sync.gelijktijdig);
+        let basis = k.basis.clone().unwrap_or_default();
+        // Wachten op opnieuw inloggen bij deze omgeving (zie `opnieuw_ingelogd`): niet bij elke wijziging opnieuw
+        // proberen. De mappen van andere omgevingen gaan gewoon door.
+        if is_verlopen(&basis) {
+            uit.push(MapRapport { lokaal: k.lokaal, ruimte_naam: k.ruimte_naam, rapport: None, fout: Some(SESSIE_VERLOPEN.into()) });
+            continue;
+        }
+        let client = match client_bij(&basis) {
+            Ok(c) => c,
+            Err(e) => {
+                uit.push(MapRapport { lokaal: k.lokaal, ruimte_naam: k.ruimte_naam, rapport: None, fout: Some(e) });
+                continue;
+            }
+        };
+        let binnen = opslag_voor(client, &k).met_gelijktijdig(sync.gelijktijdig);
         let opslag = opaanvraag::Verkenneropslag::new(&binnen, root, op_aanvraag.contains(&k.lokaal), k.nieuwe_mappen, &k.bekende_mappen);
         let waarnemer = activiteit::Koppelwaarnemer::new(app.clone(), k.lokaal.clone());
         let mut r = sync_met_opties(&opslag, root, &k.uitgesloten, &waarnemer, &opties).await;
-        // Sessie verlopen en niet meer te vernieuwen: de ronde stopt (ook voor de volgende mappen), met één melding en
-        // zonder fouten per bestand. Wat al gelukt was, krijgt hieronder gewoon zijn vinkje.
+        // Sessie verlopen en niet meer te vernieuwen: de ronde stopt voor de mappen van deze omgeving, met één melding
+        // en zonder fouten per bestand. Wat al gelukt was, krijgt hieronder gewoon zijn vinkje.
         let verlopen = match &r {
             Ok(rapport) => rapport.sessie_verlopen,
             Err(f) => f.sessie_verlopen(),
@@ -884,19 +1016,23 @@ async fn sync_ronde(
             rapport: r.ok(),
         });
         if verlopen {
-            sessie_verlopen(app);
-            break;
+            sessie_verlopen(app, &basis);
         }
     }
     Ok(uit)
 }
 
-/// De rechten van gedeelde koppelingen gelijk zetten met `gedeeld_met_mij` (als dat lukte) en bewaren als er iets
-/// veranderde. Staat een deling er niet meer in, dan merkt de ronde dat aan de foutcode van de server.
-fn werk_rechten_bij(state: &AppState, mut koppelingen: Vec<Koppeling>, lijst: Option<Vec<Gedeeld>>) -> Vec<Koppeling> {
-    let Some(lijst) = lijst else { return koppelingen };
+/// De rechten van gedeelde koppelingen gelijk zetten met `gedeeld_met_mij` van hun omgeving (als dat lukte) en
+/// bewaren als er iets veranderde. Staat een deling er niet meer in, dan merkt de ronde dat aan de foutcode van de
+/// server.
+fn werk_rechten_bij(
+    state: &AppState,
+    mut koppelingen: Vec<Koppeling>,
+    lijsten: &std::collections::HashMap<String, Vec<Gedeeld>>,
+) -> Vec<Koppeling> {
     let mut veranderd = false;
     for k in koppelingen.iter_mut() {
+        let Some(lijst) = k.basis.as_ref().and_then(|b| lijsten.get(b)) else { continue };
         let nu = k.deling.as_ref().and_then(|d| lijst.iter().find(|g| &g.deling == d)).map(|g| g.rechten.clone());
         if nu.is_some() && nu != k.rechten {
             k.rechten = nu;
@@ -943,6 +1079,12 @@ fn zoek(state: &AppState, bestand: &str) -> Result<(Koppeling, String), String> 
     serverplek::zoek_in(&koppelingen, bestand).ok_or_else(|| "dit bestand staat niet in een gekoppelde map".into())
 }
 
+/// Client voor de omgeving van de gekoppelde map waarin `pad` staat.
+fn client_voor_pad(state: &AppState, pad: &str) -> Result<Client, String> {
+    let (k, _) = zoek(state, pad)?;
+    client_van(state, &k)
+}
+
 fn bestand_id(state: &AppState, bestand: &str) -> Result<String, String> {
     let (k, rel) = zoek(state, bestand)?;
     bekend_bestand(Path::new(&k.lokaal), &rel)
@@ -954,13 +1096,13 @@ fn bestand_id(state: &AppState, bestand: &str) -> Result<String, String> {
 async fn vergrendel(state: tauri::State<'_, AppState>, bestand: String) -> Result<(), String> {
     let id = bestand_id(&state, &bestand)?;
     let apparaat = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into());
-    client(&state).await?.vergrendel(&id, &apparaat, false).await.map(|_| ()).map_err(fout)
+    client_voor_pad(&state, &bestand)?.vergrendel(&id, &apparaat, false).await.map(|_| ()).map_err(fout)
 }
 
 #[tauri::command]
 async fn ontgrendel(state: tauri::State<'_, AppState>, bestand: String) -> Result<(), String> {
     let id = bestand_id(&state, &bestand)?;
-    client(&state).await?.ontgrendel(&id).await.map_err(fout)
+    client_voor_pad(&state, &bestand)?.ontgrendel(&id).await.map_err(fout)
 }
 
 /// Leeslink voor een lokaal (gesynchroniseerd) bestand.
@@ -976,7 +1118,7 @@ async fn deel(
 
 /// Deellink voor een lokaal bestand of een lokale map in een gekoppelde map.
 async fn maak_deellink(state: &AppState, pad: &str, wachtwoord: Option<String>, verloopt: Option<String>) -> Result<String, String> {
-    let client = client(state).await?;
+    let client = client_voor_pad(state, pad)?;
     let (doctype, id) = if Path::new(pad).is_dir() {
         let (k, rel) = zoek(state, pad)?;
         let opslag = opslag_voor(client.clone(), &k);
@@ -993,8 +1135,8 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
     if !Path::new(pad).is_dir() {
         return Err("bestanden opvragen kan alleen voor een map".into());
     }
-    let client = client(state).await?;
     let (k, rel) = zoek(state, pad)?;
+    let client = client_van(state, &k)?;
     let opslag = opslag_voor(client.clone(), &k);
     let id = serverplek::map_op_server(&opslag, Path::new(&k.lokaal), &rel, true).await.map_err(|f| f.melding)?;
     let deling = client.vraag_bestanden(&id, None, None).await.map_err(fout)?;
@@ -1004,14 +1146,14 @@ async fn maak_uploadlink(state: &AppState, pad: &str) -> Result<String, String> 
 #[tauri::command]
 async fn versies(state: tauri::State<'_, AppState>, bestand: String) -> Result<Vec<openaec_sync::api::Versie>, String> {
     let id = bestand_id(&state, &bestand)?;
-    client(&state).await?.versies(&id).await.map_err(fout)
+    client_voor_pad(&state, &bestand)?.versies(&id).await.map_err(fout)
 }
 
 /// Een oudere versie downloaden (opent de tijdelijke downloadlink in de browser).
 #[tauri::command]
 async fn open_versie(app: AppHandle, state: tauri::State<'_, AppState>, bestand: String, versie: u64) -> Result<(), String> {
     let id = bestand_id(&state, &bestand)?;
-    let link = client(&state).await?.download_versie(&id, versie).await.map_err(fout)?;
+    let link = client_voor_pad(&state, &bestand)?.download_versie(&id, versie).await.map_err(fout)?;
     #[allow(deprecated)]
     app.shell().open(&link.url, None).map_err(fout)
 }
@@ -1071,12 +1213,12 @@ async fn actie_uitvoeren(app: &AppHandle, actie: &str, pad: &str, naam: &str) ->
         "vergrendel" => {
             let id = bestand_id(&state, pad)?;
             let apparaat = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "desktop".into());
-            client(&state).await?.vergrendel(&id, &apparaat, false).await.map_err(fout)?;
+            client_voor_pad(&state, pad)?.vergrendel(&id, &apparaat, false).await.map_err(fout)?;
             Ok(format!("{naam} is vergrendeld: collega's zien dat jij eraan werkt."))
         }
         "ontgrendel" => {
             let id = bestand_id(&state, pad)?;
-            client(&state).await?.ontgrendel(&id).await.map_err(fout)?;
+            client_voor_pad(&state, pad)?.ontgrendel(&id).await.map_err(fout)?;
             Ok(format!("{naam} is ontgrendeld."))
         }
         _ => Err(format!("onbekende actie: {actie}")),
@@ -1195,7 +1337,7 @@ pub(crate) fn api_blocking(
         let nieuw = tauri::async_runtime::block_on(autorisatie(app, basis, Some(&waarde)))?;
         antwoord = verstuur(&nieuw).map_err(|_| GEEN_VERBINDING.to_string())?;
         if antwoord.status() == reqwest::StatusCode::UNAUTHORIZED {
-            sessie_verlopen(app);
+            sessie_verlopen(app, basis);
             return Err(SESSIE_VERLOPEN.into());
         }
     }
@@ -1289,6 +1431,7 @@ pub fn run() {
             verbind,
             log_in,
             verbreek,
+            kies_omgeving,
             ruimtes,
             koppel,
             gedeeld_met_mij,

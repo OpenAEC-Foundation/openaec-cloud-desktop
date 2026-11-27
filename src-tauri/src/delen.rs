@@ -15,7 +15,7 @@ use openaec_sync::Fout;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{bestand_id, client, opslag_voor, serverplek, systeemvak, zoek, AppState};
+use crate::{bestand_id, client_in, client_van, opslag_voor, serverplek, systeemvak, zoek, AppState};
 
 pub const VENSTER: &str = "delen";
 
@@ -30,6 +30,9 @@ pub struct Deeldoel {
     pub pad: String,
     pub ruimte: String,
     pub ruimte_naam: String,
+    /// De omgeving waar het op staat; None: de gekozen omgeving (zo komt een doel uit Ruimtes binnen).
+    #[serde(default)]
+    pub basis: Option<String>,
 }
 
 /// Opdracht aan het deelvenster: een lokaal pad (nog op te zoeken) of een doel dat al bekend is.
@@ -186,12 +189,13 @@ pub fn delen_verzoek(state: tauri::State<'_, AppState>) -> Option<Deelverzoek> {
 #[tauri::command]
 pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<Deeldoel, DeelFout> {
     let (k, rel) = zoek(&state, &pad)?;
+    let basis = state.instellingen.lock().unwrap().basis_van(&k);
     let naam = Path::new(&pad).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| pad.clone());
     let (doctype, id) = if Path::new(&pad).is_dir() {
         if rel.is_empty() && k.deling.is_some() {
             // De gedeelde map zelf: die deelt wie hem mag beheren, met het id van de map.
             let id = k.wortel.clone().ok_or("deze gedeelde map is onbekend")?;
-            return Ok(Deeldoel { doctype: "Opslagmap".into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam });
+            return Ok(Deeldoel { doctype: "Opslagmap".into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam, basis });
         }
         if rel.is_empty() {
             return Err(DeelFout {
@@ -199,12 +203,12 @@ pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<
                 melding: "De gekoppelde map is de hele ruimte. Deel een map of bestand daarin, of laat een beheerder je collega lid van de ruimte maken.".into(),
             });
         }
-        let opslag = opslag_voor(client(&state).await?, &k);
+        let opslag = opslag_voor(client_van(&state, &k)?, &k);
         ("Opslagmap", serverplek::map_op_server(&opslag, Path::new(&k.lokaal), &rel, true).await?)
     } else {
         ("Opslagbestand", bestand_id(&state, &pad)?)
     };
-    Ok(Deeldoel { doctype: doctype.into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam })
+    Ok(Deeldoel { doctype: doctype.into(), id, naam, pad, ruimte: k.ruimte, ruimte_naam: k.ruimte_naam, basis })
 }
 
 /// Delen met een gebruiker: `lezen` (kan bekijken), `schrijven` (kan bewerken) of `beheren`. Heeft het adres nog
@@ -213,6 +217,7 @@ pub async fn deeldoel(state: tauri::State<'_, AppState>, pad: String) -> Result<
 #[tauri::command]
 pub async fn deel_met_collega(
     state: tauri::State<'_, AppState>,
+    basis: Option<String>,
     doctype: String,
     id: String,
     gebruiker: String,
@@ -222,7 +227,7 @@ pub async fn deel_met_collega(
     controleer_rechten(&doctype, "gebruiker", &rechten)?;
     let gebruiker = controleer_email(&gebruiker)?;
     let verloopt = ingevuld(verloopt);
-    let deling = client(&state).await?.deel_met_gebruiker(&doctype, &id, &gebruiker, &rechten, verloopt.as_deref()).await?;
+    let deling = client_in(&state, basis.as_deref()).await?.deel_met_gebruiker(&doctype, &id, &gebruiker, &rechten, verloopt.as_deref()).await?;
     Ok(deling.uitnodiging)
 }
 
@@ -231,6 +236,7 @@ pub async fn deel_met_collega(
 pub async fn maak_link(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
+    basis: Option<String>,
     doctype: String,
     id: String,
     rechten: String,
@@ -238,7 +244,7 @@ pub async fn maak_link(
     verloopt: Option<String>,
 ) -> Result<String, DeelFout> {
     controleer_rechten(&doctype, "link", &rechten)?;
-    let client = client(&state).await?;
+    let client = client_in(&state, basis.as_deref()).await?;
     let (wachtwoord, verloopt) = (ingevuld(wachtwoord), ingevuld(verloopt));
     let deling = client.deel_link(&doctype, &id, &rechten, wachtwoord.as_deref(), verloopt.as_deref()).await?;
     let link = deling.url.unwrap_or_else(|| format!("{}/delen/{}", client.basis(), deling.token.unwrap_or_default()));
@@ -266,8 +272,9 @@ pub struct DelingRegel {
 
 /// Wie heeft toegang via een deling: de actieve delingen van dit bestand of deze map, nieuwste eerst.
 #[tauri::command]
-pub async fn delingen_van(state: tauri::State<'_, AppState>, doctype: String, id: String) -> Result<Vec<DelingRegel>, DeelFout> {
-    let client = client(&state).await?;
+pub async fn delingen_van(state: tauri::State<'_, AppState>,
+    basis: Option<String>, doctype: String, id: String) -> Result<Vec<DelingRegel>, DeelFout> {
+    let client = client_in(&state, basis.as_deref()).await?;
     let mut lijst = client.delingen(&doctype, &id).await?;
     lijst.sort_by(|a, b| b.creation.cmp(&a.creation));
     Ok(lijst
@@ -289,24 +296,27 @@ pub async fn delingen_van(state: tauri::State<'_, AppState>, doctype: String, id
 }
 
 #[tauri::command]
-pub async fn trek_deling_in(state: tauri::State<'_, AppState>, deling: String) -> Result<(), DeelFout> {
-    client(&state).await?.trek_in(&deling).await?;
+pub async fn trek_deling_in(state: tauri::State<'_, AppState>,
+    basis: Option<String>, deling: String) -> Result<(), DeelFout> {
+    client_in(&state, basis.as_deref()).await?.trek_in(&deling).await?;
     Ok(())
 }
 
 /// De rol van een collega wijzigen: `lezen`, `schrijven` of `beheren` (de server weigert meer dan je zelf hebt).
 #[tauri::command]
-pub async fn wijzig_deling(state: tauri::State<'_, AppState>, deling: String, rechten: String) -> Result<(), DeelFout> {
+pub async fn wijzig_deling(state: tauri::State<'_, AppState>,
+    basis: Option<String>, deling: String, rechten: String) -> Result<(), DeelFout> {
     controleer_rechten("Opslagmap", "gebruiker", &rechten)?;
-    client(&state).await?.wijzig_deling(&deling, &rechten).await?;
+    client_in(&state, basis.as_deref()).await?.wijzig_deling(&deling, &rechten).await?;
     Ok(())
 }
 
 /// Wat ik met dit doel mag. Kent de server `toegang` niet (een oudere versie), dan zoals vroeger: delen tot en met
 /// bewerken, en de server beslist.
 #[tauri::command]
-pub async fn toegang_van(state: tauri::State<'_, AppState>, doctype: String, id: String) -> Result<Toegang, DeelFout> {
-    match client(&state).await?.toegang(&doctype, &id).await {
+pub async fn toegang_van(state: tauri::State<'_, AppState>,
+    basis: Option<String>, doctype: String, id: String) -> Result<Toegang, DeelFout> {
+    match client_in(&state, basis.as_deref()).await?.toegang(&doctype, &id).await {
         Ok(t) => Ok(t),
         Err(Fout::Server { status: 404 | 417 | 500, .. }) => Ok(oude_toegang()),
         Err(f) => Err(f.into()),
@@ -319,8 +329,9 @@ fn oude_toegang() -> Toegang {
 
 /// De leden van de ruimte (om een collega te kiezen, en om te zien wie al toegang heeft via de ruimte).
 #[tauri::command]
-pub async fn ruimteleden(state: tauri::State<'_, AppState>, ruimte: String) -> Result<Vec<Ruimtelid>, DeelFout> {
-    let mut leden = client(&state).await?.ruimteleden(&ruimte).await?;
+pub async fn ruimteleden(state: tauri::State<'_, AppState>,
+    basis: Option<String>, ruimte: String) -> Result<Vec<Ruimtelid>, DeelFout> {
+    let mut leden = client_in(&state, basis.as_deref()).await?.ruimteleden(&ruimte).await?;
     leden.sort_by(|a, b| a.gebruiker.cmp(&b.gebruiker));
     Ok(leden)
 }
@@ -328,8 +339,9 @@ pub async fn ruimteleden(state: tauri::State<'_, AppState>, ruimte: String) -> R
 /// Collega's om mee te delen, gezocht op e-mailadres en naam, met hun rol in de ruimte. Kent de server
 /// `collegas` niet (een oudere versie), dan de leden van de ruimte die op de zoektekst passen.
 #[tauri::command]
-pub async fn collegas(state: tauri::State<'_, AppState>, ruimte: String, tekst: String) -> Result<Vec<Collega>, DeelFout> {
-    let client = client(&state).await?;
+pub async fn collegas(state: tauri::State<'_, AppState>,
+    basis: Option<String>, ruimte: String, tekst: String) -> Result<Vec<Collega>, DeelFout> {
+    let client = client_in(&state, basis.as_deref()).await?;
     match client.collegas(tekst.trim(), Some(&ruimte)).await {
         Ok(lijst) => Ok(lijst),
         Err(Fout::Netwerk(e)) => Err(Fout::Netwerk(e).into()),

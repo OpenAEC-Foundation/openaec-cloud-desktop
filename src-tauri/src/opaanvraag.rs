@@ -191,9 +191,10 @@ pub fn serverbestand(root: &Path, pad: &Path) -> Option<(String, Option<u64>)> {
 /// autorisatie van de sessie (en vernieuwt na een 401 één keer; zie `crate::api_blocking`); de downloadlink zelf gaat
 /// zonder Authorization-header.
 #[cfg(windows)]
-pub fn ophaler<K, A>(basis: impl Fn() -> Option<String> + Send + Sync + 'static, koppelingen: K, api: A) -> crate::cloudfilter::Ophaler
+pub fn ophaler<K, A>(koppelingen: K, api: A) -> crate::cloudfilter::Ophaler
 where
-    K: Fn() -> Vec<String> + Send + Sync + 'static,
+    // De gekoppelde mappen in de hoofdmap, elk met de omgeving waar hij bij hoort.
+    K: Fn() -> Vec<(String, Option<String>)> + Send + Sync + 'static,
     A: Fn(&str, &dyn Fn(&str) -> reqwest::Result<reqwest::blocking::Response>) -> Result<reqwest::blocking::Response, String>
         + Send
         + Sync
@@ -201,9 +202,13 @@ where
 {
     Box::new(move |pad, begin, lengte, schrijf| {
         use std::io::Read;
-        let root = koppelingen().into_iter().map(PathBuf::from).find(|r| pad.starts_with(r)).ok_or("dit bestand hoort bij geen gekoppelde ruimte")?;
+        let (root, basis) = koppelingen()
+            .into_iter()
+            .map(|(r, b)| (PathBuf::from(r), b))
+            .find(|(r, _)| pad.starts_with(r))
+            .ok_or("dit bestand hoort bij geen gekoppelde ruimte")?;
         let (bestand, versie) = serverbestand(&root, pad).ok_or("dit bestand is niet bekend op de server")?;
-        let basis = basis().ok_or("niet verbonden")?;
+        let basis = basis.ok_or("niet verbonden")?;
         let http = reqwest::blocking::Client::builder().timeout(None).build().map_err(|e| e.to_string())?;
         let mut verzoek = serde_json::json!({ "bestand": bestand });
         if let Some(v) = versie {
