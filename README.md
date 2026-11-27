@@ -233,6 +233,24 @@ keer; Delen… neemt het eerste). Zo werkt het:
   Uitzetten in de instellingen haalt hem weg. (Een `NSServices`-regel in de `Info.plist` van de app zou een eigen
   Objective-C-methode in de app vragen; de workflow werkt met de app zoals Tauri hem bouwt.)
 
+## Delen met klant
+
+In hetzelfde venster als Versturen (`src/Verstuurvenster.tsx`, `src/lib/klant.ts`, `src-tauri/src/klant.rs`,
+`crates/openaec-sync/src/datadrop.rs`) staat bovenaan de keuze **Versturen** (een downloadlink) of **Delen met klant**:
+een levering (datadrop, Open BIM Platform versie 2) met het 3D-model uit de Speckle-server van de omgeving en de
+gekozen bestanden achter één vaste link. De klant kan ze bekijken, downloaden en er opmerkingen bij zetten.
+
+- De bestanden gaan zoals bij Versturen als overdracht naar de server (in delen, hervatbaar), zonder ontvangers, datum
+  of wachtwoord; daarna maakt `openaec_werkplek.datadrop.van_overdracht` er een levering van.
+- Eerst een **concept**: de app opent de pagina van de klant als voorbeeld in een eigen venster (`klant-voorbeeld`,
+  zonder rechten in de app; alleen een link `/datadrop/<token>` van de verbonden omgeving). Daarna **Delen** met
+  e-mailadressen (de server stuurt de mail) of de link kopiëren.
+- **Nieuwe versie**: kies onder Levering een bestaande levering; de bestanden worden er een nieuwe versie van onder
+  dezelfde link, met een notitie wat er veranderde. Het model krijgt de versie van nu.
+- **Mijn leveringen**: status, versie, model, met wie gedeeld en het aantal opmerkingen, met Bekijken en Kopiëren.
+- Vereist een server met de datadrop (openaec-bench, `openaec_werkplek.datadrop`); anders zegt het venster dat het
+  daar nog niet beschikbaar is.
+
 ## Statusvinkjes op Linux
 
 In een gekoppelde map krijgt elk bestand en elke map een embleem in de bestandsbeheerder (`src-tauri/src/emblemen.rs`):

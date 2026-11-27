@@ -2,6 +2,10 @@
 // ontvangers, een bericht, een vervaldatum en een wachtwoord (binnen de grenzen van de server). Opent vanuit "Versturen
 // met OpenAEC" in het rechtermuismenu van de bestandsbeheerder, op elk bestand en elke map. Een map gaat met al zijn
 // inhoud mee als zip. Onderaan "Mijn overdrachten", met de status en Intrekken.
+//
+// Of: "Delen met klant". Dezelfde upload, maar daarna wordt het een levering (datadrop) met het 3D-model uit Speckle
+// achter één vaste link, eerst als concept: het voorbeeld opent in een eigen venster, daarna delen met e-mailadressen.
+// Een volgende keer kan het een nieuwe versie van dezelfde levering worden (dezelfde link). Zie src/lib/klant.ts.
 
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -9,6 +13,7 @@ import { api } from "./lib/api"
 import { datumTekst, datumWaarde, leesFout, type Deelfout } from "./lib/delen"
 import { grootte, naamVan } from "./lib/opmaak"
 import { Symbool } from "./Titelbalk"
+import { gedeeldTekst, leveringMeta, NIEUW, voortzetbaar, type KlantGemaakt, type KlantLevering, type KlantProjecten } from "./lib/klant"
 import {
   controleerGeldigTot, controleerGrootte, controleerOntvangers, grootteDecimaal, intrekbaar, laatsteDag, opnieuwNa, overdrachtMeta,
   opslagTekst, samenvatting, splitsOntvangers, standaardNaam, stapTekst, statusTekst, totaal, voegSamen,
@@ -48,6 +53,17 @@ export default function Verstuurvenster() {
   const [fout, setFout] = createSignal<Deelfout | null>(null)
   const [onderbroken, setOnderbroken] = createSignal<Lopend | null>(null)
 
+  // Delen met klant
+  const [soort, setSoort] = createSignal<"versturen" | "klant">("versturen")
+  const [projecten, setProjecten] = createSignal<KlantProjecten | null>(null)
+  const [project, setProject] = createSignal("")
+  const [leveringen, setLeveringen] = createSignal<KlantLevering[]>([])
+  const [vervolg, setVervolg] = createSignal(NIEUW)
+  const [notitie, setNotitie] = createSignal("")
+  const [levering, setLevering] = createSignal<KlantGemaakt | null>(null)
+  const [klantFout, setKlantFout] = createSignal<Deelfout | null>(null)
+  const klant = () => soort() === "klant"
+
   const [mijn, setMijn] = createSignal<OverdrachtRegel[] | null>(null)
   const [mijnFout, setMijnFout] = createSignal<Deelfout | null>(null)
   const [intrekken, setIntrekken] = createSignal("")
@@ -61,7 +77,12 @@ export default function Verstuurvenster() {
   const grootteFout = () => controleerGrootte(totaalBytes(), grenzen()?.max_bytes ?? 0)
   const ontbrekend = () => items().filter((i) => i.fout)
   const kanVersturen = () =>
-    !!grenzen() && items().length > 0 && !ontbrekend().length && !ontvangerFout() && !datumFout() && !grootteFout() && !bezig()
+    !!grenzen() &&
+    items().length > 0 &&
+    !ontbrekend().length &&
+    !grootteFout() &&
+    !bezig() &&
+    (klant() ? !klantFout() || klantFout()?.code === "fout" : !ontvangerFout() && !datumFout())
   const voortgang = () => totaal(stappen())
 
   /** Wat er in de gekozen paden zit (en de naam, zolang de gebruiker hem niet zelf veranderde). */
@@ -74,6 +95,8 @@ export default function Verstuurvenster() {
   }
 
   const beginOpnieuw = (nieuw: string[]) => {
+    setLevering(null)
+    setNotitie("")
     setFase("samenstellen")
     setLopend(null)
     setStappen([])
@@ -95,6 +118,23 @@ export default function Verstuurvenster() {
     if (fase() === "bezig") return setWachtend((w) => [...w, ...r.wachtend.filter((p) => !w.includes(p))])
     if (fase() === "klaar" || fase() === "fout") return beginOpnieuw(r.paden)
     werkItemsBij(r.paden)
+  }
+
+  /** De projecten in Speckle en de eigen leveringen, de eerste keer dat Delen met klant gekozen wordt. */
+  const laadKlant = async () => {
+    setKlantFout(null)
+    try {
+      const [p, l] = await Promise.all([api.klantProjecten(), api.klantMijn()])
+      setProjecten(p)
+      setLeveringen(l)
+    } catch (e) {
+      setKlantFout(leesFout(e))
+    }
+  }
+
+  const kiesSoort = (nieuw: "versturen" | "klant") => {
+    setSoort(nieuw)
+    if (nieuw === "klant" && !projecten()) laadKlant()
   }
 
   const laadMijn = async () => {
@@ -177,27 +217,72 @@ export default function Verstuurvenster() {
   /** Een melding "klaar" die binnenkwam voordat het venster de overdracht kende. */
   let vroeg: Voltooid | null = null
 
+  /** Was de lopende upload voor de klant: dan wordt het daarna een levering. */
+  let voorKlant = false
+
   const klaar = (v: Voltooid) => {
     setStappen((oud) => oud.map((s) => ({ ...s, status: "klaar", gedaan: s.totaal })))
-    setUitkomst(v)
     setFase("klaar")
+    if (voorKlant) return void maakLevering(v.overdracht)
+    setUitkomst(v)
     setMelding("Link staat op het klembord")
     laadMijn()
+  }
+
+  /** Van de verstuurde bestanden een levering maken (of een nieuwe versie), en meteen het voorbeeld tonen. */
+  const maakLevering = async (overdracht: string) => {
+    setBezig("levering")
+    setKlantFout(null)
+    try {
+      const gemaakt = await api.klantVanOverdracht(overdracht, {
+        titel: naam().trim() || standaardNaam(items()),
+        project: vervolg() === NIEUW ? project() || null : null,
+        bericht: vervolg() === NIEUW ? bericht().trim() || null : null,
+        datadrop: vervolg() === NIEUW ? null : vervolg(),
+        notitie: vervolg() === NIEUW ? null : notitie().trim() || null,
+      })
+      setLevering(gemaakt)
+      setMelding(gemaakt.versie > 1 ? `Versie ${gemaakt.versie} staat klaar onder dezelfde link` : "Het concept staat klaar")
+      setLeveringen(await api.klantMijn().catch(() => leveringen()))
+      api.klantVoorbeeld(gemaakt.url).catch((e) => setKlantFout(leesFout(e)))
+    } catch (e) {
+      setKlantFout(leesFout(e))
+    } finally {
+      setBezig("")
+    }
+  }
+
+  const deelLevering = async (l: KlantGemaakt) => {
+    setBezig("delen")
+    setKlantFout(null)
+    try {
+      const g = await api.klantDeel(l.datadrop, lijst(), bericht().trim() || null)
+      setLevering({ ...l, status: g.status })
+      setOntvangers("")
+      setMelding(gedeeldTekst(g))
+      setLeveringen(await api.klantMijn().catch(() => leveringen()))
+    } catch (e) {
+      setKlantFout(leesFout(e))
+    } finally {
+      setBezig("")
+    }
   }
 
   const versturen = async () => {
     if (!kanVersturen()) return
     setBezig("versturen")
     setFout(null)
+    voorKlant = klant()
     try {
+      // Voor de klant zonder ontvangers, datum en wachtwoord: de levering zelf regelt de link, de termijn en de mail.
       volg(
         await api.startVersturen({
           paden: paden(),
           naam: naam().trim() || standaardNaam(items()),
-          bericht: bericht().trim() || null,
-          verloopt_op: geldigTot() || null,
-          wachtwoord: wachtwoord() || null,
-          ontvangers: lijst(),
+          bericht: voorKlant ? null : bericht().trim() || null,
+          verloopt_op: voorKlant ? null : geldigTot() || null,
+          wachtwoord: voorKlant ? null : wachtwoord() || null,
+          ontvangers: voorKlant ? [] : lijst(),
         }),
       )
       setWachtwoord("")
@@ -330,7 +415,7 @@ export default function Verstuurvenster() {
         <div>
           <h1>{titel()}</h1>
           <span class="pad">{ondertitel()}</span>
-          <span class="deel-ruimte">Versturen met OpenAEC</span>
+          <span class="deel-ruimte">{klant() ? "Delen met klant" : "Versturen met OpenAEC"}</span>
         </div>
       </header>
 
@@ -384,6 +469,16 @@ export default function Verstuurvenster() {
         </Show>
 
         <Show when={fase() === "samenstellen"}>
+          <div class="soortkeuze" role="radiogroup" aria-label="Wat wil je doen">
+            <button role="radio" aria-checked={!klant()} classList={{ actief: !klant() }} onClick={() => kiesSoort("versturen")}>
+              Versturen
+              <span>downloadlink</span>
+            </button>
+            <button role="radio" aria-checked={klant()} classList={{ actief: klant() }} onClick={() => kiesSoort("klant")}>
+              Delen met klant
+              <span>3D-model en tekeningen, met voorbeeld</span>
+            </button>
+          </div>
           <section class="deel-sectie">
             <div class="deel-sectiekop">
               <h2>Bestanden en mappen</h2>
@@ -434,6 +529,71 @@ export default function Verstuurvenster() {
             </Show>
           </section>
 
+          <Show when={klant()}>
+            <section class="deel-sectie">
+              <h2>Delen met klant</h2>
+              <p class="uitleg">
+                De klant krijgt één link naar het 3D-model en deze bestanden, kan ze bekijken, downloaden en er opmerkingen bij zetten. Eerst
+                zie je een voorbeeld; daarna deel je het.
+              </p>
+              <Foutmelding fout={klantFout()} />
+              <Show when={leveringen().length > 0 && voortzetbaar(leveringen()).length > 0}>
+                <label>
+                  Levering
+                  <select value={vervolg()} onChange={(e) => setVervolg(e.currentTarget.value)}>
+                    <option value={NIEUW}>Nieuwe levering</option>
+                    <For each={voortzetbaar(leveringen())}>
+                      {(l) => <option value={l.datadrop}>{`Nieuwe versie van ${l.titel} (nu versie ${l.versie})`}</option>}
+                    </For>
+                  </select>
+                </label>
+              </Show>
+              <Show
+                when={vervolg() === NIEUW}
+                fallback={
+                  <label>
+                    Wat er veranderd is (optioneel)
+                    <textarea rows="2" maxLength={500} value={notitie()} onInput={(e) => setNotitie(e.currentTarget.value)} />
+                  </label>
+                }
+              >
+                <label>
+                  Titel
+                  <input
+                    value={naam()}
+                    maxLength={140}
+                    placeholder={standaardNaam(items())}
+                    onInput={(e) => {
+                      setNaam(e.currentTarget.value)
+                      setNaamAangepast(true)
+                    }}
+                  />
+                </label>
+                <label>
+                  3D-model uit Speckle
+                  <select value={project()} disabled={!projecten()?.speckle} onChange={(e) => setProject(e.currentTarget.value)}>
+                    <option value="">Geen model, alleen bestanden</option>
+                    <For each={(projecten()?.projecten ?? []).filter((p) => p.modellen.length > 0)}>
+                      {(p) => <option value={p.project}>{p.naam}</option>}
+                    </For>
+                  </select>
+                </label>
+                <Show when={projecten() && !projecten()!.speckle}>
+                  <p class="hint">{projecten()!.melding ?? "Speckle staat op deze omgeving niet aan."} De levering krijgt dan alleen bestanden.</p>
+                </Show>
+                <label>
+                  Bericht voor de klant (optioneel)
+                  <textarea rows="2" maxLength={2000} value={bericht()} onInput={(e) => setBericht(e.currentTarget.value)} />
+                </label>
+              </Show>
+              <Foutmelding fout={fout()} />
+              <button class="primair" disabled={!kanVersturen()} onClick={versturen}>
+                {bezig() === "versturen" ? "Bezig…" : vervolg() === NIEUW ? "Uploaden en voorbeeld tonen" : "Uploaden als nieuwe versie"}
+              </button>
+            </section>
+          </Show>
+
+          <Show when={!klant()}>
           <section class="deel-sectie">
             <h2>Versturen</h2>
             <p class="uitleg">Je krijgt een downloadlink; ontvangers krijgen hem ook per e-mail.</p>
@@ -493,6 +653,7 @@ export default function Verstuurvenster() {
               {bezig() === "versturen" ? "Bezig…" : "Versturen"}
             </button>
           </section>
+          </Show>
         </Show>
 
         <Show when={fase() !== "samenstellen" ? lopend() : null}>
@@ -562,6 +723,67 @@ export default function Verstuurvenster() {
           )}
         </Show>
 
+        <Show when={fase() === "klaar" && voorKlant}>
+          <section class="deel-sectie">
+            <Show
+              when={levering()}
+              fallback={
+                <>
+                  <p class="hint">{bezig() === "levering" ? "De levering wordt gemaakt…" : ""}</p>
+                  <Foutmelding fout={klantFout()} />
+                </>
+              }
+            >
+              {(l) => (
+                <>
+                  <h2>{l().status === "Concept" ? "Concept klaar" : l().versie > 1 ? `Versie ${l().versie} klaar` : "Gedeeld"}</h2>
+                  <p class="uitleg">
+                    {l().status === "Concept"
+                      ? "Het voorbeeld staat in een eigen venster: zo ziet de klant het. Deel het als het goed is."
+                      : "De klant ziet voortaan deze versie onder dezelfde link. Stuur hem een bericht als je wilt."}
+                  </p>
+                  <div class="knoppen">
+                    <button onClick={() => api.klantVoorbeeld(l().url).catch((e) => setKlantFout(leesFout(e)))}>Voorbeeld tonen</button>
+                  </div>
+                  <label>
+                    E-mailadressen van de klant
+                    <input
+                      type="text"
+                      placeholder="jan@klant.nl, piet@aannemer.nl"
+                      value={ontvangers()}
+                      onInput={(e) => setOntvangers(e.currentTarget.value)}
+                    />
+                  </label>
+                  <Show when={ontvangerFout()}>
+                    <p class="hint fout">{ontvangerFout()}</p>
+                  </Show>
+                  <label>
+                    Bericht in de mail (optioneel)
+                    <textarea rows="2" maxLength={2000} value={bericht()} onInput={(e) => setBericht(e.currentTarget.value)} />
+                  </label>
+                  <Foutmelding fout={klantFout()} />
+                  <div class="knoppen">
+                    <button
+                      class="primair"
+                      disabled={!!bezig() || !!ontvangerFout() || (l().status !== "Concept" && !lijst().length)}
+                      onClick={() => deelLevering(l())}
+                    >
+                      {bezig() === "delen" ? "Bezig…" : l().status === "Concept" ? "Delen" : "Mail sturen"}
+                    </button>
+                  </div>
+                  <div class="deellink">
+                    <input readOnly value={l().url} onFocus={(e) => e.currentTarget.select()} />
+                    <button onClick={() => kopieer(l().url)}>Kopiëren</button>
+                  </div>
+                  <div class="knoppen">
+                    <button onClick={() => beginOpnieuw(wachtend())}>Nieuwe levering of versie</button>
+                  </div>
+                </>
+              )}
+            </Show>
+          </section>
+        </Show>
+
         <Show when={uitkomst()}>
           {(v) => (
             <section class="deel-sectie">
@@ -590,7 +812,41 @@ export default function Verstuurvenster() {
           </p>
         </Show>
 
-        <Show when={grenzen()}>
+        <Show when={klant() && leveringen().length > 0}>
+          <section class="deel-sectie">
+            <div class="deel-sectiekop">
+              <h2>Mijn leveringen</h2>
+              <button class="tekstknop" onClick={laadKlant}>
+                Vernieuwen
+              </button>
+            </div>
+            <ul class="toegang">
+              <For each={leveringen()}>
+                {(l) => (
+                  <li classList={{ verlopen: l.status === "Verlopen" || l.status === "Ingetrokken" }}>
+                    <span class={`statuslabel ${l.status.toLowerCase()}`}>{l.status === "Concept" ? "Concept" : l.status}</span>
+                    <div class="toegang-regel">
+                      <span class="naam">{l.titel}</span>
+                      <span class="meta">{leveringMeta(l)}</span>
+                    </div>
+                    <div class="knoppen">
+                      <Show when={l.url}>
+                        <button class="klein" onClick={() => api.klantVoorbeeld(l.url!).catch((e) => setKlantFout(leesFout(e)))}>
+                          Bekijken
+                        </button>
+                        <button class="klein" onClick={() => kopieer(l.url!)}>
+                          Kopiëren
+                        </button>
+                      </Show>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </section>
+        </Show>
+
+        <Show when={grenzen() && !klant()}>
           <section class="deel-sectie">
             <div class="deel-sectiekop">
               <h2>Mijn overdrachten</h2>

@@ -631,3 +631,10 @@ body.deelvenster { background: var(--papier); }
 .sleepvlak { display: none; position: absolute; inset: 8px; border: 2px dashed var(--amber); border-radius: var(--rond); background: rgba(254, 243, 199, 0.85); place-items: center; z-index: 5; pointer-events: none; }
 .sleepvlak span { font-family: var(--f-kop); font-size: 16px; font-weight: 600; color: var(--amber-tekst); }
 .assistent.sleept .sleepvlak { display: grid; }
+
+/* Venster Versturen: kiezen tussen versturen (downloadlink) en delen met klant (levering met model, zie lib/klant.ts). */
+.soortkeuze { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.soortkeuze button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; text-align: left; font-weight: 600; background: var(--wit); }
+.soortkeuze button span { font-size: 12px; font-weight: 400; color: var(--steen); }
+.soortkeuze button.actief { border-color: var(--amber); box-shadow: inset 3px 0 0 var(--amber); background: var(--amber-vlak); }
+.statuslabel.verlopen { background: var(--grijs-vlak); color: var(--grijs-tekst); }

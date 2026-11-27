@@ -8,6 +8,7 @@ mod delen;
 pub mod emblemen;
 mod hoofdmap;
 mod instellingen;
+mod klant;
 pub mod itemstatus;
 mod logboek;
 mod menupakket;
@@ -1355,6 +1356,11 @@ pub fn run() {
             versturen::trek_overdracht_in,
             versturen::menu_versturen,
             versturen::zet_menu_versturen,
+            klant::klant_projecten,
+            klant::klant_mijn,
+            klant::klant_van_overdracht,
+            klant::klant_deel,
+            klant::klant_voorbeeld,
             tools::tools_geinstalleerd,
             tools::tools_releases,
             tools::tool_installeren,
